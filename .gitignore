@@ -16,8 +16,5 @@ Cargo.lock
 __pycache__/
 *.pyc
 
-# Screenshots (generated)
-screenshot.png
-
 # Qoder
 .qoder/
