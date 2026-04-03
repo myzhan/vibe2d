@@ -11,6 +11,7 @@ This skill enables AI assistants to inspect and control a running Vibe2D game vi
       enabled: true
       port: 9229
   ```
+- The game must be compiled with the `vdp` feature (enabled by default). Use `--no-default-features` to strip VDP for release builds.
 
 ## Available Commands
 
@@ -32,11 +33,23 @@ Examples:
 # Get engine info
 vibe rpc engine.info
 
+# Pause / resume / step
+vibe rpc engine.pause
+vibe rpc engine.resume
+vibe rpc engine.step '{"frames": 1}'
+
+# Get time info
+vibe rpc engine.getTime
+
+# Simulate keyboard input (tap = press + auto-release next frame)
+vibe rpc engine.simulateInput '{"device": "keyboard", "action": "tap", "key": "Space"}'
+
+# Simulate mouse input
+vibe rpc engine.simulateInput '{"device": "mouse", "action": "move", "x": 256, "y": 144}'
+vibe rpc engine.simulateInput '{"device": "mouse", "action": "click", "button": "Left"}'
+
 # Get game state
 vibe rpc game.inspect
-
-# Set bird position
-vibe rpc game.setBirdY '{"y": 100}'
 
 # Set score
 vibe rpc game.setScore '{"score": 42}'
@@ -75,16 +88,37 @@ VDP uses WebSocket + JSON-RPC 2.0 on `ws://127.0.0.1:9229`.
 
 ### Built-in Methods
 
-| Method | Description |
-|--------|-------------|
-| `engine.info` | Engine version, virtual resolution |
-| `game.inspect` | Full game state JSON |
+| Method | Params | Description |
+|--------|--------|-------------|
+| `engine.info` | — | Engine version, virtual resolution |
+| `engine.pause` | — | Pause game loop (rendering continues) |
+| `engine.resume` | — | Resume game loop |
+| `engine.step` | `{"frames": N}` | Execute N frames while paused (default 1) |
+| `engine.getTime` | — | Get frame count + elapsed time |
+| `engine.simulateInput` | see below | Inject keyboard/mouse input |
+| `engine.screenshot` | `{"path": "..."}` | Save screenshot to file |
+| `game.inspect` | — | Full game state JSON |
+
+#### engine.simulateInput
+
+Keyboard:
+```json
+{"device": "keyboard", "action": "press|release|tap", "key": "Space"}
+```
+
+Mouse:
+```json
+{"device": "mouse", "action": "move", "x": 256.0, "y": 144.0}
+{"device": "mouse", "action": "press|release|click", "button": "Left"}
+```
+
+- `tap` = press this frame, auto-release next frame
+- `click` = press this frame, auto-release next frame (mouse equivalent of tap)
 
 ### Game-specific Methods (Flappy Bird)
 
 | Method | Params | Description |
 |--------|--------|-------------|
-| `game.setBirdY` | `{"y": float}` | Set bird Y position |
 | `game.setScore` | `{"score": int}` | Set current score |
 | `game.setState` | `{"state": string}` | Set game state (idle/countdown/playing/dead) |
 

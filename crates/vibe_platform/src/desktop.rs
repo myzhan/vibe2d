@@ -25,7 +25,7 @@ pub struct PlatformConfig {
 pub trait PlatformCallbacks {
     fn on_init(&mut self, renderer: &Renderer);
     fn on_input_event(&mut self, input: &mut InputState);
-    fn on_update(&mut self, dt: f32, input: &InputState);
+    fn on_update(&mut self, dt: f32, input: &mut InputState);
     fn on_render(&mut self, renderer: &mut Renderer);
     fn clear_color(&self) -> [f32; 4];
     fn get_textures(&self) -> Vec<&vibe_render::Texture>;
@@ -149,6 +149,31 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                     }
                 }
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(window) = &self.window {
+                    let size = window.inner_size();
+                    if size.width > 0 && size.height > 0 {
+                        let vx = (position.x as f32 / size.width as f32) * self.config.virtual_width;
+                        let vy = (position.y as f32 / size.height as f32) * self.config.virtual_height;
+                        self.input.on_mouse_moved(vx, vy);
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let mb = match button {
+                    winit::event::MouseButton::Left => Some(vibe_input::MouseButton::Left),
+                    winit::event::MouseButton::Right => Some(vibe_input::MouseButton::Right),
+                    winit::event::MouseButton::Middle => Some(vibe_input::MouseButton::Middle),
+                    _ => None,
+                };
+                if let Some(mb) = mb {
+                    if state.is_pressed() {
+                        self.input.on_mouse_button_pressed(mb);
+                    } else {
+                        self.input.on_mouse_button_released(mb);
+                    }
+                }
+            }
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
                 let dt = if let Some(last) = self.last_frame {
@@ -159,7 +184,7 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                 self.last_frame = Some(now);
 
                 // Update
-                self.callbacks.on_update(dt, &self.input);
+                self.callbacks.on_update(dt, &mut self.input);
 
                 // Render
                 if let Some(renderer) = &mut self.renderer {

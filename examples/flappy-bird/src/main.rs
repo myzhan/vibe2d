@@ -393,6 +393,7 @@ impl Game for FlappyBirdGame {
         Color::from_hex(0x4EC0CA)
     }
 
+    #[cfg(feature = "vdp")]
     fn inspect(&self) -> serde_json::Value {
         let state_str = match self.state {
             GameState::Idle => "idle",
@@ -429,6 +430,7 @@ impl Game for FlappyBirdGame {
         })
     }
 
+    #[cfg(feature = "vdp")]
     fn handle_vdp(&mut self, method: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
         match method {
             "game.setBirdY" => {

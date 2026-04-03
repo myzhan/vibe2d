@@ -7,6 +7,13 @@ VDP 单次 RPC 调用工具
 
 示例：
   python3 tests/vdp_rpc.py engine.info
+  python3 tests/vdp_rpc.py engine.pause
+  python3 tests/vdp_rpc.py engine.resume
+  python3 tests/vdp_rpc.py engine.step '{"frames": 3}'
+  python3 tests/vdp_rpc.py engine.getTime
+  python3 tests/vdp_rpc.py engine.simulateInput '{"device": "keyboard", "action": "tap", "key": "Space"}'
+  python3 tests/vdp_rpc.py engine.simulateInput '{"device": "mouse", "action": "move", "x": 100, "y": 50}'
+  python3 tests/vdp_rpc.py engine.simulateInput '{"device": "mouse", "action": "click", "button": "Left"}'
   python3 tests/vdp_rpc.py game.inspect
   python3 tests/vdp_rpc.py game.setState '{"state": "idle"}'
   python3 tests/vdp_rpc.py game.setBirdY '{"y": 100.0}'

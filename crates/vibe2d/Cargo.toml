@@ -5,17 +5,21 @@ edition.workspace = true
 license.workspace = true
 description = "AI-friendly 2D game engine"
 
+[features]
+default = ["vdp"]
+vdp = ["dep:vibe_debug", "dep:serde_json"]
+
 [dependencies]
 vibe_render = { workspace = true }
 vibe_input = { workspace = true }
 vibe_audio = { workspace = true }
 vibe_asset = { workspace = true }
-vibe_debug = { workspace = true }
+vibe_debug = { workspace = true, optional = true }
 vibe_platform = { workspace = true }
 glam.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, optional = true }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

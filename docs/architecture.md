@@ -15,7 +15,7 @@ vibe2d/
 │   ├── vibe2d/          (494 行)      # 核心引擎：Game trait、run()、Context、Screen
 │   ├── vibe_render/     (847 行)      # wgpu 渲染：sprite batch、字体 atlas、截图
 │   ├── vibe_platform/   (210 行)      # 桌面平台：winit 窗口与事件循环
-│   ├── vibe_input/      (105 行)      # 输入系统：键盘状态追踪 + action 映射
+│   ├── vibe_input/      (200 行)      # 输入系统：键盘/鼠标状态追踪 + action 映射
 │   ├── vibe_asset/      (118 行)      # 资源管理：纹理/字体加载与缓存
 │   ├── vibe_audio/       (85 行)      # 音频引擎：rodio WAV 播放
 │   ├── vibe_debug/      (206 行)      # VDP 服务：WebSocket + JSON-RPC 2.0
@@ -46,10 +46,10 @@ vibe2d/
 
 | crate | 依赖 | 职责 |
 |-------|------|------|
-| vibe2d | render, platform, input, asset, audio, debug | 顶层协调器 |
+| vibe2d | render, platform, input, asset, audio, debug (optional) | 顶层协调器 |
 | vibe_platform | render, input, wgpu, winit | 事件循环与窗口管理 |
 | vibe_render | wgpu, image, fontdue, glam | GPU 渲染管线 |
-| vibe_input | winit (KeyCode) | 键盘状态追踪 |
+| vibe_input | winit (KeyCode) | 键盘/鼠标状态追踪 |
 | vibe_asset | vibe_render | 资源加载与缓存 |
 | vibe_audio | rodio | 音效播放 |
 | vibe_debug | tokio, tokio-tungstenite | VDP WebSocket 服务 |
@@ -86,7 +86,9 @@ pub trait Game {
     fn update(&mut self, ctx: &mut Context, dt: f32, input: &InputState);
     fn draw(&mut self, ctx: &Context, screen: &mut Screen);
     fn clear_color(&self) -> Color { Color::BLACK }
+    #[cfg(feature = "vdp")]
     fn inspect(&self) -> serde_json::Value { Value::Null }
+    #[cfg(feature = "vdp")]
     fn handle_vdp(&mut self, method: &str, params: &Value) -> Result<Value, String>;
 }
 ```
@@ -113,12 +115,29 @@ struct GameBridge<G: Game> {
     game: Option<G>,
     assets: AssetManager,
     audio: AudioEngine,
-    vdp: Option<VdpChannel>,
     config: GameConfig,
     base_path: PathBuf,
     virtual_width: f32,
     virtual_height: f32,
     pending_screenshot: Option<PathBuf>,
+
+    // VDP fields (仅在 feature = "vdp" 时编译)
+    #[cfg(feature = "vdp")]
+    vdp: Option<VdpChannel>,
+    #[cfg(feature = "vdp")]
+    paused: bool,
+    #[cfg(feature = "vdp")]
+    step_frames: u32,
+    #[cfg(feature = "vdp")]
+    frame_count: u64,
+    #[cfg(feature = "vdp")]
+    elapsed_time: f64,
+    #[cfg(feature = "vdp")]
+    pending_simulated: Vec<SimulatedInput>,
+    #[cfg(feature = "vdp")]
+    pending_key_auto_releases: Vec<KeyCode>,
+    #[cfg(feature = "vdp")]
+    pending_mouse_auto_releases: Vec<MouseButton>,
 }
 ```
 
@@ -262,7 +281,7 @@ Surface 纹理不支持 COPY_SRC，因此使用离屏渲染：
 pub trait PlatformCallbacks {
     fn on_init(&mut self, renderer: &Renderer);
     fn on_input_event(&mut self, input: &mut InputState);
-    fn on_update(&mut self, dt: f32, input: &InputState);
+    fn on_update(&mut self, dt: f32, input: &mut InputState);
     fn on_render(&mut self, renderer: &mut Renderer);
     fn clear_color(&self) -> [f32; 4];
     fn get_textures(&self) -> Vec<&Texture>;
@@ -287,33 +306,50 @@ EventLoop resumed()
 
 ---
 
-### vibe_input — 输入系统（105 行）
+### vibe_input — 输入系统（200 行）
 
-键盘状态追踪，支持通过 YAML 配置 action 映射。
+键盘与鼠标状态追踪，支持通过 YAML 配置 action 映射。
 
 ```rust
 pub struct InputState {
+    // 键盘状态
     pressed: HashMap<KeyCode, bool>,        // 当前按住
     just_pressed: HashMap<KeyCode, bool>,   // 本帧刚按下
     just_released: HashMap<KeyCode, bool>,  // 本帧刚松开
     actions: HashMap<String, Vec<KeyCode>>, // action → 按键列表
+
+    // 鼠标状态
+    mouse_x: f32,                                 // 虚拟坐标 X
+    mouse_y: f32,                                 // 虚拟坐标 Y
+    mouse_pressed: HashMap<MouseButton, bool>,    // 当前按住
+    mouse_just_pressed: HashMap<MouseButton, bool>,
+    mouse_just_released: HashMap<MouseButton, bool>,
+    mouse_actions: HashMap<String, Vec<MouseButton>>, // action → 鼠标按键列表
 }
 ```
 
-每帧生命周期：
-1. 事件循环分发按键事件 → 更新 pressed / just_pressed / just_released
-2. 游戏代码查询：`input.is_action_just_pressed("flap")`
-3. 帧末清理：`begin_frame()` 清空 just_pressed / just_released
+鼠标按键类型：
 
-Action 映射配置：
+```rust
+pub enum MouseButton { Left, Right, Middle }
+```
+
+每帧生命周期：
+1. 事件循环分发键盘/鼠标事件 → 更新各自的 pressed / just_pressed / just_released
+2. 鼠标 `CursorMoved` 事件 → 物理坐标转虚拟坐标（按窗口/虚拟分辨率比例缩放）
+3. 游戏代码查询：`input.is_action_just_pressed("flap")`（同时检查键盘和鼠标绑定）
+4. 帧末清理：`begin_frame()` 清空所有 just_pressed / just_released
+
+Action 映射配置（支持键盘和鼠标混合绑定）：
 
 ```yaml
 input:
   actions:
     flap:
       keys: ["Space"]
+      mouse_buttons: ["Left"]    # 鼠标左键也触发 flap
     move_left:
-      keys: ["Left", "A"]   # 多键绑定，任一触发
+      keys: ["Left", "A"]       # 多键绑定，任一触发
 ```
 
 ---
@@ -374,6 +410,29 @@ pub struct VdpServerChannel {    // 服务线程持有
 
 ---
 
+## Feature Flag
+
+VDP 调试功能通过 Cargo feature flag `vdp` 控制，可在编译时完全剥离：
+
+```toml
+# crates/vibe2d/Cargo.toml
+[features]
+default = ["vdp"]
+vdp = ["dep:vibe_debug", "dep:serde_json"]
+```
+
+- **默认启用**：`cargo build` 包含 VDP 调试功能
+- **剥离 VDP**：`cargo build --no-default-features` 编译出纯净的发布版本
+- **级联传递**：游戏 crate 通过 `vdp = ["vibe2d/vdp"]` 向下透传
+
+受影响的代码均使用 `#[cfg(feature = "vdp")]` 门控：
+- `Game` trait 的 `inspect()` 和 `handle_vdp()` 方法
+- `GameBridge` 的 VDP 相关字段（vdp channel、调试器状态、模拟输入队列）
+- `on_update()` 中的 VDP 请求处理、pause/step/simulateInput 逻辑
+- `vibe_debug` 和 `serde_json` 依赖本身
+
+---
+
 ## 关键设计模式
 
 ### Take/Swap 模式
@@ -422,16 +481,41 @@ vibe_platform::run_desktop(config, callbacks)
 
 ┌─ 计算 dt ──────────────────────────────────────┐
 │                                                 │
+├─ 自动释放上一帧的 tap/click 输入               │
+│   pending_key_auto_releases → key_released      │
+│   pending_mouse_auto_releases → btn_released    │
+│                                                 │
 ├─ VDP 请求处理（非阻塞 try_recv）               │
 │   while channel.try_recv() {                    │
-│       response = handle_vdp_request(req)        │
-│       channel.send(response)                    │
+│       match method:                             │
+│         engine.pause  → paused = true           │
+│         engine.resume → paused = false          │
+│         engine.step   → step_frames = N         │
+│         engine.getTime → 返回帧/时间            │
+│         engine.simulateInput → 入队列           │
+│         engine.screenshot → pending_screenshot  │
+│         game.* → 转发给 game.handle_vdp()       │
 │   }                                             │
 │                                                 │
-├─ on_update(dt, input)                           │
-│   take assets/audio → Context                   │
-│   game.update(&mut ctx, dt, input)              │
-│   swap assets/audio 回 bridge                   │
+├─ 判断是否执行 update                            │
+│   will_update = !paused || step_frames > 0      │
+│                                                 │
+├─ 注入模拟输入（如有）                           │
+│   for input in pending_simulated.drain() {      │
+│     KeyPress/Release → input.on_key_*()         │
+│     KeyTap → press + 加入 auto_release 队列     │
+│     MouseMove → input.on_mouse_moved()          │
+│     MouseButton* → input.on_mouse_button_*()    │
+│     MouseButtonClick → press + auto_release     │
+│   }                                             │
+│                                                 │
+├─ on_update(effective_dt, input)                  │
+│   if will_update:                               │
+│     effective_dt = step时1/60 else real dt       │
+│     take assets/audio → Context                 │
+│     game.update(&mut ctx, dt, input)            │
+│     swap assets/audio 回 bridge                 │
+│     frame_count += 1; elapsed_time += dt        │
 │                                                 │
 ├─ on_render(renderer)                            │
 │   take assets/audio → Context                   │
@@ -445,7 +529,7 @@ vibe_platform::run_desktop(config, callbacks)
 │   draw_commands.clear()                         │
 │                                                 │
 ├─ input.begin_frame()                            │
-│   清空 just_pressed / just_released             │
+│   清空 just_pressed / just_released（键盘+鼠标）│
 │                                                 │
 └─ window.request_redraw() ──────────────────────┘
 ```
@@ -482,6 +566,7 @@ input:                        # 可选，输入映射
   actions:
     flap:
       keys: ["Space"]
+      mouse_buttons: ["Left"]   # 可选，鼠标按键绑定
 
 debug:                        # 可选，调试配置
   vdp:

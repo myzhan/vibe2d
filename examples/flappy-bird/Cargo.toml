@@ -4,8 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = ["vdp"]
+vdp = ["vibe2d/vdp", "dep:serde_json"]
+
 [dependencies]
 vibe2d = { workspace = true }
 rand.workspace = true
 tracing.workspace = true
-serde_json.workspace = true
+serde_json = { workspace = true, optional = true }
