@@ -12,7 +12,7 @@ members = [
     "tools/vibe-cli",
     "examples/flappy-bird",
     "examples/tetris",
-    "examples/portario",
+    "examples/mari0",
 ]
 
 [workspace.package]

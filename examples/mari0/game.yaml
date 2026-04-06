@@ -1,0 +1,68 @@
+meta:
+  name: "Mari0"
+  version: "0.1.0"
+
+window:
+  width: 1280
+  height: 960
+  title: "Mari0 - Vibe2D"
+  vsync: true
+
+virtual_resolution:
+  width: 512
+  height: 480
+
+assets:
+  textures:
+    # Mari0 sprite sheets
+    tiles: "assets/mari0/smbtiles.png"
+    mario0: "assets/mari0/marioanimations0.png"
+    mario1: "assets/mari0/marioanimations1.png"
+    mario2: "assets/mari0/marioanimations2.png"
+    mario3: "assets/mari0/marioanimations3.png"
+    mario_big0: "assets/mari0/bigmarioanimations0.png"
+    mario_big1: "assets/mari0/bigmarioanimations1.png"
+    mario_big2: "assets/mari0/bigmarioanimations2.png"
+    mario_big3: "assets/mari0/bigmarioanimations3.png"
+    goomba: "assets/mari0/goomba.png"
+    koopa: "assets/mari0/koopa.png"
+    coin_anim: "assets/mari0/coinanimation.png"
+    portal: "assets/mari0/portal.png"
+    portal_v: "assets/mari0/portal_v.png"
+    portal_crosshair: "assets/mari0/portalcrosshair.png"
+    portal_projectile: "assets/mari0/portalprojectile.png"
+    portal_dot: "assets/mari0/portaldot.png"
+    flag: "assets/mari0/flag.png"
+    entities: "assets/mari0/entities.png"
+    star: "assets/mari0/star.png"
+    flower: "assets/mari0/flower.png"
+    fireball: "assets/mari0/fireball.png"
+  fonts:
+    ui: "assets/fonts/game.ttf:16"
+    title: "assets/fonts/game.ttf:24"
+    score: "assets/fonts/game.ttf:12"
+    hud: "assets/fonts/game.ttf:10"
+
+input:
+  actions:
+    move_left:
+      keys: ["Left", "A"]
+    move_right:
+      keys: ["Right", "D"]
+    jump:
+      keys: ["Space", "W"]
+    crouch:
+      keys: ["Down", "S"]
+    portal_blue:
+      keys: []
+      mouse_buttons: ["Left"]
+    portal_orange:
+      keys: []
+      mouse_buttons: ["Right"]
+    fire:
+      keys: ["F", "ShiftLeft"]
+
+debug:
+  vdp:
+    enabled: true
+    port: 9229
