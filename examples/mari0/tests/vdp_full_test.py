@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Portario VDP 全流程验证脚本
+mari0 VDP 全流程验证脚本
 通过 VDP 协议验证平台跳跃+Portal 游戏的各项功能。
 重点测试: 鼠标坐标输入、键盘+鼠标组合、复杂多实体状态、Portal 机制。
 
 用法：
-  1. 先启动游戏: cd examples/portario && cargo run -p portario --features vdp
+  1. 先启动游戏: cd examples/mari0 && cargo run -p mari0 --features vdp
   2. 运行本脚本: python3 tests/vdp_full_test.py
 
 依赖: pip install websockets
@@ -1028,7 +1028,7 @@ async def test_screenshot(ws):
     await reset_to_playing(ws)
     await step_and_wait(ws, 3)
 
-    r = await rpc(ws, "game.screenshot", {"path": "/tmp/portario_vdp_test.png"})
+    r = await rpc(ws, "game.screenshot", {"path": "/tmp/mari0_vdp_test.png"})
     assert "result" in r
     print("    OK 截图请求已提交")
     await asyncio.sleep(0.5)
@@ -1038,7 +1038,7 @@ async def test_screenshot(ws):
 
 async def main():
     print("=" * 60)
-    print("Portario VDP 全流程验证脚本")
+    print("mari0 VDP 全流程验证脚本")
     print("=" * 60)
     print(f"连接: {WS_URL}")
     print(f"虚拟分辨率: {VIRTUAL_W}x{VIRTUAL_H}")
@@ -1109,7 +1109,7 @@ async def main():
 
     except ConnectionRefusedError:
         print("错误: 无法连接到游戏。请先启动游戏:")
-        print("  cd examples/portario && cargo run -p portario --features vdp")
+        print("  cd examples/mari0 && cargo run -p mari0 --features vdp")
         sys.exit(1)
     except AssertionError as e:
         print(f"\n测试失败: {e}")
