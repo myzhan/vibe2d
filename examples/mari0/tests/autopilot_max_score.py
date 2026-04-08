@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Portario AI Autopilot — 通过 VDP 协议自动通关第一关
+Portario AI Autopilot — 通过 VDP 协议自动通关第一关（含道具收集）
 
 策略:
   - 正常走路 (walk speed ~205 px/s)
   - 靠近高管道 (>=3格) 前按 Shift 加速跑 (~358 px/s) + 冲刺跳
   - 在坑前跳跃、遇敌跳跃、阶梯前跳跃
   - 至少使用一次 Portal 传送
+  - 识别前方含蘑菇/星星的问号砖块，走到下方跳跃顶出
+  - 追踪已弹出的蘑菇/星星道具，追上去碰触收集
 
 用法：
   1. 先启动游戏: cd examples/portario && cargo run -p portario --features vdp
@@ -87,6 +89,22 @@ STAIR_WALLS = [
 TALL_PIPES = [(c, h) for c, h in PIPES if h >= 3]
 
 
+def enemies_ahead_list(state, max_dist=256):
+    """Find all living enemies ahead of Mario within max_dist, sorted by distance."""
+    p = state["player"]
+    px = p["x"] + p["width"] / 2
+    results = []
+    for e in state["enemies"]:
+        if e["state"] == "dead":
+            continue
+        ex = e["x"] + 16
+        dx = ex - px
+        dy = e["y"] - p["y"]
+        if 0 < dx < max_dist and abs(dy) < TILE * 4:
+            results.append((dx, e))
+    results.sort(key=lambda t: t[0])
+    return results
+
 def nearest_enemy_ahead(state, max_dist=192):
     p = state["player"]
     px = p["x"] + p["width"] / 2
@@ -103,6 +121,61 @@ def nearest_enemy_ahead(state, max_dist=192):
                 best_dx = dx
                 best = e
     return best, best_dx
+
+def nearest_enemy_behind(state, max_dist=96):
+    """Detect enemies approaching from behind Mario (negative dx)."""
+    p = state["player"]
+    px = p["x"] + p["width"] / 2
+    best = None
+    best_dx = max_dist
+    for e in state["enemies"]:
+        if e["state"] == "dead":
+            continue
+        ex = e["x"] + 16
+        dx = px - ex  # positive means enemy is behind (to the left)
+        dy = e["y"] - p["y"]
+        if 0 < dx < max_dist and abs(dy) < TILE * 2:
+            if dx < best_dx:
+                best_dx = dx
+                best = e
+    return best, best_dx
+
+def find_powerup_blocks_ahead(state, max_dist=256):
+    """Find unhit question blocks containing mushroom/star/1up/fire_flower ahead of Mario."""
+    p = state["player"]
+    px = p["x"] + p["width"] / 2
+    results = []
+    for block in state.get("block_contents", []):
+        if block["content"] not in ("mushroom", "star", "1up", "fire_flower"):
+            continue
+        bx = block["x"] + TILE / 2  # block center
+        dx = bx - px
+        if 0 < dx < max_dist:
+            results.append((dx, block))
+    results.sort(key=lambda t: t[0])
+    return results
+
+def find_collectible_item(state, max_dist=320):
+    """Find the nearest collectible item (mushroom/star/1up/fire_flower) that has emerged."""
+    p = state["player"]
+    px = p["x"] + p["width"] / 2
+    py = p["y"] + p["height"] / 2
+    best = None
+    best_dist = max_dist
+    for item in state.get("items", []):
+        if item.get("emerging", True):
+            continue
+        if item["type"] not in ("mushroom", "star", "1up", "fire_flower"):
+            continue
+        ix = item["x"] + TILE / 2
+        iy = item["y"] + TILE / 2
+        dx = ix - px
+        dy = iy - py
+        dist = abs(dx) + abs(dy) * 0.5  # weight horizontal distance more
+        if dist < best_dist:
+            best_dist = dist
+            best = item
+    return best
 
 
 # ── Autopilot ────────────────────────────────────────────────────────
@@ -134,6 +207,16 @@ class Autopilot:
         self.backup_phase = 0
         self.backup_timer = 0
         self.post_backup_cooldown = 0
+
+        # Item collection tracking
+        self.item_hunt_phase = 0       # 0=normal, 3=chasing_item(left)
+        self.items_collected = 0       # stats
+        self.blocks_hit = set()        # (row, col) of blocks we've already hit
+        self.slow_for_item = 0         # frames to stop after hitting a powerup block
+
+        # Damage tracking
+        self.prev_is_fire = False
+        self.prev_is_big = False
 
     # ── Key helpers ──
 
@@ -209,17 +292,14 @@ class Autopilot:
             if key in self.consumed_jumps:
                 continue
             if height >= 4:
-                # 4-tile pipe: full sprint jump, trigger 4-5.5 tiles before
                 trigger_min = pipe_left - TILE * 5.5
                 trigger_max = pipe_left - TILE * 3.5
                 hold = 14
             elif height >= 3:
-                # 3-tile pipe: SHORT sprint jump (land sooner for next pipe)
                 trigger_min = pipe_left - TILE * 4
                 trigger_max = pipe_left - TILE * 2
                 hold = 8
             else:
-                # Short pipe: normal jump 2-3 tiles before
                 trigger_min = pipe_left - TILE * 3
                 trigger_max = pipe_left - TILE * 1.5
                 hold = 10
@@ -277,19 +357,40 @@ class Autopilot:
         """Enemy-dense area: cols 95-132 (x=3040-4224)."""
         return 3040 <= px <= 4224
 
+    def is_near_danger(self, px, radius=None):
+        """Check if Mario is near a gap — don't detour for items here."""
+        r = radius if radius is not None else TILE * 7
+        for start_col, width in GAPS:
+            gap_x = start_col * TILE
+            if gap_x - r <= px <= gap_x + width * TILE + TILE * 2:
+                return True
+        return False
+
+    def find_target_block(self, state):
+        """Find the nearest powerup block ahead that we haven't hit yet."""
+        p = state["player"]
+        py = p["y"]
+        blocks = find_powerup_blocks_ahead(state, max_dist=TILE * 10)
+        for _dx, block in blocks:
+            key = (block["row"], block["col"])
+            if key in self.blocks_hit:
+                continue
+            # Skip blocks that are too high to reach from current position
+            block_bottom = block["y"] + TILE
+            if py - block_bottom > TILE * 4:
+                continue
+            return block
+        return None
+
     # ── Portal ──
 
     async def do_portal(self, ws, state):
         p = state["player"]
         px = p["x"]
         if self.portal_phase == 0:
-            # Wall-mounted portals in the safe starting zone (no enemies).
-            # Blue "left" portal: Mario walks right (vx>0) into it.
-            # Orange "right" portal: Mario exits moving rightward.
             blue_x = px + TILE * 3
             orange_x = px + TILE * 6
-            # Center portals at Mario's vertical midpoint when standing
-            portal_y = 13 * TILE - p["height"] / 2  # ground_y - half_height
+            portal_y = 13 * TILE - p["height"] / 2
             await rpc(ws, "game.setPortal",
                       {"index": 0, "x": blue_x, "y": portal_y,
                        "orientation": "left", "active": True})
@@ -303,7 +404,6 @@ class Autopilot:
                   f"orange=({orange_x:.0f},{portal_y:.0f}) right")
 
         elif self.portal_phase == 1:
-            # Detect actual teleport via game's teleport_cooldown
             tc = p.get("teleport_cooldown", 0)
             if tc > 0:
                 print(f"    Portal: teleport confirmed! cooldown={tc:.3f}")
@@ -322,7 +422,6 @@ class Autopilot:
     async def handle_backup(self, ws, state):
         """Back up, then return to normal — let triggers handle the jump."""
         if self.backup_phase == 1:
-            # Going left to create distance
             self.backup_timer -= 1
             if self.backup_timer <= 0:
                 await self.release_left(ws)
@@ -339,6 +438,24 @@ class Autopilot:
         p = state["player"]
         px, py = p["x"], p["y"]
         on_ground = p["on_ground"]
+        is_fire = p.get("is_fire", False)
+        is_big = p.get("is_big", False)
+
+        # Detect damage (power state downgrade)
+        if self.prev_is_fire and not is_fire:
+            near = [(e["x"], e["y"], e.get("type", "?")) for e in state["enemies"]
+                    if e["state"] != "dead" and abs(e["x"] - px) < TILE * 5]
+            print(f"    *** HIT! Lost fire @ F{self.frame} x={px:.0f} y={py:.0f} "
+                  f"vx={p.get('vx',0):.0f} vy={p.get('vy',0):.0f} "
+                  f"on_g={on_ground} near_enemies={near}")
+        elif self.prev_is_big and not is_big:
+            near = [(e["x"], e["y"], e.get("type", "?")) for e in state["enemies"]
+                    if e["state"] != "dead" and abs(e["x"] - px) < TILE * 5]
+            print(f"    *** HIT! Lost big @ F{self.frame} x={px:.0f} y={py:.0f} "
+                  f"vx={p.get('vx',0):.0f} vy={p.get('vy',0):.0f} "
+                  f"on_g={on_ground} near_enemies={near}")
+        self.prev_is_fire = is_fire
+        self.prev_is_big = is_big
 
         self.x_history.append(px)
         if len(self.x_history) > self.HISTORY_LEN:
@@ -360,8 +477,14 @@ class Autopilot:
             await self.hold_right(ws)
             return
 
-        # ── Always right ──
-        await self.hold_right(ws)
+        # ── Movement: conditional right (allow stopping for items) ──
+        if self.slow_for_item > 0:
+            # Stopped waiting for item — item collection logic controls movement
+            await self.release_right(ws)
+            await self.release_sprint(ws)
+        elif self.item_hunt_phase != 3:
+            # Normal movement
+            await self.hold_right(ws)
 
         # ── Sprint: near obstacles ──
         if self.in_sprint_zone(px):
@@ -398,7 +521,6 @@ class Autopilot:
             self.backup_phase = 1
             self.backup_timer = 110
             self.x_history.clear()
-            # Allow re-triggering jump for any pipe near current pos
             for left_col, height in PIPES:
                 key = f"pipe_{left_col}"
                 self.consumed_jumps.discard(key)
@@ -412,8 +534,145 @@ class Autopilot:
             obs = self.approaching_gap(px)
             if obs:
                 hold, key = obs
-                await self.start_jump(ws, hold)
+                # If waiting for item to emerge and safely away from gap edge, delay jump
+                delay_for_item = False
+                if self.slow_for_item > 0:
+                    for sc, w in GAPS:
+                        gap_edge = sc * TILE
+                        if gap_edge - TILE * 5 <= px < gap_edge - TILE * 2:
+                            delay_for_item = True
+                            break
+                if not delay_for_item:
+                    self.item_hunt_phase = 0
+                    await self.start_jump(ws, hold)
+                    return
+
+        # ── Enemy avoidance (ALWAYS runs) ──
+        enemy, edist = nearest_enemy_ahead(state, max_dist=TILE * 6)
+        if enemy and on_ground and not self.jump_held:
+            if edist < TILE * 5:
+                if self.item_hunt_phase == 3:
+                    await self.release_left(ws)
+                    await self.hold_right(ws)
+                    self.item_hunt_phase = 0
+                await self.start_jump(ws, 14)
                 return
+
+        # ── Enemy behind detection (bounced goombas approaching from rear) ──
+        enemy_behind, bdist = nearest_enemy_behind(state, max_dist=TILE * 3)
+        if enemy_behind and on_ground and not self.jump_held:
+            if self.item_hunt_phase == 3:
+                await self.release_left(ws)
+                await self.hold_right(ws)
+                self.item_hunt_phase = 0
+            await self.start_jump(ws, 10)
+            return
+
+        # ── Slow down counter: clear if item already collected ──
+        if self.slow_for_item > 0:
+            self.slow_for_item -= 1
+            # If all items collected (none emerged on field), resume early
+            emerged_items = [i for i in state.get("items", []) if not i.get("emerging", True)]
+            if not emerged_items and self.slow_for_item < 70:
+                self.slow_for_item = 0
+
+        # ── Collect spawned items (mushroom/star/1up/fire_flower) ──
+        collectible = find_collectible_item(state, max_dist=TILE * 20)
+        if collectible and not self.is_near_danger(px):
+            ix = collectible["x"] + TILE / 2
+            iy = collectible["y"] + TILE / 2
+            player_cx = px + p["width"] / 2
+            player_cy = py + p["height"] / 2
+            dx = ix - player_cx
+            dy = iy - player_cy
+            itype = collectible["type"]
+
+            if itype == "fire_flower" and dy < -TILE:
+                # Fire flower sits ON TOP of used block — must approach from side
+                # and sprint-jump to arc over the block
+                if on_ground and not self.jump_held:
+                    if dx < TILE * 2:
+                        # Too close — back up to get sprint-jump distance
+                        await self.release_right(ws)
+                        await self.hold_left(ws)
+                        self.item_hunt_phase = 3
+                        self.item_hunt_timer = 80
+                        return
+                    else:
+                        # Far enough left — sprint jump over the block
+                        await self.release_left(ws)
+                        await self.hold_right(ws)
+                        await self.hold_sprint(ws)
+                        await self.start_jump(ws, 14)
+                        self.item_hunt_phase = 0
+                        return
+            elif itype != "fire_flower":
+                # Moving items: mushroom, star, 1up
+                if dx < -4 and abs(dx) < TILE * 12:
+                    # Item behind us — go back for it
+                    if on_ground and not self.jump_held:
+                        chase_time = 60 if itype == "star" else 120
+                        await self.release_right(ws)
+                        await self.release_sprint(ws)
+                        await self.hold_left(ws)
+                        self.item_hunt_phase = 3
+                        self.item_hunt_timer = chase_time
+                        return
+                elif 0 <= dx < TILE * 8:
+                    # Item ahead — walk toward it
+                    if not self.in_sprint_zone(px):
+                        await self.release_sprint(ws)
+                    await self.hold_right(ws)
+                elif self.item_hunt_phase == 3:
+                    # Were chasing left, item now far ahead — resume right
+                    await self.release_left(ws)
+                    await self.hold_right(ws)
+                    self.item_hunt_phase = 0
+                    self.item_hunt_timer = 0
+
+                # Item above us (star bouncing) — jump to catch
+                if abs(dx) < TILE * 3 and dy < -TILE * 1.0 and on_ground and not self.jump_held:
+                    hold = min(14, max(6, int(-dy / TILE * 3)))
+                    await self.start_jump(ws, hold)
+                    return
+        elif self.item_hunt_phase == 3:
+            # In danger zone or no collectible — cancel backwards chase
+            await self.release_left(ws)
+            await self.hold_right(ws)
+            self.item_hunt_phase = 0
+            self.item_hunt_timer = 0
+
+        # Handle backwards chase timeout
+        if self.item_hunt_phase == 3:
+            self.item_hunt_timer -= 1
+            if self.item_hunt_timer <= 0 or not collectible:
+                await self.release_left(ws)
+                await self.hold_right(ws)
+                self.item_hunt_phase = 0
+                self.item_hunt_timer = 0
+
+        # ── Hit powerup blocks (mushroom/star) — jump under them ──
+        if on_ground and not self.jump_held and not self.is_near_danger(px, TILE * 3):
+            target_block = self.find_target_block(state)
+            if target_block:
+                bx = target_block["x"]
+                by = target_block["y"]
+                block_cx = bx + TILE / 2
+                player_cx = px + p["width"] / 2
+                dx_to_block = block_cx - player_cx
+
+                if abs(dx_to_block) < TILE * 1.2:
+                    # Under the block — jump!
+                    self.blocks_hit.add((target_block["row"], target_block["col"]))
+                    await self.release_sprint(ws)
+                    await self.start_jump(ws, 10)
+                    self.slow_for_item = 120
+                    print(f"    Item: hitting {target_block['content']} block at col={target_block['col']}")
+                    return
+                elif 0 < dx_to_block < TILE * 3:
+                    # Approaching block — release sprint to avoid overshooting
+                    if not self.in_sprint_zone(px):
+                        await self.release_sprint(ws)
 
         # ── Pre-obstacle jumping (pipes, stairs) ──
         if on_ground and not self.jump_held:
@@ -431,12 +690,48 @@ class Autopilot:
                 self.consumed_jumps.add(key)
                 return
 
-        # ── Enemy avoidance: early detection + full-height jump ──
-        enemy, edist = nearest_enemy_ahead(state, max_dist=TILE * 6)
-        if enemy and on_ground and not self.jump_held:
-            if edist < TILE * 5:
-                await self.start_jump(ws, 14)
-                return
+        # ── Air control: dodge enemies / track items while airborne ──
+        if not on_ground:
+            over_gap = any(
+                sc * TILE - TILE <= px <= (sc + w) * TILE + TILE
+                for sc, w in GAPS
+            )
+            if not over_gap:
+                air_adjusted = False
+                # Dodge enemies at similar height
+                for e in state["enemies"]:
+                    if e["state"] == "dead":
+                        continue
+                    ex = e["x"] + 16
+                    ey = e["y"]
+                    player_cx = px + p["width"] / 2
+                    player_bottom = py + p["height"]
+                    dx_e = ex - player_cx
+                    dy_e = ey - player_bottom
+                    if abs(dx_e) < TILE * 2 and -TILE < dy_e < TILE * 0.5:
+                        if dx_e > 0:
+                            # Enemy ahead — pull back
+                            await self.release_right(ws)
+                        else:
+                            # Enemy behind — speed up
+                            await self.hold_right(ws)
+                            await self.release_left(ws)
+                        air_adjusted = True
+                        break
+                # Track collectible items while airborne
+                if not air_adjusted and collectible:
+                    ix = collectible["x"] + TILE / 2
+                    player_cx = px + p["width"] / 2
+                    dx_item = ix - player_cx
+                    iy = collectible["y"] + TILE / 2
+                    dy_item = iy - (py + p["height"] / 2)
+                    if abs(dx_item) < TILE * 4 and abs(dy_item) < TILE * 3:
+                        if dx_item < -TILE * 0.5:
+                            await self.release_right(ws)
+                            await self.hold_left(ws)
+                        elif dx_item > TILE * 0.5:
+                            await self.release_left(ws)
+                            await self.hold_right(ws)
 
         # ── Periodic jumping (fallback) ──
         if on_ground:
@@ -445,11 +740,9 @@ class Autopilot:
             self.frames_on_ground = 0
 
         if on_ground and not self.jump_held:
-            # In staircase areas: frequent jumps for climbing steps
             if self.in_staircase_area(px) and self.frames_on_ground > 5:
                 await self.start_jump(ws, 8)
                 self.frames_on_ground = 0
-            # Normal periodic jump elsewhere
             elif self.frames_on_ground > 25:
                 if not self.should_skip_periodic_jump(px):
                     await self.start_jump(ws, 14)
@@ -544,7 +837,6 @@ async def main():
                 await step(ws, 1)
                 frame += 1
 
-                # Debug: log every frame during portal phase 1
                 if ai.portal_phase == 1:
                     p = state["player"]
                     print(f"    [F{frame}] portal: x={p['x']:.1f} vx={p.get('vx',0):.1f} "
@@ -562,9 +854,17 @@ async def main():
                     ea = sum(1 for e in state["enemies"]
                              if e["state"] != "dead")
                     sprint = "S" if ai.sprint_held else " "
+                    star_t = state.get("star_timer", 0)
+                    big = "B" if p.get("is_big") else " "
+                    fire = "F" if p.get("is_fire") else " "
+                    star = f"★{star_t:.0f}" if star_t > 0 else ""
+                    items_on_field = len(state.get("items", []))
+                    blocks_remaining = sum(1 for b in state.get("block_contents", [])
+                                           if b["content"] in ("mushroom", "star", "1up", "fire_flower"))
                     print(f"  [F{frame:4d}] x={p['x']:7.1f} ({pct:4.1f}%) "
-                          f"vx={p.get('vx', 0):6.1f} [{sprint}] "
+                          f"vx={p.get('vx', 0):6.1f} [{sprint}{big}{fire}] "
                           f"score={state['score']:5d}  enemies={ea}  "
+                          f"items={items_on_field} pwr_blocks={blocks_remaining} {star} "
                           f"time={state['time_remaining']:.0f}  ({el:.1f}s)")
 
             await ai.cleanup(ws)
@@ -573,6 +873,12 @@ async def main():
             el = time.time() - t0
             p = state.get("player", {})
             pct = p.get("x", 0) / flag_x * 100 if flag_x > 0 else 0
+
+            blocks_remaining = sum(1 for b in state.get("block_contents", [])
+                                    if b["content"] in ("mushroom", "star", "1up", "fire_flower"))
+            is_big = state.get("player", {}).get("is_big", False)
+            is_fire = state.get("player", {}).get("is_fire", False)
+            star_active = state.get("star_timer", 0) > 0
 
             print(f"\n{'=' * 55}")
             print(f"RESULT:")
@@ -583,6 +889,11 @@ async def main():
             print(f"  deaths:   {deaths}")
             print(f"  progress: {p.get('x', 0):.0f}/{flag_x:.0f} ({pct:.1f}%)")
             print(f"  portal:   {'YES' if ai.portal_used else 'NO'}")
+            print(f"  big:      {'YES' if is_big else 'NO'}")
+            print(f"  fire:     {'YES' if is_fire else 'NO'}")
+            print(f"  star:     {'ACTIVE' if star_active else 'no'}")
+            print(f"  pwr_blks: {blocks_remaining} remaining")
+            print(f"  blks_hit: {len(ai.blocks_hit)}")
             print(f"  frames:   {frame}")
             print(f"  time:     {el:.1f}s")
             print(f"{'=' * 55}")
@@ -590,9 +901,11 @@ async def main():
             ok = state.get("state") == "level_complete"
             nd = deaths == 0
             up = ai.portal_used
+            all_powerups = blocks_remaining == 0
             print(f"\n  [{'x' if ok else ' '}] Level complete")
             print(f"  [{'x' if nd else ' '}] No deaths ({deaths})")
             print(f"  [{'x' if up else ' '}] Portal used")
+            print(f"  [{'x' if all_powerups else ' '}] All powerup blocks hit ({len(ai.blocks_hit)} hit, {blocks_remaining} remaining)")
 
             if ok and nd and up:
                 print("\n  ALL CONDITIONS MET!")

@@ -1195,10 +1195,6 @@ impl Mari0Game {
         }
 
         // Player-enemy interaction
-        if self.player.invincible_timer > 0.0 {
-            self.enemies.retain(|e| e.state == EnemyState::Dead || e.death_timer > 0.0 || e.state != EnemyState::Walking);
-        }
-
         let mut player_bounce = false;
         for enemy in &mut self.enemies {
             if enemy.state == EnemyState::Dead || !enemy.activated { continue; }
@@ -2473,6 +2469,36 @@ impl Game for Mari0Game {
             })
         }).collect();
 
+        let items: Vec<serde_json::Value> = self.items.iter().map(|item| {
+            serde_json::json!({
+                "type": match item.item_type {
+                    ItemType::Mushroom => "mushroom",
+                    ItemType::Star => "star",
+                    ItemType::OneUp => "1up",
+                    ItemType::FireFlower => "fire_flower",
+                },
+                "x": item.x, "y": item.y,
+                "vx": item.vx, "vy": item.vy,
+                "emerging": item.emerging,
+            })
+        }).collect();
+
+        let block_contents: Vec<serde_json::Value> = self.level.block_contents.iter().map(|((row, col), content)| {
+            serde_json::json!({
+                "row": row, "col": col,
+                "x": *col as f32 * TILE_SIZE,
+                "y": *row as f32 * TILE_SIZE,
+                "content": match content {
+                    BlockContent::Coin => "coin",
+                    BlockContent::MultiCoin(_) => "multi_coin",
+                    BlockContent::Mushroom => "mushroom",
+                    BlockContent::Star => "star",
+                    BlockContent::OneUp => "1up",
+                    BlockContent::FireFlower => "fire_flower",
+                },
+            })
+        }).collect();
+
         serde_json::json!({
             "state": state_str,
             "player": {
@@ -2485,6 +2511,7 @@ impl Game for Mari0Game {
                 "on_ground": self.player.on_ground,
                 "facing_right": self.player.facing_right,
                 "is_big": self.player.is_big,
+                "is_fire": self.player.is_fire,
                 "is_jumping": self.player.is_jumping,
                 "anim_state": anim_str,
                 "portal_cooldown": self.player.portal_cooldown,
@@ -2510,6 +2537,9 @@ impl Game for Mari0Game {
             "lives": self.lives,
             "combo_index": self.combo_index,
             "time_remaining": self.time_remaining,
+            "items": items,
+            "block_contents": block_contents,
+            "star_timer": self.star_timer,
         })
     }
 
