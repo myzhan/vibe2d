@@ -30,6 +30,9 @@ pub trait PlatformCallbacks {
     fn clear_color(&self) -> [f32; 4];
     fn get_textures(&self) -> Vec<&vibe_render::Texture>;
     fn should_render(&self) -> bool { true }
+    /// Returns `true` when real keyboard/mouse input should be suppressed
+    /// (e.g. a VDP client is connected and providing simulated input).
+    fn should_suppress_input(&self) -> bool { false }
 }
 
 struct App<C: PlatformCallbacks> {
@@ -142,36 +145,42 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if let PhysicalKey::Code(keycode) = event.physical_key {
-                    if event.state.is_pressed() {
-                        self.input.on_key_pressed(keycode);
-                    } else {
-                        self.input.on_key_released(keycode);
+                if !self.callbacks.should_suppress_input() {
+                    if let PhysicalKey::Code(keycode) = event.physical_key {
+                        if event.state.is_pressed() {
+                            self.input.on_key_pressed(keycode);
+                        } else {
+                            self.input.on_key_released(keycode);
+                        }
                     }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if let Some(window) = &self.window {
-                    let size = window.inner_size();
-                    if size.width > 0 && size.height > 0 {
-                        let vx = (position.x as f32 / size.width as f32) * self.config.virtual_width;
-                        let vy = (position.y as f32 / size.height as f32) * self.config.virtual_height;
-                        self.input.on_mouse_moved(vx, vy);
+                if !self.callbacks.should_suppress_input() {
+                    if let Some(window) = &self.window {
+                        let size = window.inner_size();
+                        if size.width > 0 && size.height > 0 {
+                            let vx = (position.x as f32 / size.width as f32) * self.config.virtual_width;
+                            let vy = (position.y as f32 / size.height as f32) * self.config.virtual_height;
+                            self.input.on_mouse_moved(vx, vy);
+                        }
                     }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                let mb = match button {
-                    winit::event::MouseButton::Left => Some(vibe_input::MouseButton::Left),
-                    winit::event::MouseButton::Right => Some(vibe_input::MouseButton::Right),
-                    winit::event::MouseButton::Middle => Some(vibe_input::MouseButton::Middle),
-                    _ => None,
-                };
-                if let Some(mb) = mb {
-                    if state.is_pressed() {
-                        self.input.on_mouse_button_pressed(mb);
-                    } else {
-                        self.input.on_mouse_button_released(mb);
+                if !self.callbacks.should_suppress_input() {
+                    let mb = match button {
+                        winit::event::MouseButton::Left => Some(vibe_input::MouseButton::Left),
+                        winit::event::MouseButton::Right => Some(vibe_input::MouseButton::Right),
+                        winit::event::MouseButton::Middle => Some(vibe_input::MouseButton::Middle),
+                        _ => None,
+                    };
+                    if let Some(mb) = mb {
+                        if state.is_pressed() {
+                            self.input.on_mouse_button_pressed(mb);
+                        } else {
+                            self.input.on_mouse_button_released(mb);
+                        }
                     }
                 }
             }

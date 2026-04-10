@@ -241,6 +241,13 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
 
     fn on_input_event(&mut self, _input: &mut vibe_input::InputState) {}
 
+    #[cfg(feature = "vdp")]
+    fn should_suppress_input(&self) -> bool {
+        self.vdp
+            .as_ref()
+            .map_or(false, |vdp| vdp.is_client_connected())
+    }
+
     fn on_update(&mut self, dt: f32, input: &mut vibe_input::InputState) {
         // ── VDP: auto-releases, request processing, pause/step logic ──
         #[cfg(feature = "vdp")]

@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::atomic::Ordering;
 
 use anyhow::Result;
 use futures_util::{SinkExt, StreamExt};
@@ -42,9 +43,12 @@ async fn run_server(addr: SocketAddr, channel: VdpServerChannel) -> Result<()> {
     loop {
         let (stream, peer) = listener.accept().await?;
         tracing::info!("VDP client connected: {}", peer);
+        channel.client_connected.store(true, Ordering::Relaxed);
         if let Err(e) = handle_connection(stream, &channel).await {
             tracing::warn!("VDP connection closed: {}", e);
         }
+        channel.client_connected.store(false, Ordering::Relaxed);
+        tracing::info!("VDP client disconnected: {}", peer);
     }
 }
 
