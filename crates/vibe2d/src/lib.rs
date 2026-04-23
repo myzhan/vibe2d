@@ -75,7 +75,11 @@ struct PendingStepInspect {
 pub fn run<G: Game + 'static>(config_path: &str) {
     tracing_subscriber::fmt::init();
 
-    let config = GameConfig::load(config_path).expect("Failed to load game config");
+    // Resolve config path: falls back to CARGO_MANIFEST_DIR when running
+    // from the workspace root (e.g. `cargo run -p mari0`).
+    let resolved_config_path = GameConfig::resolve_config_path(config_path);
+    let config = GameConfig::load_from_path(&resolved_config_path)
+        .expect("Failed to load game config");
 
     let virtual_width = config.virtual_resolution.as_ref().map_or(
         config.window.width as f32,
@@ -134,11 +138,10 @@ pub fn run<G: Game + 'static>(config_path: &str) {
         ui_state: vibe_ui::UiState::new(),
         white_texture_id: None,
         config,
-        base_path: std::path::PathBuf::from(
-            std::path::Path::new(config_path)
-                .parent()
-                .unwrap_or(std::path::Path::new(".")),
-        ),
+        base_path: resolved_config_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf(),
         virtual_width,
         virtual_height,
         pending_screenshot: None,

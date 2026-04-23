@@ -69,9 +69,33 @@ pub struct VdpConfig {
 
 impl GameConfig {
     pub fn load(path: &str) -> Result<Self> {
+        let resolved = Self::resolve_config_path(path);
+        Self::load_from_path(&resolved)
+    }
+
+    /// Load config from an already-resolved path.
+    pub fn load_from_path(path: &std::path::Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_yaml::from_str(&content)?;
         Ok(config)
+    }
+
+    /// Resolve the config file path. If `path` doesn't exist in the current
+    /// directory, fall back to `CARGO_MANIFEST_DIR` (set by `cargo run`) so
+    /// that games work when launched from the workspace root.
+    pub fn resolve_config_path(path: &str) -> std::path::PathBuf {
+        let direct = std::path::Path::new(path);
+        if direct.exists() {
+            return direct.to_path_buf();
+        }
+        if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
+            let candidate = std::path::Path::new(&manifest_dir).join(path);
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+        // Return original path so the caller gets a clear "not found" error
+        direct.to_path_buf()
     }
 
     pub fn get_constant_f32(&self, key: &str) -> Option<f32> {
