@@ -69,8 +69,8 @@ async fn main() -> Result<()> {
             // wrapping the raw string so `vibe rpc foo hello` still works.
             // `unwrap_or` is fine here because the fallback value is already
             // owned — no allocation to defer.
-            let params: serde_json::Value = serde_json::from_str(&params)
-                .unwrap_or(serde_json::Value::String(params));
+            let params: serde_json::Value =
+                serde_json::from_str(&params).unwrap_or(serde_json::Value::String(params));
             let result = vdp_call(&addr, &method, params).await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

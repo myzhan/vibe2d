@@ -181,8 +181,8 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                     if size.width > 0 && size.height > 0 {
                         let vx =
                             (position.x as f32 / size.width as f32) * self.config.virtual_width;
-                        let vy = (position.y as f32 / size.height as f32)
-                            * self.config.virtual_height;
+                        let vy =
+                            (position.y as f32 / size.height as f32) * self.config.virtual_height;
                         self.input.on_mouse_moved(vx, vy);
                     }
                 }

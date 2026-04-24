@@ -54,7 +54,12 @@ jobs:
         # --workspace: every crate in the workspace
         # --lib --bins --tests: build all test harnesses but
         #   `#[ignore]`-gated tests (VDP integration) stay skipped by default
-        run: cargo test --workspace --lib --bins --tests --locked
+        #
+        # Note: we deliberately do NOT pass --locked. Vibe2D is a library
+        # project (game engine + companion crates), so per Cargo's guidance
+        # we don't commit Cargo.lock. CI therefore resolves deps fresh on
+        # every run, which is the intended behavior for libraries.
+        run: cargo test --workspace --lib --bins --tests
 
   # ── Format check ──────────────────────────────────────────────
   fmt:
@@ -87,6 +92,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev
       - name: Clippy on engine crates + cli
+        # See the `test` job for why we don't pass --locked.
         run: |
           cargo clippy \
             -p vibe2d \
@@ -100,7 +106,7 @@ jobs:
             -p vibe_physics \
             -p vibe_test \
             -p vibe-cli \
-            --all-targets --locked -- -D warnings
+            --all-targets -- -D warnings
 
   # ── Release build without VDP ────────────────────────────────
   # Confirms the `--no-default-features` path (VDP stripped) still compiles.
@@ -117,4 +123,5 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev
-      - run: cargo build --workspace --no-default-features --locked
+      # See the `test` job for why we don't pass --locked.
+      - run: cargo build --workspace --no-default-features
