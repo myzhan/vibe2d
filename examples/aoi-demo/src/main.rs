@@ -71,8 +71,6 @@ const POINT_RADIUS: f32 = 2.5;
 /// center. Set to ~60 % of CIRCLE_RADIUS so the visible lit "core" is
 /// noticeably smaller than the broadphase ring.
 const LOD_RADIUS: f32 = 18.0;
-//        // procedural circle textures (`vibe_render::builtin::CIRCLE_RING` /
-// `CIRCLE_FILLED`). Squares use the white-pixel texture
 
 /// Static classification for each scatter entity. Stored alongside
 /// the AOI world in `AoiDemo::scatter_kind`, keyed by `EntityId`,
@@ -139,6 +137,19 @@ struct AoiDemo {
     /// have to walk `scatter_kind` every frame. (Squares = NUM_POINTS - rounds.)
     round_count: usize,
     paused: bool,
+
+    /// 1×1 white pixel texture used for the gutter separator and the
+    /// square scatter dots. Built once in `new()` via
+    /// [`Renderer::create_white_pixel_texture`] — the engine no longer
+    /// pre-creates it, so the demo owns the lifecycle.
+    white_tex: TextureId,
+    /// 256² antialiased filled disc, used for round scatter dots via
+    /// [`Screen::draw_circle`]. Built in `new()`.
+    circle_filled_tex: TextureId,
+    /// 256² antialiased ring, used for the moving observer rings via
+    /// [`Screen::draw_circle_outline`]. 8 % stroke ratio reads well at
+    /// the radii used here.
+    circle_ring_tex: TextureId,
 }
 
 impl AoiDemo {
@@ -256,7 +267,24 @@ impl AoiDemo {
 }
 
 impl Game for AoiDemo {
-    fn new(_ctx: &mut Context) -> Self {
+    fn new(ctx: &mut Context, renderer: &Renderer) -> Self {
+        // Build the procedural textures the demo needs and register
+        // them into the asset manager so the renderer can reach them
+        // by `TextureId` during sprite batching. The engine no longer
+        // ships any built-in textures — every game declares what it
+        // needs up front.
+        let white_tex = ctx
+            .assets
+            .register_texture("aoi_demo_white", renderer.create_white_pixel_texture());
+        let circle_filled_tex = ctx.assets.register_texture(
+            "aoi_demo_circle_filled",
+            renderer.create_filled_circle_texture("aoi_demo_circle_filled", 256),
+        );
+        let circle_ring_tex = ctx.assets.register_texture(
+            "aoi_demo_circle_ring",
+            renderer.create_ring_texture("aoi_demo_circle_ring", 256, 0.08),
+        );
+
         let mut aoi = AoiWorld::new(Vec2::new(WORLD_W, WORLD_H));
 
         // Deterministic scatter — same seed every launch so the demo is
@@ -356,6 +384,9 @@ impl Game for AoiDemo {
             leave_count_total: 0,
             round_count,
             paused: false,
+            white_tex,
+            circle_filled_tex,
+            circle_ring_tex,
         };
 
         // Drain the initial Enter events from each observer so frame 0
@@ -425,14 +456,13 @@ impl Game for AoiDemo {
         // top of the world via the engine's UI pipeline instead of
         // being baked into the world layer (where it would have to
         // contend with the rings drawn in `draw`).
-        let white_tex = ctx.assets.builtin_white().unwrap_or(TextureId(0));
         let vw = ctx.virtual_width;
         let vh = ctx.virtual_height;
 
         // Take ui_state out so we can borrow ctx.assets independently
         // of the UiContext (same pattern as the ui-demo example).
         let mut ui_state = std::mem::take(&mut ctx.ui_state);
-        let mut ui = UiContext::new(&mut ui_state, input, white_tex, vw, vh);
+        let mut ui = UiContext::new(&mut ui_state, input, vw, vh);
 
         // Place the stats panel in the side gutter to the right of
         // the AOI world. The world occupies [0, WORLD_W); we anchor the
@@ -465,13 +495,11 @@ impl Game for AoiDemo {
     }
 
     fn draw(&self, ctx: &Context, screen: &mut Screen) {
-        // The engine registers a 1x1 white pixel atom for UI rectangle
-        // drawing (see `vibe_render::builtin::WHITE`); we reuse it for
-        // the gutter separator.
-        let white = ctx
-            .assets
-            .builtin_white()
-            .expect("engine builtin white texture must exist");
+        // The demo registered its own 1×1 white pixel texture in
+        // `new()` (see `Renderer::create_white_pixel_texture`); we
+        // reuse it for the gutter separator and the square scatter
+        // dots.
+        let white = self.white_tex;
 
         // ── Vertical separator between the world and the side gutter ──
         // The clear color paints the entire virtual canvas, including
@@ -517,7 +545,7 @@ impl Game for AoiDemo {
             };
             match shape {
                 Shape::Circle { center, radius } => {
-                    screen.draw_circle(center.x, center.y, radius, color);
+                    screen.draw_circle(self.circle_filled_tex, center.x, center.y, radius, color);
                 }
                 Shape::Aabb {
                     center,
@@ -539,21 +567,33 @@ impl Game for AoiDemo {
         }
 
         // ── Ring outlines (transparent — dots underneath stay lit) ──
-        // `draw_circle_outline` blits the engine's procedural ring
+        // `draw_circle_outline` blits the demo's procedural ring
         // texture, which is alpha-AA'd on both inner and outer edges.
         // When LOD is active we also draw an inner ring at LOD_RADIUS
         // so it's obvious *why* the lit core is smaller than the
         // broadphase ring — without this hint, players might wonder
         // if rounds at the edge are bugged.
         for c in &self.circles {
-            screen.draw_circle_outline(c.pos.x, c.pos.y, CIRCLE_RADIUS, c.color);
+            screen.draw_circle_outline(
+                self.circle_ring_tex,
+                c.pos.x,
+                c.pos.y,
+                CIRCLE_RADIUS,
+                c.color,
+            );
             if self.lod_enabled {
                 // Half-alpha tint so the LOD ring reads as
                 // secondary/diagnostic rather than as another full
                 // observer boundary.
                 let mut lod_color = c.color;
                 lod_color.a *= 0.45;
-                screen.draw_circle_outline(c.pos.x, c.pos.y, LOD_RADIUS, lod_color);
+                screen.draw_circle_outline(
+                    self.circle_ring_tex,
+                    c.pos.x,
+                    c.pos.y,
+                    LOD_RADIUS,
+                    lod_color,
+                );
             }
         }
     }

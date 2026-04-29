@@ -6,13 +6,6 @@ pub struct Screen<'a> {
     renderer: &'a mut Renderer,
     pub virtual_width: f32,
     pub virtual_height: f32,
-    /// Engine-provided antialiased filled-circle texture ID, set up
-    /// once at startup by `GameBridge` and forwarded here every frame.
-    /// `None` only in test/headless paths that build a Screen by hand.
-    builtin_circle_filled: Option<TextureId>,
-    /// Engine-provided antialiased ring texture ID. Same lifecycle as
-    /// `builtin_circle_filled`.
-    builtin_circle_ring: Option<TextureId>,
 }
 
 impl<'a> Screen<'a> {
@@ -21,44 +14,25 @@ impl<'a> Screen<'a> {
             renderer,
             virtual_width,
             virtual_height,
-            builtin_circle_filled: None,
-            builtin_circle_ring: None,
         }
     }
 
-    /// Wire up the built-in circle / ring texture IDs. Called by
-    /// `GameBridge` right after constructing the Screen each frame; not
-    /// intended to be called from game code (the IDs come from
-    /// engine-managed textures registered in `on_init`).
-    pub fn set_builtin_circle_textures(
-        &mut self,
-        filled: Option<TextureId>,
-        ring: Option<TextureId>,
-    ) {
-        self.builtin_circle_filled = filled;
-        self.builtin_circle_ring = ring;
-    }
-
     /// Draw a filled, antialiased circle centered at `(cx, cy)` with
-    /// the given `radius` (in virtual pixels) and color.
+    /// the given `radius` (in virtual pixels) and `color`, using
+    /// `texture` as the disc image.
     ///
-    /// Implementation: blits the engine's procedural 256² filled-circle
-    /// texture (`vibe_render::builtin::CIRCLE_FILLED`) to the bounding square. Because
-    /// the texture has alpha-AA on its perimeter, the result composites
-    /// cleanly over any background. Internally this is a single sprite
-    /// — repeated calls batch into one GPU draw call.
+    /// `texture` should be an alpha-AA filled-circle sprite — typically
+    /// produced once during `Game::new` via
+    /// [`Renderer::create_filled_circle_texture`] and registered into
+    /// [`vibe_asset::AssetManager`]. The engine no longer ships a
+    /// built-in circle texture; games that want one own its lifecycle.
     ///
-    /// No-op if the engine couldn't initialize its built-in circle
-    /// textures (which would only happen if `Game::new` was called
-    /// before `on_init` finished — i.e. it shouldn't happen in normal
-    /// game code paths).
-    pub fn draw_circle(&mut self, cx: f32, cy: f32, radius: f32, color: Color) {
-        let Some(tex) = self.builtin_circle_filled else {
-            return;
-        };
+    /// Repeated calls with the same `texture` batch into one GPU draw
+    /// call.
+    pub fn draw_circle(&mut self, texture: TextureId, cx: f32, cy: f32, radius: f32, color: Color) {
         let d = radius * 2.0;
         self.renderer.draw_sprite(vibe_render::DrawCommand {
-            texture_id: tex,
+            texture_id: texture,
             src_rect: [0.0, 0.0, 1.0, 1.0],
             dst_rect: [cx - radius, cy - radius, d, d],
             color: color.to_array(),
@@ -67,24 +41,27 @@ impl<'a> Screen<'a> {
         });
     }
 
-    /// Draw an antialiased circle outline (ring) centered at `(cx, cy)`
-    /// with the given `radius` (in virtual pixels) and color.
+    /// Draw an antialiased circle outline (ring) centered at
+    /// `(cx, cy)` with the given `radius` (in virtual pixels) and
+    /// `color`, using `texture` as the ring image.
     ///
-    /// The ring's stroke thickness is fixed (proportional to `radius`,
-    /// see the engine's `vibe_render::builtin::CIRCLE_RING` texture initialization for
-    /// the exact ratio). For wildly different stroke widths, generate a
-    /// custom ring texture via `Renderer::create_ring_texture` and use
-    /// the regular `draw_sprite_tinted` API.
-    ///
-    /// No-op if the engine couldn't initialize its built-in circle
-    /// textures.
-    pub fn draw_circle_outline(&mut self, cx: f32, cy: f32, radius: f32, color: Color) {
-        let Some(tex) = self.builtin_circle_ring else {
-            return;
-        };
+    /// `texture` should be an alpha-AA hollow ring sprite — typically
+    /// produced via [`Renderer::create_ring_texture`] in `Game::new`.
+    /// The ring's stroke thickness is whatever was baked into
+    /// `texture` (see `Renderer::create_ring_texture`'s
+    /// `thickness_ratio` parameter); for several different stroke
+    /// widths, register multiple ring textures and pick one per call.
+    pub fn draw_circle_outline(
+        &mut self,
+        texture: TextureId,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        color: Color,
+    ) {
         let d = radius * 2.0;
         self.renderer.draw_sprite(vibe_render::DrawCommand {
-            texture_id: tex,
+            texture_id: texture,
             src_rect: [0.0, 0.0, 1.0, 1.0],
             dst_rect: [cx - radius, cy - radius, d, d],
             color: color.to_array(),

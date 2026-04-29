@@ -2,13 +2,28 @@ use crate::Color;
 use crate::context::Context;
 use crate::screen::Screen;
 use vibe_input::InputState;
+use vibe_render::Renderer;
 
 /// The main trait users implement to create a game.
 ///
 /// Follows the Ebiten/Love2D pattern: new -> update -> draw loop.
 pub trait Game {
-    /// Create and initialize the game. Load assets, set up state.
-    fn new(ctx: &mut Context) -> Self;
+    /// Create and initialize the game. Load assets, build any
+    /// procedural textures the game needs, and set up state.
+    ///
+    /// `renderer` is provided here (rather than only in `draw`) so
+    /// games can call [`Renderer::create_white_pixel_texture`],
+    /// [`Renderer::create_filled_circle_texture`],
+    /// [`Renderer::create_ring_texture`], or
+    /// [`Renderer::create_rgba_texture`] up front and register the
+    /// resulting [`vibe_render::Texture`] handles into
+    /// [`Context::assets`] via
+    /// [`vibe_asset::AssetManager::register_texture`]. The engine
+    /// itself does **not** pre-create any textures: anything you want
+    /// to draw — including 1×1 white pixels for solid color rects, or
+    /// antialiased circles — is your game's responsibility to build
+    /// here.
+    fn new(ctx: &mut Context, renderer: &Renderer) -> Self;
 
     /// Called every frame. Update game logic, handle input.
     fn update(&mut self, ctx: &mut Context, dt: f32, input: &InputState);

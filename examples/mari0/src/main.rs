@@ -2194,7 +2194,7 @@ impl Mari0Game {
 }
 
 impl Game for Mari0Game {
-    fn new(ctx: &mut Context) -> Self {
+    fn new(ctx: &mut Context, _renderer: &Renderer) -> Self {
         let t = |n: &str| Self::tex(ctx, n);
 
         let vw = ctx.virtual_width;

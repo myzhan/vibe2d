@@ -731,7 +731,7 @@ impl TetrisGame {
 }
 
 impl Game for TetrisGame {
-    fn new(ctx: &mut Context) -> Self {
+    fn new(ctx: &mut Context, _renderer: &Renderer) -> Self {
         let block_tex = [
             Self::tex(ctx, "block_i"),
             Self::tex(ctx, "block_o"),

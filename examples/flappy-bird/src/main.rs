@@ -106,7 +106,7 @@ impl FlappyBirdGame {
 }
 
 impl Game for FlappyBirdGame {
-    fn new(ctx: &mut Context) -> Self {
+    fn new(ctx: &mut Context, _renderer: &Renderer) -> Self {
         let tex = |name: &str| -> TextureId {
             ctx.assets
                 .texture_id(name)
@@ -305,7 +305,6 @@ impl Game for FlappyBirdGame {
     }
 
     fn update_ui(&mut self, ctx: &mut Context, input: &InputState) {
-        let white_tex = ctx.assets.builtin_white().unwrap_or(TextureId(0));
         let vw = self.vw;
         let vh = self.vh;
         let score = self.score;
@@ -315,7 +314,7 @@ impl Game for FlappyBirdGame {
         // Take ui_state out so we can borrow ctx.assets independently
         let mut ui_state = std::mem::take(&mut ctx.ui_state);
 
-        let mut ui = UiContext::new(&mut ui_state, input, white_tex, vw, vh);
+        let mut ui = UiContext::new(&mut ui_state, input, vw, vh);
         ui.set_anchor(Anchor::TopCenter);
 
         match self.state {

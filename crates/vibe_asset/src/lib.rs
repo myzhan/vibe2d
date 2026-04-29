@@ -2,13 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Result;
-use vibe_render::{Font, Renderer, Texture, TextureId, builtin};
-
-/// Re-export of [`vibe_render::builtin`] — names under which the engine
-/// registers its runtime-generated "atom" textures. Re-exported here so
-/// asset-layer callers don't need an explicit `vibe_render` dependency
-/// just to reference the canonical names.
-pub use vibe_render::builtin as builtin_textures;
+use vibe_render::{Font, Renderer, Texture, TextureId};
 
 /// Manages loaded game assets (textures, fonts).
 ///
@@ -147,35 +141,24 @@ impl AssetManager {
         renderer.prepare_text(font, atlas_slot, text)
     }
 
-    /// Register a runtime-created texture with the given name.
-    /// Returns the assigned TextureId.
+    /// Register a runtime-created texture under the given name and
+    /// return the assigned [`TextureId`]. Use this to register textures
+    /// you built via [`Renderer::create_white_pixel_texture`],
+    /// [`Renderer::create_filled_circle_texture`],
+    /// [`Renderer::create_ring_texture`], or
+    /// [`Renderer::create_rgba_texture`] so that subsequent code can
+    /// look them up by name with [`Self::texture_id`].
+    ///
+    /// Names live in the same flat namespace as `game.yaml`-loaded
+    /// textures, so pick names that won't collide with your asset
+    /// config. Re-registering a name overwrites only the lookup
+    /// pointer; the previously-registered `Texture` slot remains
+    /// reachable via its old `TextureId` and continues to render
+    /// correctly.
     pub fn register_texture(&mut self, name: &str, texture: Texture) -> TextureId {
         let id = TextureId(self.textures.len());
         self.textures.push(texture);
         self.texture_names.insert(name.to_string(), id);
         id
-    }
-
-    /// Look up the engine's built-in 1×1 white pixel texture by its
-    /// canonical name. Returns `None` only on test/headless paths that
-    /// don't run the engine's `on_init` (where it's registered).
-    ///
-    /// Prefer this over `texture_id("__vibe_ui_white")`: it survives
-    /// rename of the underlying string and gives game code a clearer
-    /// "I'm asking for the engine's white-pixel atom" intent.
-    pub fn builtin_white(&self) -> Option<TextureId> {
-        self.texture_id(builtin::WHITE)
-    }
-
-    /// Look up the engine's built-in antialiased filled-circle texture.
-    /// Same semantics as [`Self::builtin_white`].
-    pub fn builtin_circle_filled(&self) -> Option<TextureId> {
-        self.texture_id(builtin::CIRCLE_FILLED)
-    }
-
-    /// Look up the engine's built-in antialiased ring texture.
-    /// Same semantics as [`Self::builtin_white`].
-    pub fn builtin_circle_ring(&self) -> Option<TextureId> {
-        self.texture_id(builtin::CIRCLE_RING)
     }
 }

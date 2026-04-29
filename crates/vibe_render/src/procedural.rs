@@ -28,7 +28,7 @@ impl Renderer {
     /// into `AssetManager`.
     pub fn create_white_pixel_texture(&self) -> Texture {
         let white_pixel_data: [u8; 4] = [255, 255, 255, 255];
-        self.create_rgba_texture(crate::builtin::WHITE, 1, 1, &white_pixel_data)
+        self.create_rgba_texture("vibe_white_pixel", 1, 1, &white_pixel_data)
     }
 
     /// Create a high-resolution filled-circle texture (square, RGBA, with

@@ -633,14 +633,21 @@ pub struct ScrollListStyle {
 
 ## 1×1 白像素纹理
 
-UI 的矩形（按钮背景、面板背景、进度条、输入框边框、光标、选中高亮、滚动条）通过一个**引擎内置的 1×1 纯白像素纹理**实现，搭配 `draw_sprite_tinted` 着色。
+UI 的矩形（按钮背景、面板背景、进度条、输入框边框、光标、选中高亮、滚动条）通过一个 **1×1 纯白像素纹理** 实现，搭配 `draw_sprite_tinted` 着色。
+
+这张纹理由 UI 系统**自管**：`UiState::init(renderer, assets)` 在引擎 `on_init` 阶段被自动调用一次，内部走和游戏代码完全相同的"动态纹理"路径——
 
 ```rust
-// 引擎初始化时自动创建
-let white_pixel = Texture::from_rgba(&device, &queue, &[255, 255, 255, 255], 1, 1);
+// crates/vibe_ui/src/state.rs (节选)
+pub fn init(&mut self, renderer: &Renderer, assets: &mut AssetManager) {
+    if self.white_texture_id.is_some() { return; }
+    let tex = renderer.create_white_pixel_texture();   // Renderer 公开 API
+    let id = assets.register_texture("__vibe_ui_white", tex); // 普通注册
+    self.white_texture_id = Some(id);
+}
 ```
 
-纹理由引擎在 `on_init` 阶段一次性注册到 `AssetManager`，规范名常量为 `vibe_render::builtin::WHITE`（字符串值 `"__vibe_ui_white"` —— `__vibe_` 前缀对游戏保留，避免和用户资源冲突）。游戏代码获取它的 `TextureId` 时应优先调用便利方法 `ctx.assets.builtin_white()`，而不是按字符串查找。
+`UiContext::new` 直接从 `UiState.white_texture_id` 读取这个 `TextureId`，游戏代码无需感知。注册时用的 `__vibe_ui_white` 只是 debug label，避免和游戏 `game.yaml` 的纹理名碰撞——**没有"框架内置纹理"分类**，UI 只是另一个使用 `Renderer::create_white_pixel_texture` + `AssetManager::register_texture` 的客户端，与游戏侧自己注册圆环 / 渐变 / 等程序化纹理走的是同一条路径（详见 `docs/api.md` 的"圆形绘制"和"动态纹理"章节）。
 
 优点：
 - 无需额外着色器或渲染管线
@@ -1323,13 +1330,12 @@ pub trait Game {
 
 ```rust
 fn update_ui(&mut self, ctx: &mut Context, input: &InputState) {
-    // 引擎内置 1×1 白像素的 TextureId（用于 UI 矩形绘制）。
-    // 见 `vibe_render::builtin::WHITE`；优先用便利方法而非字符串。
-    let white_tex = ctx.assets.builtin_white().unwrap();
+    // UI 自管自己的 1×1 白像素纹理（见上文「1×1 白像素纹理」章节），
+    // UiContext 从 UiState 直接读取，无需游戏传入。
 
     // Take ui_state 出来，这样可以同时借用 ctx.assets
     let mut ui_state = std::mem::take(&mut ctx.ui_state);
-    let mut ui = UiContext::new(&mut ui_state, input, white_tex, vw, vh);
+    let mut ui = UiContext::new(&mut ui_state, input, vw, vh);
 
     // 构建 UI...
     ui.set_anchor(Anchor::TopCenter);

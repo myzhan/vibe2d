@@ -133,21 +133,36 @@ screen.draw_text_centered(font, "Hello", y);   // 水平居中
 
 ### 圆形绘制
 
-引擎在启动时会预生成两张高分辨率（256²）抗锯齿圆纹理 —— `vibe_render::builtin::CIRCLE_FILLED`（实心圆）和 `vibe_render::builtin::CIRCLE_RING`（圆环，字符串值分别是 `"__vibe_circle_filled"` / `"__vibe_circle_ring"`，但**不应硬编码**），并通过 `Screen` 暴露成两个高层 API。无需游戏自己生成纹理或拼接矩形：
+引擎不预置任何圆纹理。需要画圆的游戏在 `Game::new(ctx, renderer)` 里调 `Renderer` 的工厂方法生成并注册一次，把返回的 `TextureId` 存进游戏结构体，`draw` 时显式传给 `Screen`：
 
 ```rust
-// 实心圆（中心 cx,cy；半径 radius；颜色 color）
-screen.draw_circle(cx, cy, radius, color);
+fn new(ctx: &mut Context, renderer: &Renderer) -> Self {
+    let circle_filled = ctx.assets.register_texture(
+        "my_disc",
+        renderer.create_filled_circle_texture("my_disc", 256),
+    );
+    let circle_ring = ctx.assets.register_texture(
+        "my_ring",
+        // size, thickness_ratio（描边比例，0.08 ≈ 半径 8%）
+        renderer.create_ring_texture("my_ring", 256, 0.08),
+    );
+    Self { circle_filled, circle_ring, /* … */ }
+}
 
-// 圆环 / 空心圆轮廓（描边粗细由内置纹理固定，约为 radius 的 8%）
-screen.draw_circle_outline(cx, cy, radius, color);
+fn draw(&self, _ctx: &Context, screen: &mut Screen) {
+    // 实心圆（纹理；中心 cx,cy；半径 radius；颜色 color）
+    screen.draw_circle(self.circle_filled, cx, cy, radius, color);
+    // 圆环 / 空心圆轮廓（描边比例由你创建纹理时指定）
+    screen.draw_circle_outline(self.circle_ring, cx, cy, radius, color);
+}
 ```
 
 要点：
 
-- 两个 API 内部都是单次 sprite blit，会和其他相同纹理的绘制自动合批，开销与画一个 sprite 相同
-- 边缘是 alpha-AA（256² 纹理在 [10, 100] px 半径范围下肉眼无锯齿）
-- `draw_circle_outline` 的描边比例固定。需要明显不同的描边宽度，请用 `Renderer::create_ring_texture(label, size, thickness_ratio)` 自己生成纹理，再用 `draw_sprite_tinted` 绘制
+- `Renderer::create_filled_circle_texture` / `create_ring_texture` / `create_white_pixel_texture` / `create_rgba_texture` 是公开的"动态纹理工厂"API。任何能纯 CPU 算出 RGBA 像素的图像都可以走 `create_rgba_texture` 上传
+- 256² 是常用默认值：在 [10, 100] px 半径范围下肉眼无锯齿；缓冲 256 KB，启动开销可忽略
+- 两个 `Screen` API 内部都是单次 sprite blit，相同纹理的绘制会自动合批，开销与画一个 sprite 相同
+- 需要多种描边宽度时，用同样的 API 注册多张不同 `thickness_ratio` 的圆环纹理，按需取用
 - 颜色按 alpha 通道与底色混合，可放心叠在场景之上而不遮盖底层内容
 
 ---
@@ -250,14 +265,15 @@ debug:                           # 可选，调试配置
 
 ```rust
 fn update_ui(&mut self, ctx: &mut Context, input: &InputState) {
-    // 引擎内置的 1×1 白像素，用于 UI 矩形绘制。优先用便利方法
-    // 而不是按字符串查 —— 见 `vibe_render::builtin::WHITE`。
-    let white_tex = ctx.assets.builtin_white().unwrap();
     let vw = ctx.virtual_width;
     let vh = ctx.virtual_height;
 
+    // UI 系统自管自己的 1×1 白像素纹理（在引擎 on_init 时由
+    // UiState::init 通过 Renderer::create_white_pixel_texture +
+    // AssetManager::register_texture 注册），UiContext 直接从
+    // UiState 读取，游戏代码无需感知。
     let mut ui_state = std::mem::take(&mut ctx.ui_state);
-    let mut ui = UiContext::new(&mut ui_state, input, white_tex, vw, vh);
+    let mut ui = UiContext::new(&mut ui_state, input, vw, vh);
 
     // 设置锚点和布局
     ui.set_anchor(Anchor::Center);

@@ -73,18 +73,27 @@ pub struct UiContext<'a> {
 impl<'a> UiContext<'a> {
     /// Create a new UiContext for this frame.
     ///
-    /// Does not require a Renderer — draw commands are buffered internally
-    /// and stored into `UiState` on `finish()`.
+    /// Does not require a Renderer — draw commands are buffered
+    /// internally and stored into `UiState` on `finish()`.
+    ///
+    /// The 1×1 white pixel texture used to draw filled rectangles
+    /// is read straight out of `ui_state` (allocated once via
+    /// [`UiState::init`] during engine startup), so callers no
+    /// longer need to thread a `TextureId` through here. If `init`
+    /// hasn't been called yet (test/headless paths), filled-rect
+    /// commands fall back to [`TextureId(0)`], which is harmless as
+    /// long as no actual rendering is performed against this UI
+    /// state.
     pub fn new(
         ui_state: &'a mut UiState,
         input: &'a InputState,
-        white_texture_id: TextureId,
         virtual_width: f32,
         virtual_height: f32,
     ) -> Self {
         ui_state.begin_frame();
         let (mouse_x, mouse_y) = input.mouse_position();
         let vdp_actions = ui_state.drain_vdp_actions();
+        let white_texture_id = ui_state.white_texture_id.unwrap_or(TextureId(0));
 
         Self {
             ui_state,

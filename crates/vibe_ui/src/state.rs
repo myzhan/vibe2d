@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use vibe_render::DrawCommand;
+use vibe_asset::AssetManager;
+use vibe_render::{DrawCommand, Renderer, TextureId};
 
 use crate::id::WidgetId;
 use crate::vdp::{VdpUiAction, WidgetSnapshot};
@@ -38,9 +39,19 @@ pub struct ScrollListState {
     pub drag_start_offset: f32,
 }
 
+/// Internal name under which the UI registers its 1×1 white pixel
+/// texture into [`AssetManager`]. Used as a debug label only — game
+/// code never looks this up by name (it goes through
+/// [`UiContext`](crate::UiContext), which reads the `TextureId`
+/// straight out of [`UiState`]). Prefixed with `__vibe_ui_` so a
+/// game's own `game.yaml` texture names won't collide.
+const UI_WHITE_TEXTURE_NAME: &str = "__vibe_ui_white";
+
 /// Cross-frame persistent UI state, stored in the engine Context.
 ///
-/// Manages focus, text input buffers, scroll positions, VDP snapshots, and pending VDP actions.
+/// Manages focus, text input buffers, scroll positions, VDP snapshots,
+/// pending VDP actions, and the UI system's own private GPU resources
+/// (e.g. the 1×1 white pixel texture used to draw filled rectangles).
 pub struct UiState {
     /// Currently focused widget (receives keyboard input).
     pub focused: Option<WidgetId>,
@@ -65,6 +76,15 @@ pub struct UiState {
 
     /// Elapsed time in seconds (for cursor blink animation).
     pub elapsed_time: f64,
+
+    /// 1×1 white pixel texture used to draw filled rectangles via
+    /// tinting. Allocated once in [`UiState::init`] using the public
+    /// [`Renderer::create_white_pixel_texture`] +
+    /// [`AssetManager::register_texture`] flow — the same path game
+    /// code uses for its own procedural textures. `None` until `init`
+    /// has been called (the engine does this at the end of `on_init`,
+    /// before the user's `Game::new`).
+    pub white_texture_id: Option<TextureId>,
 }
 
 impl Default for UiState {
@@ -78,6 +98,7 @@ impl Default for UiState {
             cached_draw_commands: Vec::new(),
             auto_id_counter: 0,
             elapsed_time: 0.0,
+            white_texture_id: None,
         }
     }
 }
@@ -85,6 +106,32 @@ impl Default for UiState {
 impl UiState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// One-shot initialization: allocate the UI's private GPU
+    /// textures (currently just the 1×1 white pixel for filled
+    /// rects) and register them into `assets` so the renderer can
+    /// reach them by [`TextureId`] during sprite batching.
+    ///
+    /// Called once by the engine in its `on_init`, before the user's
+    /// `Game::new` runs. Re-calling is a no-op (the white texture is
+    /// only created the first time) so test harnesses that build
+    /// `UiState` by hand can call it idempotently.
+    ///
+    /// The UI deliberately uses the same public
+    /// [`Renderer::create_white_pixel_texture`] +
+    /// [`AssetManager::register_texture`] APIs that game code uses —
+    /// there is no separate "engine-internal" path. The only thing
+    /// that distinguishes the UI's white texture from a
+    /// game-registered one is the `__vibe_ui_` name prefix used as a
+    /// debug label.
+    pub fn init(&mut self, renderer: &Renderer, assets: &mut AssetManager) {
+        if self.white_texture_id.is_some() {
+            return;
+        }
+        let tex = renderer.create_white_pixel_texture();
+        let id = assets.register_texture(UI_WHITE_TEXTURE_NAME, tex);
+        self.white_texture_id = Some(id);
     }
 
     /// Generate the next auto-ID for this frame.

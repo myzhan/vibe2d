@@ -432,18 +432,33 @@ VDP 是基于 WebSocket + JSON-RPC 2.0 的运行时调试协议（`ws://127.0.0.
 - **IME / 中文输入** — TextInput 默认开启 IME（macOS/Win/Linux）。游戏代码不需要做任何额外工作就能接收 IME commit；只需要保证当前焦点 TextInput 用的字体覆盖了用户语言（如中文用户用思源黑体），并在 update 阶段把 buffer 内容 + `input.ime_preedit().map(|p| p.text)` 一起 prepare。
 - **`vibe_asset` 不依赖 wgpu** — asset 层只管"名称→ID 索引"和"已上传句柄的容器"。所有 GPU 操作（解码、上传、字形栅格化）都通过 `Renderer::load_texture` / `load_font` / `prepare_text` 这三个高层方法完成。新增资源类型时不要在 `vibe_asset` 里 `use wgpu`。
 - **纹理名称必须匹配** — `ctx.assets.texture_id("player")` 查找的是 `game.yaml` 中 `assets.textures` 部分声明的名称。
-- **内置纹理（`__vibe_*` 前缀保留）** — 引擎在 `on_init` 自动创建并注册三张运行时纹理：
-  - `vibe_render::builtin::WHITE`（即 `"__vibe_ui_white"`）：1×1 白色像素，UI 矩形和任何"纯色色块"绘制都靠它 + 颜色着色
-  - `vibe_render::builtin::CIRCLE_FILLED`（即 `"__vibe_circle_filled"`）：256² 抗锯齿实心圆，由 `Screen::draw_circle` 使用
-  - `vibe_render::builtin::CIRCLE_RING`（即 `"__vibe_circle_ring"`）：256² 抗锯齿圆环（描边比例 8 %），由 `Screen::draw_circle_outline` 使用
-  
-  **游戏代码获取这些纹理的 ID 时，优先用 `AssetManager` 的便利方法**，而不是按字符串查：
+- **动态纹理（程序化生成）—— 游戏自管，引擎不预置** — 引擎不再内置任何纹理。需要 1×1 白像素、抗锯齿圆、圆环、渐变等程序化纹理时，**游戏在 `Game::new(ctx, renderer)` 里显式创建并注册**：
+
   ```rust
-  let white = ctx.assets.builtin_white().unwrap_or(TextureId(0));
-  let disc  = ctx.assets.builtin_circle_filled();
-  let ring  = ctx.assets.builtin_circle_ring();
+  fn new(ctx: &mut Context, renderer: &Renderer) -> Self {
+      // 工厂方法都在 Renderer 上，纯 GPU 上传，不依赖资产文件。
+      let white = ctx.assets.register_texture(
+          "my_white",
+          renderer.create_white_pixel_texture(),
+      );
+      let disc = ctx.assets.register_texture(
+          "my_circle",
+          renderer.create_filled_circle_texture("my_circle", 256),
+      );
+      let ring = ctx.assets.register_texture(
+          "my_ring",
+          renderer.create_ring_texture("my_ring", 256, 0.08),
+      );
+      // 把 TextureId 存进游戏结构体，draw 时直接用。
+      Self { white, disc, ring, /* … */ }
+  }
   ```
-  字符串名仅在写日志、VDP 调试输出之类需要原始字面量的场合才用，且必须从 `vibe_render::builtin::*` 引用 —— **绝对不要硬编码 `"__vibe_ui_white"`**，否则未来重命名会无声地拆掉所有调用方。`__vibe_` 前缀整个保留给引擎，游戏纹理不允许使用此前缀。需要不同描边宽度的圆环时，用 `Renderer::create_ring_texture(label, size, thickness_ratio)` 注册自己的纹理。
+
+  - 工厂 API：`Renderer::create_white_pixel_texture` / `create_filled_circle_texture` / `create_ring_texture` / `create_rgba_texture`（任意 RGBA 像素缓冲）
+  - `Screen::draw_circle(texture, cx, cy, r, color)` / `draw_circle_outline(texture, ...)` 都需要游戏传入自己注册的圆纹理 `TextureId`
+  - `vibe_ui` 走完全相同的路径自管自己的 1×1 白像素：在 `UiState::init(renderer, assets)`（引擎在 `on_init` 自动调用，发生在 `Game::new` 之前）里调 `Renderer::create_white_pixel_texture` + `AssetManager::register_texture`，`UiContext` 直接从 `UiState.white_texture_id` 读取——**没有"框架内置纹理"这个分类**，UI 只是另一个使用动态纹理 API 的客户端
+  - 注册名是普通的字符串 key，与 `game.yaml` 加载的纹理同共享 `AssetManager` 命名空间。`vibe_ui` 内部用 `__vibe_ui_white` 作为 debug label 避免和游戏纹理同名碰撞，但游戏代码**不应该按这个名字查**（UI 不暴露这个 ID 给游戏）
+  - 纹理只需要建一次（`Game::new` 里），不要每帧重建。把返回的 `TextureId` 存进游戏结构体即可
 - **VDP `handle_vdp()` 兜底分支** — 始终以 `_ => Err(format!("Unknown method: {}", method))` 结尾，避免静默吞掉未知方法。
 - **Feature 门控** — 任何涉及 `serde_json`、`vibe_debug`、`inspect()` 或 `handle_vdp()` 的代码都必须使用 `#[cfg(feature = "vdp")]`。
 - **交付前必须跑测试** — 详见上面的《测试与验证》小节。改完代码不跑测试就交付属于未完成任务。

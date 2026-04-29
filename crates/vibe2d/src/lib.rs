@@ -11,13 +11,7 @@ pub mod prelude {
     pub use crate::{Color, run};
     pub use glam::Vec2;
     pub use vibe_input::InputState;
-    pub use vibe_render::TextureId;
-    /// Canonical names of engine-registered built-in textures.
-    /// Game code wanting the `TextureId` should normally call
-    /// `ctx.assets.builtin_white()` etc. instead of looking them up by
-    /// string — this module is re-exported mainly for completeness and
-    /// for code that needs the raw name (e.g. VDP introspection).
-    pub use vibe_render::builtin as builtin_textures;
+    pub use vibe_render::{Renderer, TextureId};
     pub use vibe_ui::{
         Anchor, ButtonStyle, LayoutDirection, PanelStyle, ScrollListStyle, Style, TextInputStyle,
         UiColor, UiContext, UiOutput, WidgetId,
@@ -152,9 +146,6 @@ pub fn run<G: Game + 'static>(config_path: &str) {
         assets: vibe_asset::AssetManager::new(),
         audio: vibe_audio::AudioEngine::new(),
         ui_state: vibe_ui::UiState::new(),
-        white_texture_id: None,
-        circle_filled_texture_id: None,
-        circle_ring_texture_id: None,
         config,
         base_path: resolved_config_path
             .parent()
@@ -215,18 +206,6 @@ struct GameBridge<G: Game> {
     assets: vibe_asset::AssetManager,
     audio: vibe_audio::AudioEngine,
     ui_state: vibe_ui::UiState,
-    white_texture_id: Option<vibe_render::TextureId>,
-    /// Procedurally-built filled-circle texture, used by
-    /// [`Screen::draw_circle`]. Created once in `on_init` so games get
-    /// a high-quality antialiased disc primitive without having to
-    /// generate their own.
-    circle_filled_texture_id: Option<vibe_render::TextureId>,
-    /// Procedurally-built ring texture, used by
-    /// [`Screen::draw_circle_outline`]. The thickness baked into the
-    /// texture is fixed (see `on_init` for the chosen ratio); games
-    /// that need wildly different stroke widths should still register
-    /// their own custom ring textures.
-    circle_ring_texture_id: Option<vibe_render::TextureId>,
     config: GameConfig,
     base_path: PathBuf,
     virtual_width: f32,
@@ -293,35 +272,12 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             tracing::error!("Failed to load audio: {}", e);
         }
 
-        // Create the built-in 1×1 white pixel texture for UI rendering.
-        // The canonical name lives in `vibe_render::builtin` so renaming
-        // never desyncs registration vs lookup.
-        let white_tex = renderer.create_white_pixel_texture();
-        self.white_texture_id = Some(
-            self.assets
-                .register_texture(vibe_render::builtin::WHITE, white_tex),
-        );
-
-        // Create the built-in antialiased circle textures used by
-        // `Screen::draw_circle` / `Screen::draw_circle_outline`. 256² is
-        // the standard sprite-engine default for procedural shapes:
-        // large enough to look round when downscaled to typical sprite
-        // sizes (10–80 px), small enough that the upload (~256 KB each)
-        // is invisible at startup. The ring's 8 % thickness ratio
-        // strikes a balance between "clearly visible at small sizes"
-        // and "thin enough not to feel like a thick frame".
-        let circle_filled_tex =
-            renderer.create_filled_circle_texture(vibe_render::builtin::CIRCLE_FILLED, 256);
-        self.circle_filled_texture_id = Some(
-            self.assets
-                .register_texture(vibe_render::builtin::CIRCLE_FILLED, circle_filled_tex),
-        );
-        let circle_ring_tex =
-            renderer.create_ring_texture(vibe_render::builtin::CIRCLE_RING, 256, 0.08);
-        self.circle_ring_texture_id = Some(
-            self.assets
-                .register_texture(vibe_render::builtin::CIRCLE_RING, circle_ring_tex),
-        );
+        // Give the UI system a chance to allocate its private textures
+        // (e.g. the 1×1 white pixel for filled rectangles) via the
+        // public renderer API. UI sits on the same dynamic-texture
+        // pipeline as game code — see `Renderer::create_*_texture` and
+        // `AssetManager::register_texture`.
+        self.ui_state.init(renderer, &mut self.assets);
 
         let mut ctx = Context {
             assets: std::mem::take(&mut self.assets),
@@ -332,7 +288,11 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             pending_text_prep: Vec::new(),
         };
 
-        self.game = Some(G::new(&mut ctx));
+        // Hand the renderer to `Game::new` so it can build its own
+        // procedural textures (circles, white pixels, gradients, …)
+        // and register them via `ctx.assets.register_texture`. The
+        // engine no longer pre-creates any textures of its own.
+        self.game = Some(G::new(&mut ctx, renderer));
 
         // Flush any text prep requested during Game::new immediately, since
         // the renderer is in scope right here. (Most games queue all their
@@ -521,13 +481,6 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             flush_text_prep(&mut ctx, renderer);
 
             let mut screen = Screen::new(renderer, self.virtual_width, self.virtual_height);
-            // Hand the built-in circle texture IDs to Screen so its
-            // `draw_circle` / `draw_circle_outline` helpers can blit
-            // them without the game having to look them up by name.
-            screen.set_builtin_circle_textures(
-                self.circle_filled_texture_id,
-                self.circle_ring_texture_id,
-            );
             game.draw(&ctx, &mut screen);
 
             // Replay cached UI draw commands on top of game rendering
