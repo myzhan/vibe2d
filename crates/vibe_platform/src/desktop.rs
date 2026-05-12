@@ -270,6 +270,5 @@ pub fn run_desktop<C: PlatformCallbacks + 'static>(
 
 /// Read a file from the local filesystem.
 pub fn read_file(path: &str) -> Result<Vec<u8>> {
-    std::fs::read(path)
-        .map_err(|e| anyhow::anyhow!("Failed to read '{}': {}", path, e))
+    std::fs::read(path).map_err(|e| anyhow::anyhow!("Failed to read '{}': {}", path, e))
 }
