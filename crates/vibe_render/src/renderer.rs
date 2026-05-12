@@ -44,6 +44,7 @@ pub struct Renderer {
     index_buffer: wgpu::Buffer,
     pub virtual_width: f32,
     pub virtual_height: f32,
+    #[cfg(not(target_arch = "wasm32"))]
     pending_screenshot: Option<std::path::PathBuf>,
 }
 
@@ -212,6 +213,7 @@ impl Renderer {
             index_buffer,
             virtual_width,
             virtual_height,
+            #[cfg(not(target_arch = "wasm32"))]
             pending_screenshot: None,
         }
     }
@@ -224,12 +226,18 @@ impl Renderer {
         }
     }
 
+    /// Returns the maximum supported texture dimension for this device.
+    pub fn max_texture_dimension(&self) -> u32 {
+        self.device.limits().max_texture_dimension_2d
+    }
+
     /// Queue a sprite draw command for this frame.
     pub fn draw_sprite(&mut self, cmd: DrawCommand) {
         self.draw_commands.push(cmd);
     }
 
     /// Request a screenshot to be captured on the next render.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn request_screenshot(&mut self, path: impl Into<std::path::PathBuf>) {
         self.pending_screenshot = Some(path.into());
     }
@@ -320,6 +328,7 @@ impl Renderer {
         output.present();
 
         // Screenshot capture (after present, draw commands still available)
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(screenshot_path) = self.pending_screenshot.take() {
             self.capture_screenshot(clear_color, textures, &screenshot_path);
         }
@@ -381,6 +390,7 @@ impl Renderer {
     }
 
     /// Capture the current frame to a PNG file.
+    #[cfg(not(target_arch = "wasm32"))]
     fn capture_screenshot(
         &self,
         clear_color: [f32; 4],

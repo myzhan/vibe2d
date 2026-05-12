@@ -15,8 +15,8 @@ vibe_input = { workspace = true }
 vibe_audio = { workspace = true }
 vibe_asset = { workspace = true }
 vibe_ui = { workspace = true }
-vibe_debug = { workspace = true, optional = true }
 vibe_platform = { workspace = true }
+vibe_debug = { workspace = true, optional = true }
 glam.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
@@ -24,3 +24,7 @@ serde_json = { workspace = true, optional = true }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook.workspace = true
+web-time.workspace = true

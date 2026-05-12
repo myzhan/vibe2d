@@ -12,6 +12,11 @@ Cargo.lock
 *.swp
 *.swo
 
+# Trunk / WASM local dev (not committed)
+dist/
+Trunk.toml
+index.html
+
 # Python
 __pycache__/
 *.pyc

@@ -1,8 +1,15 @@
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 use anyhow::Result;
 use vibe_render::{Font, Renderer, Texture, TextureId};
+
+/// Pre-fetched asset bytes for platforms without filesystem access (WASM).
+/// Assets are loaded via HTTP before game start and stored in this bundle.
+pub struct AssetBundle {
+    pub files: HashMap<String, Vec<u8>>,
+}
 
 /// Manages loaded game assets (textures, fonts).
 ///
@@ -26,6 +33,7 @@ impl AssetManager {
 
     /// Load textures defined in the config. Image bytes are read from disk
     /// here, then handed to [`Renderer::load_texture`] for GPU upload.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_textures(
         &mut self,
         renderer: &Renderer,
@@ -79,6 +87,7 @@ impl AssetManager {
     /// otherwise start empty and fill on demand via
     /// [`AssetManager::prepare_text`]. This lets fonts with huge codepoint
     /// coverage (CJK) load instantly.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_fonts(
         &mut self,
         renderer: &Renderer,
@@ -102,6 +111,61 @@ impl AssetManager {
 
             let atlas_texture_id = TextureId(self.textures.len());
             let (font, atlas_texture) = renderer.load_font(&bytes, font_size, atlas_texture_id)?;
+
+            self.textures.push(atlas_texture);
+            self.fonts.insert(name.clone(), font);
+            tracing::info!("Loaded font '{}' (lazy atlas, {}px)", name, font_size);
+        }
+        Ok(())
+    }
+
+    /// Load textures from pre-fetched bytes (WASM path where filesystem
+    /// is unavailable and assets have been fetched via HTTP).
+    pub fn load_textures_from_bundle(
+        &mut self,
+        renderer: &Renderer,
+        texture_configs: &HashMap<String, String>,
+        bundle: &AssetBundle,
+    ) -> Result<()> {
+        for (name, rel_path) in texture_configs {
+            let bytes = bundle.files.get(rel_path).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Asset bundle missing texture '{}' (path: {})",
+                    name,
+                    rel_path
+                )
+            })?;
+
+            let texture = renderer.load_texture(name, bytes)?;
+            let id = TextureId(self.textures.len());
+            self.textures.push(texture);
+            self.texture_names.insert(name.clone(), id);
+        }
+        Ok(())
+    }
+
+    /// Load fonts from pre-fetched bytes (WASM path).
+    pub fn load_fonts_from_bundle(
+        &mut self,
+        renderer: &Renderer,
+        font_configs: &HashMap<String, String>,
+        bundle: &AssetBundle,
+    ) -> Result<()> {
+        for (name, config_str) in font_configs {
+            let (rel_path, size_str) = config_str.rsplit_once(':').ok_or_else(|| {
+                anyhow::anyhow!("Font config '{}' must be 'path:size'", config_str)
+            })?;
+
+            let font_size: f32 = size_str
+                .parse()
+                .map_err(|_| anyhow::anyhow!("Invalid font size '{}' for '{}'", size_str, name))?;
+
+            let bytes = bundle.files.get(rel_path).ok_or_else(|| {
+                anyhow::anyhow!("Asset bundle missing font '{}' (path: {})", name, rel_path)
+            })?;
+
+            let atlas_texture_id = TextureId(self.textures.len());
+            let (font, atlas_texture) = renderer.load_font(bytes, font_size, atlas_texture_id)?;
 
             self.textures.push(atlas_texture);
             self.fonts.insert(name.clone(), font);

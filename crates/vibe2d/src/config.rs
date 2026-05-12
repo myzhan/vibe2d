@@ -68,21 +68,32 @@ pub struct VdpConfig {
 }
 
 impl GameConfig {
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load(path: &str) -> Result<Self> {
         let resolved = Self::resolve_config_path(path);
         Self::load_from_path(&resolved)
     }
 
     /// Load config from an already-resolved path.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_from_path(path: &std::path::Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)?;
         let config: Self = serde_yaml::from_str(&content)?;
         Ok(config)
     }
 
+    /// Load config from raw YAML bytes (used on WASM where there's no filesystem).
+    pub fn load_from_bytes(bytes: &[u8]) -> Result<Self> {
+        let content = std::str::from_utf8(bytes)
+            .map_err(|e| anyhow::anyhow!("Config is not valid UTF-8: {}", e))?;
+        let config: Self = serde_yaml::from_str(content)?;
+        Ok(config)
+    }
+
     /// Resolve the config file path. If `path` doesn't exist in the current
     /// directory, fall back to `CARGO_MANIFEST_DIR` (set by `cargo run`) so
     /// that games work when launched from the workspace root.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn resolve_config_path(path: &str) -> std::path::PathBuf {
         let direct = std::path::Path::new(path);
         if direct.exists() {

@@ -4,11 +4,15 @@ mod game;
 mod screen;
 
 pub mod prelude {
+    pub use crate::Color;
     pub use crate::config::GameConfig;
     pub use crate::context::Context;
     pub use crate::game::Game;
+    #[cfg(not(target_arch = "wasm32"))]
+    pub use crate::run;
+    #[cfg(target_arch = "wasm32")]
+    pub use crate::run_web;
     pub use crate::screen::Screen;
-    pub use crate::{Color, run};
     pub use glam::Vec2;
     pub use vibe_input::InputState;
     pub use vibe_render::{Renderer, TextureId};
@@ -81,7 +85,8 @@ struct PendingStepInspect {
 
 // ── Main entry point ────────────────────────────────────────────────
 
-/// Main entry point. Loads config from YAML and starts the game loop.
+/// Main entry point (desktop). Loads config from YAML and starts the game loop.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run<G: Game + 'static>(config_path: &str) {
     tracing_subscriber::fmt::init();
 
@@ -184,6 +189,116 @@ pub fn run<G: Game + 'static>(config_path: &str) {
     vibe_platform::run_desktop(platform_config, bridge, input_state).expect("Game loop failed");
 }
 
+// ── Web entry point ─────────────────────────────────────────────────
+
+/// Main entry point (WASM). Fetches config and assets via HTTP, then starts the game loop.
+#[cfg(target_arch = "wasm32")]
+pub async fn run_web<G: Game + 'static>(config_yaml_url: &str) {
+    console_error_panic_hook::set_once();
+    // Minimal tracing setup for web (logs to browser console)
+    tracing_subscriber::fmt()
+        .with_writer(
+            tracing_subscriber::fmt::writer::MakeWriterExt::with_max_level(
+                std::io::stderr,
+                tracing::Level::INFO,
+            ),
+        )
+        .without_time()
+        .init();
+
+    // 1. Fetch game.yaml
+    let config_bytes = vibe_platform::fetch_file(config_yaml_url)
+        .await
+        .expect("Failed to fetch game.yaml");
+    let config = GameConfig::load_from_bytes(&config_bytes).expect("Failed to parse game config");
+
+    let virtual_width = config
+        .virtual_resolution
+        .as_ref()
+        .map_or(config.window.width as f32, |vr| vr.width as f32);
+    let virtual_height = config
+        .virtual_resolution
+        .as_ref()
+        .map_or(config.window.height as f32, |vr| vr.height as f32);
+
+    // 2. Fetch all assets in parallel
+    let bundle = fetch_all_assets(&config).await;
+
+    // 3. Create input state + action mappings
+    let mut input_state = vibe_input::InputState::new();
+    if let Some(ref input_cfg) = config.input {
+        input_state.load_actions(&input_cfg.actions);
+    }
+
+    let platform_config = vibe_platform::PlatformConfig {
+        window_width: config.window.width,
+        window_height: config.window.height,
+        window_title: config.window.title.clone(),
+        vsync: config.window.vsync.unwrap_or(true),
+        virtual_width,
+        virtual_height,
+    };
+
+    let bridge = GameBridge::<G> {
+        game: None,
+        assets: vibe_asset::AssetManager::new(),
+        audio: vibe_audio::AudioEngine::new(),
+        ui_state: vibe_ui::UiState::new(),
+        config,
+        virtual_width,
+        virtual_height,
+        pending_text_prep: Vec::new(),
+        asset_bundle: Some(bundle),
+    };
+
+    vibe_platform::run_web(platform_config, bridge, input_state).expect("Game loop failed");
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fetch_all_assets(config: &GameConfig) -> vibe_asset::AssetBundle {
+    use std::collections::HashMap;
+
+    let mut files: HashMap<String, Vec<u8>> = HashMap::new();
+
+    // Collect all asset paths
+    let mut paths: Vec<String> = Vec::new();
+    if let Some(ref assets) = config.assets {
+        if let Some(ref textures) = assets.textures {
+            for rel_path in textures.values() {
+                paths.push(rel_path.clone());
+            }
+        }
+        if let Some(ref fonts) = assets.fonts {
+            for config_str in fonts.values() {
+                // Font format is "path:size" — extract path part
+                if let Some((rel_path, _)) = config_str.rsplit_once(':') {
+                    paths.push(rel_path.to_string());
+                }
+            }
+        }
+        if let Some(ref audio) = assets.audio {
+            for rel_path in audio.values() {
+                paths.push(rel_path.clone());
+            }
+        }
+    }
+
+    // Fetch all assets via the platform I/O layer
+    for path in paths {
+        match vibe_platform::fetch_file(&path).await {
+            Ok(bytes) => {
+                files.insert(path, bytes);
+            }
+            Err(e) => {
+                tracing::error!("Failed to fetch asset '{}': {}", path, e);
+            }
+        }
+    }
+
+    vibe_asset::AssetBundle { files }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 /// Drains [`Context::pending_text_prep`] and uploads the requested glyphs
@@ -207,9 +322,13 @@ struct GameBridge<G: Game> {
     audio: vibe_audio::AudioEngine,
     ui_state: vibe_ui::UiState,
     config: GameConfig,
+    #[cfg(not(target_arch = "wasm32"))]
     base_path: PathBuf,
+    #[cfg(target_arch = "wasm32")]
+    asset_bundle: Option<vibe_asset::AssetBundle>,
     virtual_width: f32,
     virtual_height: f32,
+    #[cfg(not(target_arch = "wasm32"))]
     pending_screenshot: Option<PathBuf>,
 
     /// Carries `(font_name, text)` glyph-prep requests from `update` (where
@@ -244,8 +363,83 @@ struct GameBridge<G: Game> {
     vdp_skip_render: bool,
 }
 
+impl<G: Game> GameBridge<G> {
+    /// Build or take the asset bundle.
+    /// - Desktop: reads all asset files from the filesystem into memory.
+    /// - Web: takes the pre-fetched bundle that was populated via HTTP.
+    fn build_asset_bundle(&mut self) -> vibe_asset::AssetBundle {
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.asset_bundle
+                .take()
+                .unwrap_or_else(|| vibe_asset::AssetBundle {
+                    files: std::collections::HashMap::new(),
+                })
+        }
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            use std::collections::HashMap;
+            let mut files: HashMap<String, Vec<u8>> = HashMap::new();
+
+            if let Some(ref assets) = self.config.assets {
+                // Textures
+                if let Some(ref textures) = assets.textures {
+                    for rel_path in textures.values() {
+                        let full_path = self.base_path.join(rel_path);
+                        match vibe_platform::read_file(&full_path.to_string_lossy()) {
+                            Ok(bytes) => {
+                                files.insert(rel_path.clone(), bytes);
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to read {:?}: {}", full_path, e);
+                            }
+                        }
+                    }
+                }
+                // Fonts (path is "rel_path:size", extract just the path portion)
+                if let Some(ref fonts) = assets.fonts {
+                    for config_str in fonts.values() {
+                        if let Some((rel_path, _)) = config_str.rsplit_once(':') {
+                            let full_path = self.base_path.join(rel_path);
+                            match vibe_platform::read_file(&full_path.to_string_lossy()) {
+                                Ok(bytes) => {
+                                    files.insert(rel_path.to_string(), bytes);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to read {:?}: {}", full_path, e);
+                                }
+                            }
+                        }
+                    }
+                }
+                // Audio
+                if let Some(ref audio) = assets.audio {
+                    for rel_path in audio.values() {
+                        let full_path = self.base_path.join(rel_path);
+                        match vibe_platform::read_file(&full_path.to_string_lossy()) {
+                            Ok(bytes) => {
+                                files.insert(rel_path.clone(), bytes);
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to read {:?}: {}", full_path, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            vibe_asset::AssetBundle { files }
+        }
+    }
+}
+
 impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
     fn on_init(&mut self, renderer: &vibe_render::Renderer) {
+        // Build or take the asset bundle (desktop reads from fs, web already has it)
+        let bundle = self.build_asset_bundle();
+
+        // Load all assets from the bundle (unified path for all platforms)
         if let Some(tex_configs) = self
             .config
             .assets
@@ -253,7 +447,7 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             .and_then(|a| a.textures.as_ref())
             && let Err(e) = self
                 .assets
-                .load_textures(renderer, &self.base_path, tex_configs)
+                .load_textures_from_bundle(renderer, tex_configs, &bundle)
         {
             tracing::error!("Failed to load textures: {}", e);
         }
@@ -261,13 +455,13 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
         if let Some(font_configs) = self.config.assets.as_ref().and_then(|a| a.fonts.as_ref())
             && let Err(e) = self
                 .assets
-                .load_fonts(renderer, &self.base_path, font_configs)
+                .load_fonts_from_bundle(renderer, font_configs, &bundle)
         {
             tracing::error!("Failed to load fonts: {}", e);
         }
 
         if let Some(audio_configs) = self.config.assets.as_ref().and_then(|a| a.audio.as_ref())
-            && let Err(e) = self.audio.load_sounds(&self.base_path, audio_configs)
+            && let Err(e) = self.audio.load_sounds_from_bundle(audio_configs, &bundle)
         {
             tracing::error!("Failed to load audio: {}", e);
         }
@@ -462,6 +656,7 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
     }
 
     fn on_render(&mut self, renderer: &mut vibe_render::Renderer) {
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = self.pending_screenshot.take() {
             renderer.request_screenshot(path);
         }

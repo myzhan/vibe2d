@@ -27,7 +27,7 @@ license = "MIT"
 
 [workspace.dependencies]
 # Internal crates
-vibe2d = { path = "crates/vibe2d" }
+vibe2d = { path = "crates/vibe2d", default-features = false }
 vibe_render = { path = "crates/vibe_render" }
 vibe_physics = { path = "crates/vibe_physics" }
 vibe_aoi = { path = "crates/vibe_aoi" }
@@ -40,7 +40,7 @@ vibe_ui = { path = "crates/vibe_ui" }
 vibe_test = { path = "crates/vibe_test" }
 
 # External dependencies
-wgpu = "24"
+wgpu = { version = "24", default-features = false, features = ["wgsl"] }
 winit = "0.30"
 image = { version = "0.25", default-features = false, features = ["png"] }
 glam = "0.29"
@@ -59,3 +59,12 @@ bytemuck = { version = "1", features = ["derive"] }
 rand = "0.9"
 fontdue = "0.9"
 rodio = { version = "0.20", default-features = false, features = ["wav", "vorbis"] }
+
+# Web/WASM dependencies
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = "0.3"
+web-time = "1"
+console_error_panic_hook = "0.1"
+getrandom = { version = "0.3", features = ["wasm_js"] }

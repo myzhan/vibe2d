@@ -1187,6 +1187,21 @@ impl Game for TetrisGame {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     vibe2d::run::<TetrisGame>("game.yaml");
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn web_main() {
+    wasm_bindgen_futures::spawn_local(async {
+        vibe2d::run_web::<TetrisGame>("game.yaml").await;
+    });
 }

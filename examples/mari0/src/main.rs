@@ -3348,6 +3348,23 @@ impl Game for Mari0Game {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     vibe2d::run::<Mari0Game>("game.yaml");
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    // No-op on web; the real entry point is web_main below.
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn web_main() {
+    wasm_bindgen_futures::spawn_local(async {
+        vibe2d::run_web::<Mari0Game>("game.yaml").await;
+    });
 }

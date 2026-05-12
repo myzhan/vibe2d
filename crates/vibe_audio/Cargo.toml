@@ -5,6 +5,18 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-rodio.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+vibe_asset = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rodio.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { workspace = true, features = [
+    "AudioContext", "AudioBuffer", "AudioBufferSourceNode",
+    "AudioDestinationNode", "BaseAudioContext",
+] }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true

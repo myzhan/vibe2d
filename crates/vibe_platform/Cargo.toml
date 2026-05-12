@@ -9,6 +9,17 @@ vibe_render = { workspace = true }
 vibe_input = { workspace = true }
 wgpu.workspace = true
 winit.workspace = true
-pollster.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster.workspace = true
+wgpu = { workspace = true, features = ["dx12", "metal", "vulkan-portability"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Document", "HtmlCanvasElement", "Element", "Response"] }
+web-time.workspace = true
+wgpu = { workspace = true, features = ["webgl"] }

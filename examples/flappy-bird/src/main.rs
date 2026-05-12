@@ -512,6 +512,23 @@ fn aabb_overlap(a: (f32, f32, f32, f32), b: (f32, f32, f32, f32)) -> bool {
     ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     vibe2d::run::<FlappyBirdGame>("game.yaml");
+}
+
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    // No-op on web; the real entry point is web_main below.
+}
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn web_main() {
+    wasm_bindgen_futures::spawn_local(async {
+        vibe2d::run_web::<FlappyBirdGame>("game.yaml").await;
+    });
 }
