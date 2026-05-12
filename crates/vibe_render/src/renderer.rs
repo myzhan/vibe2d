@@ -526,6 +526,191 @@ impl Renderer {
             }
         }
     }
+
+    /// Start an async screenshot capture (web/wasm32).
+    /// Returns a `ScreenshotCapture` that can be resolved asynchronously to PNG bytes.
+    #[cfg(target_arch = "wasm32")]
+    pub fn start_screenshot_capture(
+        &self,
+        clear_color: [f32; 4],
+        textures: &[&Texture],
+    ) -> ScreenshotCapture {
+        let vw = self.virtual_width as u32;
+        let vh = self.virtual_height as u32;
+        let bytes_per_pixel = 4u32;
+        let unpadded_bytes_per_row = vw * bytes_per_pixel;
+        let align = 256u32;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
+
+        let offscreen_tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("screenshot_texture"),
+            size: wgpu::Extent3d {
+                width: vw,
+                height: vh,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.surface_config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let offscreen_view = offscreen_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let buffer_size = (padded_bytes_per_row * vh) as wgpu::BufferAddress;
+        let staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("screenshot_staging"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("screenshot_encoder"),
+            });
+
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("screenshot_render_pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &offscreen_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: clear_color[0] as f64,
+                            g: clear_color[1] as f64,
+                            b: clear_color[2] as f64,
+                            a: clear_color[3] as f64,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                ..Default::default()
+            });
+
+            self.execute_draw_commands(&mut render_pass, textures);
+        }
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &offscreen_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &staging_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(vh),
+                },
+            },
+            wgpu::Extent3d {
+                width: vw,
+                height: vh,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+
+        let is_bgra = matches!(
+            self.surface_config.format,
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+
+        ScreenshotCapture {
+            buffer: staging_buffer,
+            width: vw,
+            height: vh,
+            padded_bytes_per_row,
+            unpadded_bytes_per_row,
+            is_bgra,
+            device: Arc::clone(&self.device),
+        }
+    }
+}
+
+/// Pending screenshot capture that can be resolved asynchronously (wasm32).
+#[cfg(target_arch = "wasm32")]
+pub struct ScreenshotCapture {
+    buffer: wgpu::Buffer,
+    width: u32,
+    height: u32,
+    padded_bytes_per_row: u32,
+    unpadded_bytes_per_row: u32,
+    is_bgra: bool,
+    device: Arc<wgpu::Device>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl ScreenshotCapture {
+    /// Resolve the screenshot capture asynchronously.
+    /// Returns PNG-encoded bytes on success.
+    pub async fn resolve(self) -> Option<Vec<u8>> {
+        let buffer_slice = self.buffer.slice(..);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+
+        // On wasm, poll(Wait) triggers the browser event loop to process the map callback.
+        self.device.poll(wgpu::Maintain::Wait);
+
+        // The callback should have fired after poll. If not, yield once.
+        let map_result = match rx.try_recv() {
+            Ok(r) => r,
+            Err(_) => {
+                // Yield to browser event loop and retry
+                wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(
+                    &wasm_bindgen::JsValue::NULL,
+                ))
+                .await
+                .ok();
+                rx.try_recv().ok()?
+            }
+        };
+
+        if map_result.is_err() {
+            return None;
+        }
+
+        let data = buffer_slice.get_mapped_range();
+        let mut pixels = Vec::with_capacity((self.width * self.height * 4) as usize);
+        for row in 0..self.height {
+            let offset = (row * self.padded_bytes_per_row) as usize;
+            let row_data = &data[offset..offset + self.unpadded_bytes_per_row as usize];
+            if self.is_bgra {
+                for pixel in row_data.chunks_exact(4) {
+                    pixels.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
+                }
+            } else {
+                pixels.extend_from_slice(row_data);
+            }
+        }
+        drop(data);
+        self.buffer.unmap();
+
+        // Encode as PNG
+        let img = image::RgbaImage::from_raw(self.width, self.height, pixels)?;
+        let mut png_bytes = Vec::new();
+        let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
+        image::ImageEncoder::write_image(
+            encoder,
+            img.as_raw(),
+            self.width,
+            self.height,
+            image::ExtendedColorType::Rgba8,
+        )
+        .ok()?;
+        Some(png_bytes)
+    }
 }
 
 fn orthographic_projection(width: f32, height: f32) -> [f32; 16] {

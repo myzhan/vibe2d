@@ -1,7 +1,9 @@
 mod protocol;
+#[cfg(not(target_arch = "wasm32"))]
 mod server;
 
-pub use protocol::{VdpRequest, VdpResponse};
+pub use protocol::{JsonRpcRequest, VdpRequest, VdpResponse};
+#[cfg(not(target_arch = "wasm32"))]
 pub use server::VdpServer;
 
 use std::sync::atomic::{AtomicBool, Ordering};

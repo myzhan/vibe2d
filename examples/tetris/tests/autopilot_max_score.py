@@ -85,7 +85,10 @@ async def rpc_quiet(ws, method, params=None):
         msg["params"] = params
     await ws.send(json.dumps(msg))
     resp = await asyncio.wait_for(ws.recv(), timeout=5)
-    return json.loads(resp)
+    data = json.loads(resp)
+    if "error" in data:
+        raise ConnectionError(data["error"].get("message", "RPC error"))
+    return data
 
 
 async def step_and_wait(ws, frames=1):
@@ -384,5 +387,8 @@ async def main():
         print("错误: 无法连接到游戏。请先启动游戏:")
         print("  cd examples/tetris && cargo run -p tetris")
         sys.exit(1)
+    except (ConnectionError, websockets.exceptions.ConnectionClosed,
+            asyncio.TimeoutError) as e:
+        print(f"\n连接断开: {e}")
 
 asyncio.run(main())

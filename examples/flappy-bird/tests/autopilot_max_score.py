@@ -36,7 +36,10 @@ async def rpc(ws, method, params=None):
         msg["params"] = params
     await ws.send(json.dumps(msg))
     resp = await asyncio.wait_for(ws.recv(), timeout=5)
-    return json.loads(resp)
+    data = json.loads(resp)
+    if "error" in data:
+        raise ConnectionError(data["error"].get("message", "RPC error"))
+    return data
 
 
 async def step(ws, frames=1):
@@ -95,77 +98,84 @@ async def main():
         last_score = 0
         frame = 0
         ground_top = DEFAULT_GROUND_TOP
+        disconnected = False
 
         print("开始自动飞行...")
 
-        while True:
-            r = await rpc(ws, "game.inspect")
-            res = r.get("result", {})
-            state = res.get("state", "")
-            score = res.get("score", 0)
-            bird = res.get("bird", {})
-            pipes = res.get("pipes", [])
+        try:
+            while True:
+                r = await rpc(ws, "game.inspect")
+                res = r.get("result", {})
+                state = res.get("state", "")
+                score = res.get("score", 0)
+                bird = res.get("bird", {})
+                pipes = res.get("pipes", [])
 
-            if state != "playing":
-                print(f"\n[f{frame}] 游戏结束! state={state}, 最终得分: {score}")
-                await rpc(ws, "engine.resume")
-                break
+                if state != "playing":
+                    print(f"\n[f{frame}] 游戏结束! state={state}, 最终得分: {score}")
+                    last_score = max(last_score, score)
+                    await rpc(ws, "engine.resume")
+                    break
 
-            by = bird.get("y", 0.0)
-            bvy = bird.get("vy", 0.0)
+                by = bird.get("y", 0.0)
+                bvy = bird.get("vy", 0.0)
 
-            if score != last_score:
-                print(f"  [f{frame}] ★ 得分: {score} (y={by:.1f} vy={bvy:.1f})")
-                last_score = score
+                if score != last_score:
+                    print(f"  [f{frame}] ★ 得分: {score} (y={by:.1f} vy={bvy:.1f})")
+                    last_score = score
 
-            # 找最近的管道
-            relevant_pipes = get_relevant_pipes(pipes)
-            nearest = relevant_pipes[0] if relevant_pipes else None
+                # 找最近的管道
+                relevant_pipes = get_relevant_pipes(pipes)
+                nearest = relevant_pipes[0] if relevant_pipes else None
 
-            want_flap = False
-            if nearest:
-                pipe_x = nearest["x"]
-                gap_y = nearest["gap_y"]
-                target_y = gap_y + FLAP_TARGET_OFFSET
-
-                survive_coast = sim_future_with_rule(
-                    by, bvy, target_y, pipe_x, gap_y, LOOKAHEAD, ground_top)
-                survive_flap = sim_future_with_rule(
-                    by, JUMP_VY, target_y, pipe_x, gap_y, LOOKAHEAD, ground_top)
-
-                if survive_coast > LOOKAHEAD and survive_flap > LOOKAHEAD:
-                    if by < 5.0 and bvy <= 0:
-                        want_flap = False
-                    elif by > ground_top - BIRD_H - 15 and bvy >= 0:
-                        want_flap = True
-                    elif by >= target_y and bvy > 0:
-                        want_flap = True
-                elif survive_flap > survive_coast:
-                    want_flap = True
-            else:
-                target = ground_top / 2.0
-                if by >= target and bvy > 0:
-                    want_flap = True
-
-            if want_flap:
-                await rpc(ws, "engine.simulateInput",
-                          {"device": "keyboard", "action": "tap", "key": "Space"})
-
-            await step(ws, 1)
-            frame += 1
-
-            # 每 120 帧打印状态
-            if frame % 120 == 0:
-                p_info = ""
+                want_flap = False
                 if nearest:
-                    p_info = f" pipe=({nearest['x']:.0f},gap={nearest['gap_y']:.0f})"
-                print(f"  [f{frame}] y={by:.1f} vy={bvy:.1f} sc={score}{p_info}")
+                    pipe_x = nearest["x"]
+                    gap_y = nearest["gap_y"]
+                    target_y = gap_y + FLAP_TARGET_OFFSET
+
+                    survive_coast = sim_future_with_rule(
+                        by, bvy, target_y, pipe_x, gap_y, LOOKAHEAD, ground_top)
+                    survive_flap = sim_future_with_rule(
+                        by, JUMP_VY, target_y, pipe_x, gap_y, LOOKAHEAD, ground_top)
+
+                    if survive_coast > LOOKAHEAD and survive_flap > LOOKAHEAD:
+                        if by < 5.0 and bvy <= 0:
+                            want_flap = False
+                        elif by > ground_top - BIRD_H - 15 and bvy >= 0:
+                            want_flap = True
+                        elif by >= target_y and bvy > 0:
+                            want_flap = True
+                    elif survive_flap > survive_coast:
+                        want_flap = True
+                else:
+                    target = ground_top / 2.0
+                    if by >= target and bvy > 0:
+                        want_flap = True
+
+                if want_flap:
+                    await rpc(ws, "engine.simulateInput",
+                              {"device": "keyboard", "action": "tap", "key": "Space"})
+
+                await step(ws, 1)
+                frame += 1
+
+                # 每 120 帧打印状态
+                if frame % 120 == 0:
+                    p_info = ""
+                    if nearest:
+                        p_info = f" pipe=({nearest['x']:.0f},gap={nearest['gap_y']:.0f})"
+                    print(f"  [f{frame}] y={by:.1f} vy={bvy:.1f} sc={score}{p_info}")
+
+        except (ConnectionError, websockets.exceptions.ConnectionClosed,
+                asyncio.TimeoutError) as e:
+            disconnected = True
+            print(f"\n[f{frame}] 连接断开: {e}")
 
         print(f"\n{'=' * 50}")
         print(f"最终得分: {last_score}")
         print(f"总帧数: {frame}")
         print(f"{'=' * 50}")
-        await rpc(ws, "engine.resume")
 
 
 asyncio.run(main())

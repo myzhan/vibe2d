@@ -35,6 +35,8 @@ async def rpc(ws, method, params=None):
     await ws.send(json.dumps(msg))
     resp = await asyncio.wait_for(ws.recv(), timeout=5)
     data = json.loads(resp)
+    if "error" in data:
+        raise ConnectionError(data["error"].get("message", "RPC error"))
     return data
 
 async def step(ws, n=1):
@@ -1016,6 +1018,9 @@ async def main():
         print("ERROR: cannot connect. Start the game first:")
         print("  cd examples/mari0 && cargo run -p mari0 --features vdp")
         sys.exit(1)
+    except (ConnectionError, websockets.exceptions.ConnectionClosed,
+            asyncio.TimeoutError) as e:
+        print(f"\n连接断开: {e}")
     except Exception as e:
         print(f"ERROR: {e}")
         import traceback

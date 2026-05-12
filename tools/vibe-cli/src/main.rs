@@ -1,3 +1,5 @@
+mod vdp_relay;
+
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use futures_util::{SinkExt, StreamExt};
@@ -43,6 +45,12 @@ enum Commands {
         #[arg(short, long, default_value = "ws://127.0.0.1:9229")]
         addr: String,
     },
+    /// Start a VDP relay server for web games
+    VdpRelay {
+        /// Port to listen on
+        #[arg(short, long, default_value_t = 9229)]
+        port: u16,
+    },
     /// Show engine version info
     Version,
 }
@@ -78,16 +86,32 @@ async fn main() -> Result<()> {
             let result = vdp_call(
                 &addr,
                 "game.screenshot",
-                serde_json::json!({ "path": output }),
+                serde_json::json!({ "path": &output }),
             )
             .await?;
             if let Some(err) = result.get("error") {
                 eprintln!("Screenshot failed: {}", err);
+            } else if let Some(result_obj) = result.get("result") {
+                // Web games return base64-encoded PNG data
+                if let Some(data) = result_obj.get("data").and_then(|v| v.as_str()) {
+                    use base64::Engine as _;
+                    let bytes = base64::engine::general_purpose::STANDARD.decode(data)?;
+                    std::fs::write(&output, &bytes)?;
+                    println!("Screenshot saved to: {} ({} bytes)", output, bytes.len());
+                } else {
+                    // Desktop games write the file directly; just wait for it
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                    println!("Screenshot saved to: {}", output);
+                }
             } else {
-                // Wait briefly for the screenshot to be written on the next frame
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                println!("Screenshot saved to: {}", output);
+                eprintln!(
+                    "Unexpected response: {}",
+                    serde_json::to_string_pretty(&result)?
+                );
             }
+        }
+        Commands::VdpRelay { port } => {
+            vdp_relay::run(port).await?;
         }
         Commands::Version => {
             println!("vibe2d {}", env!("CARGO_PKG_VERSION"));

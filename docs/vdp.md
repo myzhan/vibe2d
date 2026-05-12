@@ -28,6 +28,14 @@ cargo build -p flappy-bird --no-default-features
 - **默认地址**: `ws://127.0.0.1:9229`
 - **连接模型**: 单连接（一次只接受一个客户端）
 
+### 桌面端
+
+游戏进程内嵌 WebSocket 服务器，工具直接连接到游戏进程。
+
+### Web 端 (WASM)
+
+浏览器游戏无法启动服务端，通过 VDP Relay 中继。工具和游戏都以客户端身份连接到 relay（详见「架构 - Web 端」一节）。
+
 ### 配置
 
 在 `game.yaml` 中启用和配置 VDP：
@@ -36,7 +44,7 @@ cargo build -p flappy-bird --no-default-features
 debug:
   vdp:
     enabled: true
-    port: 9229       # 可选，默认 9229
+    port: 9229       # 可选，默认 9229（桌面端为服务端口，Web 端为 relay 目标端口）
 ```
 
 ## 消息格式
@@ -277,9 +285,9 @@ debug:
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `path` | string | 否 | 输出路径，默认 `"screenshot.png"` |
+| `path` | string | 否 | 输出路径，默认 `"screenshot.png"`（仅桌面端） |
 
-**响应**:
+**响应（桌面端）**:
 
 ```json
 {
@@ -288,10 +296,22 @@ debug:
 }
 ```
 
+**响应（Web 端）**:
+
+```json
+{
+  "format": "png",
+  "encoding": "base64",
+  "data": "iVBORw0KGgo..."
+}
+```
+
 **说明**:
-- `status: "queued"` 表示截图已排队，将在下一帧渲染时执行
+- 桌面端：`status: "queued"` 表示截图已排队，将在下一帧渲染时写入文件
+- Web 端：截图异步捕获，通过 GPU buffer readback 获取像素，编码为 PNG 后以 base64 返回
 - 截图使用离屏纹理（RENDER_ATTACHMENT + COPY_SRC），不依赖 surface 纹理
 - 输出分辨率为虚拟分辨率（如 512x288），PNG 格式
+- `vibe screenshot` CLI 命令会自动检测响应格式：桌面端等待文件写入，Web 端解码 base64 并保存到本地
 
 ---
 
@@ -401,7 +421,7 @@ pub trait Game {
 
 ## 架构
 
-### 线程模型
+### 桌面端线程模型
 
 ```
 ┌──────────────┐    mpsc channel    ┌──────────────┐
@@ -419,6 +439,35 @@ pub trait Game {
 - **Game Thread**: 主线程，每帧通过 `try_recv()` 非阻塞收取请求
 - **通信**: 双向 `std::sync::mpsc` channel
 - **超时**: 服务端等待游戏线程响应最多 5 秒
+
+### Web 端 (WASM) 架构
+
+浏览器中的 WASM 游戏无法启动 WebSocket 服务器，因此通过 **VDP Relay** 中继服务实现调试：
+
+```
+┌──────────────┐         ┌───────────────────┐         ┌──────────────────┐
+│  vibe-cli    │──ws ──► │  vdp-relay        │ ◄── ws──│  Browser/WASM    │
+│  (tool)      │   /     │  (ws://host:9229) │    /game│  (game)          │
+└──────────────┘         └───────────────────┘         └──────────────────┘
+```
+
+**工作流程**：
+
+1. 启动 relay：`vibe vdp-relay --port 9229`
+2. 浏览器游戏启动后自动连接到 `ws://<relay>/game`
+3. 工具（vibe-cli rpc/inspect/Python 脚本）连接到 `ws://<relay>/`
+4. Relay 将工具的 JSON-RPC 请求转发给游戏，游戏的响应转发回工具
+
+**FIFO 调度**：Relay 按请求到达顺序排队，游戏按顺序处理并返回响应。每个请求有 5 秒超时。
+
+**游戏端连接**：
+- 游戏在 `game.yaml` 中配置 `debug.vdp.enabled: true` 即可
+- 浏览器游戏自动推断 relay 地址为 `ws://<当前页面hostname>:9229/game`
+- 可通过 URL 参数 `?vdp_relay=ws://host:port` 覆盖默认地址
+
+**限制**：
+- `game.screenshot` 在 Web 端通过 base64 返回图片数据（不写文件），响应时间取决于 GPU readback 速度
+- 一次只允许一个游戏连接到 relay
 
 ### 每帧处理流程
 
@@ -472,7 +521,34 @@ vibe rpc game.setState '{"state": "idle"}'  --addr ws://127.0.0.1:9229
 vibe screenshot [--output screenshot.png] [--addr ws://127.0.0.1:9229]
 ```
 
-请求截图并等待 200ms 让文件写入完成。
+请求截图。桌面端等待文件写入完成；Web 端自动解码 base64 响应并保存到本地文件。
+
+### `vibe vdp-relay`
+
+```bash
+vibe vdp-relay [--port 9229]
+```
+
+启动 VDP relay 中继服务器，用于 Web/WASM 游戏的 VDP 调试。
+
+- 游戏（浏览器）连接到 `ws://<host>:<port>/game`
+- 工具（CLI/Python 脚本）连接到 `ws://<host>:<port>/`
+- Relay 负责在两者之间转发 JSON-RPC 消息
+
+**典型使用流程**：
+
+```bash
+# 终端 1: 启动 relay
+vibe vdp-relay
+
+# 终端 2: 启动 web 游戏 (trunk serve)
+cd examples/flappy-bird && trunk serve
+
+# 终端 3: 打开浏览器后使用 CLI 调试
+vibe rpc engine.info
+vibe rpc engine.pause
+vibe rpc game.inspect
+```
 
 ---
 

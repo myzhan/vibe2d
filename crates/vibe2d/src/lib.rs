@@ -2,6 +2,8 @@ mod config;
 mod context;
 mod game;
 mod screen;
+#[cfg(all(target_arch = "wasm32", feature = "vdp"))]
+mod vdp_web;
 
 pub mod prelude {
     pub use crate::Color;
@@ -239,6 +241,23 @@ pub async fn run_web<G: Game + 'static>(config_yaml_url: &str) {
         virtual_height,
     };
 
+    // Connect to VDP relay if configured
+    #[cfg(feature = "vdp")]
+    let vdp_channel = if config
+        .debug
+        .as_ref()
+        .and_then(|d| d.vdp.as_ref())
+        .and_then(|v| v.enabled)
+        .unwrap_or(false)
+    {
+        let relay_url =
+            vdp_web::default_relay_url().unwrap_or_else(|| "ws://127.0.0.1:9229/game".to_string());
+        tracing::info!("Connecting to VDP relay: {}", relay_url);
+        vdp_web::connect_to_relay(&relay_url)
+    } else {
+        None
+    };
+
     let bridge = GameBridge::<G> {
         game: None,
         assets: vibe_asset::AssetManager::new(),
@@ -249,6 +268,32 @@ pub async fn run_web<G: Game + 'static>(config_yaml_url: &str) {
         virtual_height,
         pending_text_prep: Vec::new(),
         asset_bundle: Some(bundle),
+        #[cfg(feature = "vdp")]
+        vdp: vdp_channel,
+        #[cfg(feature = "vdp")]
+        paused: false,
+        #[cfg(feature = "vdp")]
+        step_frames: 0,
+        #[cfg(feature = "vdp")]
+        frame_count: 0,
+        #[cfg(feature = "vdp")]
+        elapsed_time: 0.0,
+        #[cfg(feature = "vdp")]
+        last_dt: 0.0,
+        #[cfg(feature = "vdp")]
+        resume_next_frame: false,
+        #[cfg(feature = "vdp")]
+        pending_simulated: Vec::new(),
+        #[cfg(feature = "vdp")]
+        pending_key_auto_releases: Vec::new(),
+        #[cfg(feature = "vdp")]
+        pending_mouse_auto_releases: Vec::new(),
+        #[cfg(feature = "vdp")]
+        pending_step_inspect: None,
+        #[cfg(feature = "vdp")]
+        vdp_skip_render: false,
+        #[cfg(all(target_arch = "wasm32", feature = "vdp"))]
+        pending_web_screenshot: None,
     };
 
     vibe_platform::run_web(platform_config, bridge, input_state).expect("Game loop failed");
@@ -361,6 +406,10 @@ struct GameBridge<G: Game> {
     pending_step_inspect: Option<PendingStepInspect>,
     #[cfg(feature = "vdp")]
     vdp_skip_render: bool,
+    /// Pending web screenshot request id (wasm32 only).
+    /// The actual capture happens in `on_render` after draw commands are queued.
+    #[cfg(all(target_arch = "wasm32", feature = "vdp"))]
+    pending_web_screenshot: Option<serde_json::Value>,
 }
 
 impl<G: Game> GameBridge<G> {
@@ -653,6 +702,10 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
                 self.elapsed_time += effective_dt;
             }
         }
+
+        // Web VDP: flush responses back to relay WebSocket
+        #[cfg(all(target_arch = "wasm32", feature = "vdp"))]
+        vdp_web::drain_responses();
     }
 
     fn on_render(&mut self, renderer: &mut vibe_render::Renderer) {
@@ -686,6 +739,42 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             self.assets = ctx.assets;
             self.audio = ctx.audio;
             self.ui_state = ctx.ui_state;
+        }
+
+        // Web screenshot: start GPU capture after draw commands are queued,
+        // then resolve asynchronously via spawn_local.
+        #[cfg(all(target_arch = "wasm32", feature = "vdp"))]
+        if let Some(screenshot_id) = self.pending_web_screenshot.take() {
+            let clear_color = if let Some(game) = &self.game {
+                game.clear_color().to_array()
+            } else {
+                [0.0, 0.0, 0.0, 1.0]
+            };
+            let textures: Vec<&vibe_render::Texture> = self.assets.all_textures();
+            let capture = renderer.start_screenshot_capture(clear_color, &textures);
+            let sender = self.vdp.as_ref().unwrap().sender.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let response = match capture.resolve().await {
+                    Some(png_bytes) => {
+                        use base64::Engine as _;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&png_bytes);
+                        vibe_debug::VdpResponse::success(
+                            screenshot_id,
+                            serde_json::json!({
+                                "format": "png",
+                                "encoding": "base64",
+                                "data": b64,
+                            }),
+                        )
+                    }
+                    None => vibe_debug::VdpResponse::error(
+                        screenshot_id,
+                        -32000,
+                        "Screenshot capture failed",
+                    ),
+                };
+                let _ = sender.send(response);
+            });
         }
     }
 
@@ -747,6 +836,13 @@ impl<G: Game> GameBridge<G> {
                     id: req.id.clone(),
                     frames,
                 });
+                continue;
+            }
+
+            // Web screenshot is deferred — capture happens in on_render after draw commands are queued
+            #[cfg(target_arch = "wasm32")]
+            if req.method == "game.screenshot" {
+                self.pending_web_screenshot = Some(req.id.clone());
                 continue;
             }
 
@@ -876,17 +972,28 @@ impl<G: Game> GameBridge<G> {
             }
 
             "game.screenshot" => {
-                let path = req
-                    .params
-                    .get("path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("screenshot.png")
-                    .to_string();
-                self.pending_screenshot = Some(PathBuf::from(&path));
-                vibe_debug::VdpResponse::success(
-                    req.id.clone(),
-                    serde_json::json!({ "path": path, "status": "queued" }),
-                )
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let path = req
+                        .params
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("screenshot.png")
+                        .to_string();
+                    self.pending_screenshot = Some(PathBuf::from(&path));
+                    vibe_debug::VdpResponse::success(
+                        req.id.clone(),
+                        serde_json::json!({ "path": path, "status": "queued" }),
+                    )
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    vibe_debug::VdpResponse::error(
+                        req.id.clone(),
+                        -32000,
+                        "game.screenshot is not supported on web",
+                    )
+                }
             }
 
             // ── UI methods ──

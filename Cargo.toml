@@ -60,6 +60,9 @@ rand = "0.9"
 fontdue = "0.9"
 rodio = { version = "0.20", default-features = false, features = ["wav", "vorbis"] }
 
+# Encoding
+base64 = "0.22"
+
 # Web/WASM dependencies
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
