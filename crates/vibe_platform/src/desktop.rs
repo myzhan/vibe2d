@@ -29,12 +29,19 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
             return;
         }
 
-        let win_attrs = Window::default_attributes()
+        let mut win_attrs = Window::default_attributes()
             .with_title(&self.config.window_title)
             .with_inner_size(winit::dpi::LogicalSize::new(
                 self.config.window_width,
                 self.config.window_height,
             ));
+        // VIBE_HEADLESS=1 → still create the window (wgpu surface, screenshot,
+        // etc. all keep working) but mark it invisible so `--ignored` test runs
+        // don't steal focus on macOS. The window is required by current wgpu;
+        // a true surfaceless path is tracked separately (C 方案).
+        if std::env::var_os("VIBE_HEADLESS").is_some() {
+            win_attrs = win_attrs.with_visible(false);
+        }
 
         let window = Arc::new(
             event_loop

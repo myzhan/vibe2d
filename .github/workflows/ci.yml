@@ -1,9 +1,12 @@
 name: CI
 
-# Keep this pipeline fast: only unit tests + lint gates.
-# VDP integration tests (marked `#[ignore]`) spawn real game windows and
-# need a GPU/display server, which GitHub-hosted runners can't provide
-# reliably. Those are expected to run locally via:
+# Two-layer test policy:
+#   * `test` job — fast unit + lib + bin tests on Linux/macOS. Skips
+#     `#[ignore]`-gated VDP integration tests by default.
+#   * `vdp-integration` job — runs the ignored VDP tests for ui-demo
+#     under Xvfb + lavapipe (software Vulkan). Catches VDP/UI regressions
+#     in CI that would otherwise only fire on a dev box with a real GPU.
+# Run the same ignored tests locally via:
 #   cargo test -p <game> -- --ignored --test-threads=1
 # (See AGENTS.md → "测试与验证" for the full policy.)
 
@@ -107,6 +110,73 @@ jobs:
             -p vibe_test \
             -p vibe-cli \
             --all-targets -- -D warnings
+
+  # ── VDP integration tests under Xvfb + lavapipe ──────────────
+  # Runs the `#[ignore]`-gated tests in examples/ui/tests/. They each
+  # spawn a real game child process, so we need:
+  #   * Xvfb — virtual X display (GitHub runners have no real display)
+  #   * mesa-vulkan-drivers — lavapipe (software Vulkan), so wgpu has
+  #     an adapter to talk to
+  #   * VIBE_HEADLESS=1 (via the harness `visible: false` default) so
+  #     winit creates the window invisibly
+  #   * VIBE_TEST_RELEASE=1 — spawn child games with `--release`
+  #     because lavapipe is too slow under debug for the harness'
+  #     180 s readiness timeout
+  # Scope: ui-demo only for now. Add more `-p` entries once this job
+  # is proven stable. Tests run with --test-threads=1 to avoid the
+  # spawned games racing on VDP port 9229.
+  vdp-integration:
+    name: VDP integration (ui-demo, Xvfb + lavapipe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install audio + display + Vulkan deps
+        # libxkbcommon-x11-0 is the runtime winit dlopens for X11 keyboard
+        # mapping; without it the spawned game panics on startup. The dev
+        # package isn't strictly needed at runtime but pulls in headers if
+        # any crate compiles xkb bindings.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libxkbcommon-x11-0 \
+            xvfb \
+            mesa-vulkan-drivers \
+            vulkan-tools
+      - name: Verify lavapipe is available
+        run: xvfb-run -a vulkaninfo --summary | grep -i llvmpipe
+      - name: Run ignored ui-demo VDP tests under Xvfb
+        env:
+          WGPU_BACKEND: vulkan
+          RUST_LOG: warn
+          # Spawn child games as `cargo run --release`; lavapipe is too
+          # slow under debug to hit the 180 s readiness timeout.
+          VIBE_TEST_RELEASE: "1"
+          # Under Xvfb an unmapped (VIBE_HEADLESS) window breaks lavapipe
+          # surface init. Force visible — Xvfb is already a virtual display
+          # so "visible" only means "mapped in the X server", not on-screen.
+          VIBE_TEST_FORCE_VISIBLE: "1"
+          # Capture child stdout/stderr so a hung game leaves a panic /
+          # log trail behind, dumped by the post-step on failure below.
+          VIBE_TEST_CHILD_LOG_DIR: ${{ runner.temp }}/child-logs
+        run: |
+          xvfb-run -a cargo test -p ui-demo --release \
+            -- --ignored --test-threads=1
+      - name: Dump child game logs on failure
+        if: failure()
+        run: |
+          dir="${{ runner.temp }}/child-logs"
+          if [ -d "$dir" ]; then
+            for f in "$dir"/*.log; do
+              echo "::group::$(basename "$f")"
+              cat "$f"
+              echo "::endgroup::"
+            done
+          else
+            echo "No child log dir at $dir"
+          fi
 
   # ── Release build without VDP ────────────────────────────────
   # Confirms the `--no-default-features` path (VDP stripped) still compiles.
