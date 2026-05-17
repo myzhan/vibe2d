@@ -344,14 +344,7 @@ let mut h = GameHarness::launch_with(opts).await.unwrap();
 
 **新增 demo 时**：在 `examples/<game>/tests/playthrough.rs` 写无断言的人速场景（不要 `pause()`），`let mut pacer = ScreenshotPacer::new(GAME_PACKAGE, 15);` + 所有 sleep 改成 `pacer.sleep(&mut h, dur).await`。在 `playthrough.yml` 的 `matrix.game` 列表里加一条 `{ pkg }`（不再需要 width/height，PNG header 自带）。
 
-**一次性 setup**（首次启用前）：
-
-```bash
-git checkout --orphan playthrough-assets
-git rm -rf .
-git commit --allow-empty -m 'init: playthrough assets branch'
-git push -u origin playthrough-assets
-```
+**首次启用**：`playthrough-assets` orphan 分支由 `publish` job 在第一次运行时自动创建（见 workflow 顶部 `Ensure playthrough-assets branch exists` 步骤），无需手工初始化。仍需在 Settings → Actions → Workflow permissions 允许 write contents + PR 评论。
 
 **注意事项**：
 - `vibe_test` 是 **dev-dependency** —— `cargo build --release` **不会**把它编译进发布产物。

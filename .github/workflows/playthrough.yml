@@ -204,6 +204,22 @@ jobs:
       contents: write
       pull-requests: write
     steps:
+      - name: Ensure playthrough-assets branch exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${{ github.repository }}/branches/playthrough-assets" --silent 2>/dev/null; then
+            exit 0
+          fi
+          tmp=$(mktemp -d)
+          cd "$tmp"
+          git init -q -b playthrough-assets
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q --allow-empty -m "init: playthrough assets branch"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" playthrough-assets
+
       - uses: actions/checkout@v4
         with:
           ref: playthrough-assets
@@ -317,11 +333,25 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Skip if playthrough-assets branch missing
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/branches/playthrough-assets" --silent 2>/dev/null; then
+            echo "exists=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "Branch playthrough-assets does not exist — nothing to clean."
+            echo "exists=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.check.outputs.exists == '1'
+        uses: actions/checkout@v4
         with:
           ref: playthrough-assets
 
       - name: Delete this PR's playthrough files
+        if: steps.check.outputs.exists == '1'
         env:
           PR: ${{ github.event.pull_request.number }}
         run: |
