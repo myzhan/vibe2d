@@ -554,7 +554,7 @@ vibe rpc game.inspect
 
 ## 实现自定义方法指南
 
-推荐用 `#[derive(Serialize)]` 快照写 `inspect`、用 `#[vibe2d::vdp::vdp_methods]` 声明宏写 `handle_vdp`（游戏规模变大时避免手抠 JSON）。游戏 `Cargo.toml` 的 `vdp` feature 需加 `dep:serde`：
+用 `#[derive(Serialize)]` 快照写 `inspect`、用 `#[vibe2d::vdp::vdp_methods]` 声明宏写 `handle_vdp`（游戏规模变大时避免手抠 JSON）。游戏 `Cargo.toml` 的 `vdp` feature 需加 `dep:serde`：
 
 ```toml
 [features]
@@ -563,8 +563,6 @@ vdp = ["vibe2d/vdp", "dep:serde_json", "dep:serde"]
 [dependencies]
 serde = { workspace = true, optional = true }
 ```
-
-> 旧的手写 `serde_json::json!` + `match method` 方式仍然完全支持，二者可混用；下面给出推荐写法。
 
 ### 1. 实现 `inspect()` —— derive 快照
 

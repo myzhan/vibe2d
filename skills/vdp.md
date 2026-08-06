@@ -124,10 +124,9 @@ Mouse:
 
 ## Implementing VDP in Your Game
 
-Override `inspect()` and `handle_vdp()` in your Game trait. The recommended
-style uses `#[derive(Serialize)]` snapshots for `inspect` and the
-`#[vibe2d::vdp::vdp_methods]` macro for `handle_vdp` (the manual
-`serde_json::json!` + `match` style still works too). Add `dep:serde` to the
+Override `inspect()` and `handle_vdp()` in your Game trait using
+`#[derive(Serialize)]` snapshots for `inspect` and the
+`#[vibe2d::vdp::vdp_methods]` macro for `handle_vdp`. Add `dep:serde` to the
 game's `vdp` feature.
 
 ```rust

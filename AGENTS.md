@@ -238,7 +238,7 @@ Feature 级联：游戏 crate → `vibe2d/vdp` → `vibe_debug` + `serde_json`
 
 **引擎级别**（所有游戏通用）：在 `crates/vibe2d/src/lib.rs` 的 `GameBridge::handle_vdp_request()` 中添加 match 分支。
 
-**游戏级别**（特定游戏）：在游戏结构体上实现 `inspect()` / `handle_vdp()`。示例见 [docs/api.md](docs/api.md#实现自定义-vdp-方法)。推荐用下面的 derive + 声明宏写法（游戏规模变大时避免手抠 JSON），旧的手写 `serde_json::json!` + `match` 方式仍然支持。
+**游戏级别**（特定游戏）：在游戏结构体上实现 `inspect()` / `handle_vdp()`。示例见 [docs/api.md](docs/api.md#实现自定义-vdp-方法)。用下面的 derive + 声明宏写法（游戏规模变大时避免手抠 JSON）。
 
 **`inspect` —— 用 `#[derive(Serialize)]` 快照**：不要手写 `serde_json::json!({...})` 镜像每个字段，而是定义一个（或几个）门控在 `vdp` feature 下的快照 struct，把要暴露的状态填进去再 `serde_json::to_value`：
 

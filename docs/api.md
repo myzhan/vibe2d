@@ -435,7 +435,7 @@ rpc("engine.resume")
 
 ### 实现自定义 VDP 方法
 
-推荐用 `#[derive(Serialize)]` 快照写 `inspect`、用 `#[vibe2d::vdp::vdp_methods]` 声明宏写 `handle_vdp`，避免手抠 JSON。（`vdp` feature 里记得加 `dep:serde`；旧的手写 `json!` + `match` 方式仍然支持。）
+用 `#[derive(Serialize)]` 快照写 `inspect`、用 `#[vibe2d::vdp::vdp_methods]` 声明宏写 `handle_vdp`，避免手抠 JSON。（`vdp` feature 里记得加 `dep:serde`。）
 
 ```rust
 // ── inspect：定义门控在 vdp feature 下的快照 struct ──
