@@ -6,13 +6,14 @@ license.workspace = true
 
 [features]
 default = ["vdp"]
-vdp = ["vibe2d/vdp", "dep:serde_json"]
+vdp = ["vibe2d/vdp", "dep:serde_json", "dep:serde"]
 
 [dependencies]
 vibe2d = { workspace = true }
 rand.workspace = true
 tracing.workspace = true
 serde_json = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom.workspace = true

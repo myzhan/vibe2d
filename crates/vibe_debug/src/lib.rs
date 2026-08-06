@@ -2,7 +2,7 @@ mod protocol;
 #[cfg(not(target_arch = "wasm32"))]
 mod server;
 
-pub use protocol::{JsonRpcRequest, VdpRequest, VdpResponse};
+pub use protocol::{JsonRpcRequest, VdpRequest, VdpResponse, from_params, to_result};
 #[cfg(not(target_arch = "wasm32"))]
 pub use server::VdpServer;
 

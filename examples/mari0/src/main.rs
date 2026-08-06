@@ -193,6 +193,8 @@ fn fireball_explode_uv(frame: u32) -> [f32; 4] {
 // ── Enums & Structs ────────────────────────────────────────────────
 
 #[derive(PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum GameState {
     Menu,
     Playing,
@@ -201,6 +203,8 @@ enum GameState {
 }
 
 #[derive(PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum PlayerAnim {
     Idle,
     Run,
@@ -209,6 +213,8 @@ enum PlayerAnim {
 }
 
 #[derive(PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum Orientation {
     Up,
     Down,
@@ -217,12 +223,16 @@ enum Orientation {
 }
 
 #[derive(PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum EnemyType {
     Goomba,
     Koopa,
 }
 
 #[derive(PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum EnemyState {
     Walking,
     Dead,
@@ -333,9 +343,12 @@ enum BlockContent {
 }
 
 #[derive(Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum ItemType {
     Mushroom,
     Star,
+    #[cfg_attr(feature = "vdp", serde(rename = "1up"))]
     OneUp,
     FireFlower,
 }
@@ -428,6 +441,157 @@ struct Level {
 
 struct Camera {
     x: f32,
+}
+
+// ── VDP inspect snapshot views ──────────────────────────────────────
+// Typed, `Serialize`-derived mirror of the curated `inspect()` payload.
+// Field names / nesting reproduce the JSON shape exactly; enum → string
+// mapping is handled by the `serde` derives on the enums themselves.
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct Mari0Inspect {
+    state: GameState,
+    player: PlayerView,
+    portals: PortalsView,
+    projectiles: Vec<ProjectileView>,
+    crosshair_angle: f32,
+    enemies: Vec<EnemyView>,
+    coins: Vec<CoinView>,
+    level: LevelView,
+    camera_x: f32,
+    score: u32,
+    coin_count: u32,
+    lives: u32,
+    combo_index: usize,
+    time_remaining: f32,
+    items: Vec<ItemView>,
+    block_contents: Vec<BlockContentView>,
+    star_timer: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct PlayerView {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    width: f32,
+    height: f32,
+    on_ground: bool,
+    facing_right: bool,
+    is_big: bool,
+    is_fire: bool,
+    is_jumping: bool,
+    anim_state: PlayerAnim,
+    portal_cooldown: f32,
+    teleport_cooldown: f32,
+    invincible_timer: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct PortalsView {
+    blue: Option<PortalView>,
+    orange: Option<PortalView>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct PortalView {
+    x: f32,
+    y: f32,
+    orientation: Orientation,
+    active: bool,
+}
+
+#[cfg(feature = "vdp")]
+impl PortalView {
+    /// A portal slot only appears in `inspect` when it's present and active.
+    fn from_slot(slot: &Option<Portal>) -> Option<PortalView> {
+        match slot {
+            Some(p) if p.active => Some(PortalView {
+                x: p.x,
+                y: p.y,
+                orientation: p.orientation,
+                active: true,
+            }),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct ProjectileView {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    color: &'static str,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct EnemyView {
+    x: f32,
+    y: f32,
+    #[serde(rename = "type")]
+    enemy_type: EnemyType,
+    state: EnemyState,
+    facing_right: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct CoinView {
+    x: f32,
+    y: f32,
+    collected: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct LevelView {
+    width: usize,
+    height: usize,
+    flag_x: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct ItemView {
+    #[serde(rename = "type")]
+    item_type: ItemType,
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    emerging: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct BlockContentView {
+    row: usize,
+    col: usize,
+    x: f32,
+    y: f32,
+    content: &'static str,
+}
+
+/// Stable string tag for a block's content (drops `MultiCoin` payload, as the
+/// original curated `inspect` did).
+#[cfg(feature = "vdp")]
+fn block_content_kind(c: &BlockContent) -> &'static str {
+    match c {
+        BlockContent::Coin => "coin",
+        BlockContent::MultiCoin(_) => "multi_coin",
+        BlockContent::Mushroom => "mushroom",
+        BlockContent::Star => "star",
+        BlockContent::OneUp => "1up",
+    }
 }
 
 // ── Level data (embedded from mari0 1-1.txt) ────────────────────────
@@ -2996,148 +3160,100 @@ impl Game for Mari0Game {
 
     #[cfg(feature = "vdp")]
     fn inspect(&self) -> serde_json::Value {
-        let state_str = match self.state {
-            GameState::Menu => "menu",
-            GameState::Playing => "playing",
-            GameState::Dead => "dead",
-            GameState::LevelComplete => "level_complete",
-        };
-
-        let anim_str = match self.player.anim_state {
-            PlayerAnim::Idle => "idle",
-            PlayerAnim::Run => "run",
-            PlayerAnim::Jump => "jump",
-            PlayerAnim::Fall => "fall",
-        };
-
-        let portals_json = |idx: usize| -> serde_json::Value {
-            match &self.portals[idx] {
-                Some(p) if p.active => serde_json::json!({
-                    "x": p.x, "y": p.y,
-                    "orientation": match p.orientation {
-                        Orientation::Up => "up",
-                        Orientation::Down => "down",
-                        Orientation::Left => "left",
-                        Orientation::Right => "right",
-                    },
-                    "active": true,
-                }),
-                _ => serde_json::Value::Null,
-            }
-        };
-
-        let enemies: Vec<serde_json::Value> = self.enemies.iter().map(|e| {
-            serde_json::json!({
-                "x": e.x, "y": e.y,
-                "type": match e.enemy_type { EnemyType::Goomba => "goomba", EnemyType::Koopa => "koopa" },
-                "state": match e.state {
-                    EnemyState::Walking => "walking",
-                    EnemyState::Dead => "dead",
-                    EnemyState::Shell => "shell",
-                    EnemyState::ShellMoving => "shell_moving",
-                },
-                "facing_right": e.facing_right,
-            })
-        }).collect();
-
-        let coins: Vec<serde_json::Value> = self
-            .level
-            .coins
-            .iter()
-            .map(|c| serde_json::json!({"x": c.x, "y": c.y, "collected": c.collected}))
-            .collect();
-
-        let projectiles: Vec<serde_json::Value> = self
-            .projectiles
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "x": p.x, "y": p.y, "vx": p.vx, "vy": p.vy,
-                    "color": if p.portal_index == 0 { "blue" } else { "orange" },
-                })
-            })
-            .collect();
-
-        let items: Vec<serde_json::Value> = self
-            .items
-            .iter()
-            .map(|item| {
-                serde_json::json!({
-                    "type": match item.item_type {
-                        ItemType::Mushroom => "mushroom",
-                        ItemType::Star => "star",
-                        ItemType::OneUp => "1up",
-                        ItemType::FireFlower => "fire_flower",
-                    },
-                    "x": item.x, "y": item.y,
-                    "vx": item.vx, "vy": item.vy,
-                    "emerging": item.emerging,
-                })
-            })
-            .collect();
-
-        let block_contents: Vec<serde_json::Value> = self
-            .level
-            .block_contents
-            .iter()
-            .map(|((row, col), content)| {
-                serde_json::json!({
-                    "row": row, "col": col,
-                    "x": *col as f32 * TILE_SIZE,
-                    "y": *row as f32 * TILE_SIZE,
-                    "content": match content {
-                        BlockContent::Coin => "coin",
-                        BlockContent::MultiCoin(_) => "multi_coin",
-                        BlockContent::Mushroom => "mushroom",
-                        BlockContent::Star => "star",
-                        BlockContent::OneUp => "1up",
-                    },
-                })
-            })
-            .collect();
-
-        serde_json::json!({
-            "state": state_str,
-            "player": {
-                "x": self.player.x,
-                "y": self.player.y,
-                "vx": self.player.vx,
-                "vy": self.player.vy,
-                "width": self.player.width,
-                "height": self.player.height,
-                "on_ground": self.player.on_ground,
-                "facing_right": self.player.facing_right,
-                "is_big": self.player.is_big,
-                "is_fire": self.player.is_fire,
-                "is_jumping": self.player.is_jumping,
-                "anim_state": anim_str,
-                "portal_cooldown": self.player.portal_cooldown,
-                "teleport_cooldown": self.player.teleport_cooldown,
-                "invincible_timer": self.player.invincible_timer,
+        let view = Mari0Inspect {
+            state: self.state,
+            player: PlayerView {
+                x: self.player.x,
+                y: self.player.y,
+                vx: self.player.vx,
+                vy: self.player.vy,
+                width: self.player.width,
+                height: self.player.height,
+                on_ground: self.player.on_ground,
+                facing_right: self.player.facing_right,
+                is_big: self.player.is_big,
+                is_fire: self.player.is_fire,
+                is_jumping: self.player.is_jumping,
+                anim_state: self.player.anim_state,
+                portal_cooldown: self.player.portal_cooldown,
+                teleport_cooldown: self.player.teleport_cooldown,
+                invincible_timer: self.player.invincible_timer,
             },
-            "portals": {
-                "blue": portals_json(0),
-                "orange": portals_json(1),
+            portals: PortalsView {
+                blue: PortalView::from_slot(&self.portals[0]),
+                orange: PortalView::from_slot(&self.portals[1]),
             },
-            "projectiles": projectiles,
-            "crosshair_angle": self.crosshair_angle,
-            "enemies": enemies,
-            "coins": coins,
-            "level": {
-                "width": self.level.width,
-                "height": self.level.height,
-                "flag_x": self.level.flag_x,
+            projectiles: self
+                .projectiles
+                .iter()
+                .map(|p| ProjectileView {
+                    x: p.x,
+                    y: p.y,
+                    vx: p.vx,
+                    vy: p.vy,
+                    color: if p.portal_index == 0 { "blue" } else { "orange" },
+                })
+                .collect(),
+            crosshair_angle: self.crosshair_angle,
+            enemies: self
+                .enemies
+                .iter()
+                .map(|e| EnemyView {
+                    x: e.x,
+                    y: e.y,
+                    enemy_type: e.enemy_type,
+                    state: e.state,
+                    facing_right: e.facing_right,
+                })
+                .collect(),
+            coins: self
+                .level
+                .coins
+                .iter()
+                .map(|c| CoinView {
+                    x: c.x,
+                    y: c.y,
+                    collected: c.collected,
+                })
+                .collect(),
+            level: LevelView {
+                width: self.level.width,
+                height: self.level.height,
+                flag_x: self.level.flag_x,
             },
-            "camera_x": self.camera.x,
-            "score": self.score,
-            "coin_count": self.coins,
-            "lives": self.lives,
-            "combo_index": self.combo_index,
-            "time_remaining": self.time_remaining,
-            "items": items,
-            "block_contents": block_contents,
-            "star_timer": self.star_timer,
-        })
+            camera_x: self.camera.x,
+            score: self.score,
+            coin_count: self.coins,
+            lives: self.lives,
+            combo_index: self.combo_index,
+            time_remaining: self.time_remaining,
+            items: self
+                .items
+                .iter()
+                .map(|item| ItemView {
+                    item_type: item.item_type,
+                    x: item.x,
+                    y: item.y,
+                    vx: item.vx,
+                    vy: item.vy,
+                    emerging: item.emerging,
+                })
+                .collect(),
+            block_contents: self
+                .level
+                .block_contents
+                .iter()
+                .map(|((row, col), content)| BlockContentView {
+                    row: *row,
+                    col: *col,
+                    x: *col as f32 * TILE_SIZE,
+                    y: *row as f32 * TILE_SIZE,
+                    content: block_content_kind(content),
+                })
+                .collect(),
+            star_timer: self.star_timer,
+        };
+        serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
     }
 
     #[cfg(feature = "vdp")]
@@ -3146,205 +3262,228 @@ impl Game for Mari0Game {
         method: &str,
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        match method {
-            "game.reset" => {
-                self.state = GameState::Playing;
-                self.reset_level();
-                self.score = 0;
-                self.coins = 0;
-                self.lives = 3;
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.setPlayerPos" => {
-                let x = params
-                    .get("x")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("Missing 'x'")?;
-                let y = params
-                    .get("y")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("Missing 'y'")?;
-                self.player.x = x as f32;
-                self.player.y = y as f32;
-                if let Some(vx) = params.get("vx").and_then(|v| v.as_f64()) {
-                    self.player.vx = vx as f32;
-                }
-                if let Some(vy) = params.get("vy").and_then(|v| v.as_f64()) {
-                    self.player.vy = vy as f32;
-                }
-                Ok(serde_json::json!({"x": self.player.x, "y": self.player.y,
-                    "vx": self.player.vx, "vy": self.player.vy}))
-            }
-            "game.setPlayerSize" => {
-                let size = params
-                    .get("size")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'size'")?;
-                match size {
-                    "big" => self.player.set_size(true),
-                    "small" => self.player.set_size(false),
-                    _ => return Err(format!("Unknown size: {}", size)),
-                }
-                Ok(serde_json::json!({"is_big": self.player.is_big}))
-            }
-            "game.setState" => {
-                let state = params
-                    .get("state")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'state'")?;
-                match state {
-                    "menu" => self.state = GameState::Menu,
-                    "playing" => self.state = GameState::Playing,
-                    "dead" => self.state = GameState::Dead,
-                    "level_complete" => self.state = GameState::LevelComplete,
-                    _ => return Err(format!("Unknown state: {}", state)),
-                }
-                Ok(serde_json::json!({"state": state}))
-            }
-            "game.setScore" => {
-                if let Some(s) = params.get("score").and_then(|v| v.as_u64()) {
-                    self.score = s as u32;
-                }
-                if let Some(c) = params.get("coins").and_then(|v| v.as_u64()) {
-                    self.coins = c as u32;
-                }
-                if let Some(l) = params.get("lives").and_then(|v| v.as_u64()) {
-                    self.lives = l as u32;
-                }
-                Ok(
-                    serde_json::json!({"score": self.score, "coins": self.coins, "lives": self.lives}),
-                )
-            }
-            "game.setPortal" => {
-                let index = params
-                    .get("index")
-                    .and_then(|v| v.as_u64())
-                    .ok_or("Missing 'index'")? as usize;
-                if index > 1 {
-                    return Err("index must be 0 or 1".into());
-                }
-                let x = params
-                    .get("x")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("Missing 'x'")? as f32;
-                let y = params
-                    .get("y")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("Missing 'y'")? as f32;
-                let orient_str = params
-                    .get("orientation")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'orientation'")?;
-                let orientation = match orient_str {
-                    "up" => Orientation::Up,
-                    "down" => Orientation::Down,
-                    "left" => Orientation::Left,
-                    "right" => Orientation::Right,
-                    _ => return Err(format!("Unknown orientation: {}", orient_str)),
-                };
-                let active = params
-                    .get("active")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(true);
-                self.portals[index] = Some(Portal {
-                    x,
-                    y,
-                    orientation,
-                    active,
-                    open_scale: 1.0,
-                });
-                Ok(serde_json::json!({"index": index, "x": x, "y": y,
-                    "orientation": orient_str, "active": active}))
-            }
-            "game.clearPortals" => {
-                self.portals = [None, None];
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.spawnEnemy" => {
-                let etype_str = params
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'type'")?;
-                let etype = match etype_str {
-                    "goomba" => EnemyType::Goomba,
-                    "koopa" => EnemyType::Koopa,
-                    _ => return Err(format!("Unknown enemy type: {}", etype_str)),
-                };
-                let x = params
-                    .get("x")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("Missing 'x'")? as f32;
-                let y = params
-                    .get("y")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("Missing 'y'")? as f32;
-                let facing_right = params
-                    .get("facing_right")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                self.enemies.push(Enemy {
-                    x,
-                    y,
-                    vx: if facing_right {
-                        ENEMY_SPEED
-                    } else {
-                        -ENEMY_SPEED
-                    },
-                    vy: 0.0,
-                    enemy_type: etype,
-                    state: EnemyState::Walking,
-                    facing_right,
-                    on_ground: false,
-                    activated: true, // VDP-spawned enemies are always active
-                    anim_timer: 0.0,
-                    death_timer: 0.0,
-                    flipped_death: false,
-                });
-                Ok(serde_json::json!({"status": "ok", "enemy_count": self.enemies.len()}))
-            }
-            "game.clearEnemies" => {
-                self.enemies.clear();
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.setTile" => {
-                let col = params
-                    .get("col")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing 'col'")? as usize;
-                let row = params
-                    .get("row")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing 'row'")? as usize;
-                if row >= self.level.height || col >= self.level.width {
-                    return Err("Tile position out of bounds".into());
-                }
-                let type_str = params
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'type'")?;
-                let tile_id: u32 = match type_str {
-                    "empty" => SMB_EMPTY,
-                    "ground" => SMB_GROUND,
-                    "brick" => SMB_BRICK,
-                    "question" => SMB_QUESTION,
-                    "question_used" => SMB_QUESTION_USED,
-                    "staircase" => SMB_STAIRCASE,
-                    "pipe_tl" => SMB_PIPE_TL,
-                    "pipe_tr" => SMB_PIPE_TR,
-                    "pipe_bl" => SMB_PIPE_BL,
-                    "pipe_br" => SMB_PIPE_BR,
-                    _ => {
-                        // Try parsing as raw tile ID number
-                        type_str
-                            .parse::<u32>()
-                            .map_err(|_| format!("Unknown tile type: {}", type_str))?
-                    }
-                };
-                self.level.tiles[row][col] = tile_id;
-                Ok(serde_json::json!({"col": col, "row": row, "type": type_str}))
-            }
-            _ => Err(format!("Unknown method: {}", method)),
+        self.dispatch_vdp(method, params)
+            .unwrap_or_else(|| Err(format!("Unknown method: {}", method)))
+    }
+}
+
+// ── VDP method params & dispatch ────────────────────────────────────
+// Typed param structs (deserialized by `#[vdp_methods]`) replace the
+// hand-rolled `params.get().and_then().ok_or()` extraction.
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPlayerPos {
+    x: f32,
+    y: f32,
+    vx: Option<f32>,
+    vy: Option<f32>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPlayerSize {
+    size: String,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetState {
+    state: String,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetScore {
+    score: Option<u32>,
+    coins: Option<u32>,
+    lives: Option<u32>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPortal {
+    index: usize,
+    x: f32,
+    y: f32,
+    orientation: String,
+    active: Option<bool>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SpawnEnemy {
+    #[serde(rename = "type")]
+    etype: String,
+    x: f32,
+    y: f32,
+    #[serde(default)]
+    facing_right: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetTile {
+    col: i64,
+    row: i64,
+    #[serde(rename = "type")]
+    tile_type: String,
+}
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl Mari0Game {
+    #[vdp("game.reset")]
+    fn vdp_reset(&mut self) -> Result<serde_json::Value, String> {
+        self.state = GameState::Playing;
+        self.reset_level();
+        self.score = 0;
+        self.coins = 0;
+        self.lives = 3;
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.setPlayerPos")]
+    fn vdp_set_player_pos(&mut self, p: SetPlayerPos) -> Result<serde_json::Value, String> {
+        self.player.x = p.x;
+        self.player.y = p.y;
+        if let Some(vx) = p.vx {
+            self.player.vx = vx;
         }
+        if let Some(vy) = p.vy {
+            self.player.vy = vy;
+        }
+        Ok(serde_json::json!({"x": self.player.x, "y": self.player.y,
+            "vx": self.player.vx, "vy": self.player.vy}))
+    }
+
+    #[vdp("game.setPlayerSize")]
+    fn vdp_set_player_size(&mut self, p: SetPlayerSize) -> Result<serde_json::Value, String> {
+        match p.size.as_str() {
+            "big" => self.player.set_size(true),
+            "small" => self.player.set_size(false),
+            _ => return Err(format!("Unknown size: {}", p.size)),
+        }
+        Ok(serde_json::json!({"is_big": self.player.is_big}))
+    }
+
+    #[vdp("game.setState")]
+    fn vdp_set_state(&mut self, p: SetState) -> Result<serde_json::Value, String> {
+        match p.state.as_str() {
+            "menu" => self.state = GameState::Menu,
+            "playing" => self.state = GameState::Playing,
+            "dead" => self.state = GameState::Dead,
+            "level_complete" => self.state = GameState::LevelComplete,
+            _ => return Err(format!("Unknown state: {}", p.state)),
+        }
+        Ok(serde_json::json!({"state": p.state}))
+    }
+
+    #[vdp("game.setScore")]
+    fn vdp_set_score(&mut self, p: SetScore) -> Result<serde_json::Value, String> {
+        if let Some(s) = p.score {
+            self.score = s;
+        }
+        if let Some(c) = p.coins {
+            self.coins = c;
+        }
+        if let Some(l) = p.lives {
+            self.lives = l;
+        }
+        Ok(serde_json::json!({"score": self.score, "coins": self.coins, "lives": self.lives}))
+    }
+
+    #[vdp("game.setPortal")]
+    fn vdp_set_portal(&mut self, p: SetPortal) -> Result<serde_json::Value, String> {
+        if p.index > 1 {
+            return Err("index must be 0 or 1".into());
+        }
+        let orientation = match p.orientation.as_str() {
+            "up" => Orientation::Up,
+            "down" => Orientation::Down,
+            "left" => Orientation::Left,
+            "right" => Orientation::Right,
+            _ => return Err(format!("Unknown orientation: {}", p.orientation)),
+        };
+        let active = p.active.unwrap_or(true);
+        self.portals[p.index] = Some(Portal {
+            x: p.x,
+            y: p.y,
+            orientation,
+            active,
+            open_scale: 1.0,
+        });
+        Ok(serde_json::json!({"index": p.index, "x": p.x, "y": p.y,
+            "orientation": p.orientation, "active": active}))
+    }
+
+    #[vdp("game.clearPortals")]
+    fn vdp_clear_portals(&mut self) -> Result<serde_json::Value, String> {
+        self.portals = [None, None];
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.spawnEnemy")]
+    fn vdp_spawn_enemy(&mut self, p: SpawnEnemy) -> Result<serde_json::Value, String> {
+        let etype = match p.etype.as_str() {
+            "goomba" => EnemyType::Goomba,
+            "koopa" => EnemyType::Koopa,
+            _ => return Err(format!("Unknown enemy type: {}", p.etype)),
+        };
+        self.enemies.push(Enemy {
+            x: p.x,
+            y: p.y,
+            vx: if p.facing_right {
+                ENEMY_SPEED
+            } else {
+                -ENEMY_SPEED
+            },
+            vy: 0.0,
+            enemy_type: etype,
+            state: EnemyState::Walking,
+            facing_right: p.facing_right,
+            on_ground: false,
+            activated: true, // VDP-spawned enemies are always active
+            anim_timer: 0.0,
+            death_timer: 0.0,
+            flipped_death: false,
+        });
+        Ok(serde_json::json!({"status": "ok", "enemy_count": self.enemies.len()}))
+    }
+
+    #[vdp("game.clearEnemies")]
+    fn vdp_clear_enemies(&mut self) -> Result<serde_json::Value, String> {
+        self.enemies.clear();
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.setTile")]
+    fn vdp_set_tile(&mut self, p: SetTile) -> Result<serde_json::Value, String> {
+        let col = p.col as usize;
+        let row = p.row as usize;
+        if row >= self.level.height || col >= self.level.width {
+            return Err("Tile position out of bounds".into());
+        }
+        let tile_id: u32 = match p.tile_type.as_str() {
+            "empty" => SMB_EMPTY,
+            "ground" => SMB_GROUND,
+            "brick" => SMB_BRICK,
+            "question" => SMB_QUESTION,
+            "question_used" => SMB_QUESTION_USED,
+            "staircase" => SMB_STAIRCASE,
+            "pipe_tl" => SMB_PIPE_TL,
+            "pipe_tr" => SMB_PIPE_TR,
+            "pipe_bl" => SMB_PIPE_BL,
+            "pipe_br" => SMB_PIPE_BR,
+            _ => {
+                // Try parsing as raw tile ID number
+                p.tile_type
+                    .parse::<u32>()
+                    .map_err(|_| format!("Unknown tile type: {}", p.tile_type))?
+            }
+        };
+        self.level.tiles[row][col] = tile_id;
+        Ok(serde_json::json!({"col": col, "row": row, "type": p.tile_type}))
     }
 }
 

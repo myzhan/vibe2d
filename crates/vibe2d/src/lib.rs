@@ -29,6 +29,18 @@ pub use context::Context;
 pub use game::Game;
 pub use screen::Screen;
 
+/// Helpers for implementing the Vibe Debug Protocol (VDP) hooks on a game.
+///
+/// - [`from_params`]/[`to_result`] convert between VDP `params`/results and
+///   strongly-typed structs.
+/// - The [`vdp_methods`] attribute macro generates the `dispatch_vdp` method
+///   from an `impl` block of `#[vdp("game.foo")]`-tagged methods.
+#[cfg(feature = "vdp")]
+pub mod vdp {
+    pub use vibe_debug::{from_params, to_result};
+    pub use vibe_vdp_macros::vdp_methods;
+}
+
 /// RGBA color.
 #[derive(Debug, Clone, Copy)]
 pub struct Color {

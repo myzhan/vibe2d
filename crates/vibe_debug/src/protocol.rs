@@ -1,5 +1,17 @@
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Deserialize VDP `params` into a strongly-typed struct, converting any
+/// failure into the `String` error that `Game::handle_vdp` expects.
+pub fn from_params<T: DeserializeOwned>(params: &Value) -> Result<T, String> {
+    serde_json::from_value(params.clone()).map_err(|e| format!("invalid params: {e}"))
+}
+
+/// Serialize a `handle_vdp` result into the `Value` the protocol expects.
+pub fn to_result<T: Serialize>(value: &T) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|e| format!("serialize result: {e}"))
+}
 
 /// A JSON-RPC 2.0 request from an AI/tool client.
 #[derive(Debug, Clone)]

@@ -9,6 +9,7 @@ members = [
     "crates/vibe_input",
     "crates/vibe_asset",
     "crates/vibe_debug",
+    "crates/vibe_vdp_macros",
     "crates/vibe_platform",
     "crates/vibe_ui",
     "crates/vibe_test",
@@ -35,6 +36,7 @@ vibe_audio = { path = "crates/vibe_audio" }
 vibe_input = { path = "crates/vibe_input" }
 vibe_asset = { path = "crates/vibe_asset" }
 vibe_debug = { path = "crates/vibe_debug" }
+vibe_vdp_macros = { path = "crates/vibe_vdp_macros" }
 vibe_platform = { path = "crates/vibe_platform" }
 vibe_ui = { path = "crates/vibe_ui" }
 vibe_test = { path = "crates/vibe_test" }
@@ -47,6 +49,9 @@ glam = "0.29"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json = "1"
+syn = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tokio-tungstenite = "0.26"
 clap = { version = "4", features = ["derive"] }
