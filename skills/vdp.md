@@ -124,25 +124,55 @@ Mouse:
 
 ## Implementing VDP in Your Game
 
-Override `inspect()` and `handle_vdp()` in your Game trait:
+Override `inspect()` and `handle_vdp()` in your Game trait. The recommended
+style uses `#[derive(Serialize)]` snapshots for `inspect` and the
+`#[vibe2d::vdp::vdp_methods]` macro for `handle_vdp` (the manual
+`serde_json::json!` + `match` style still works too). Add `dep:serde` to the
+game's `vdp` feature.
 
 ```rust
+// inspect: a derived snapshot struct reproduces the wire shape
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct MyInspect { state: &'static str, score: u32, player: PlayerView }
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct PlayerView { x: f32, y: f32 }
+
+#[cfg(feature = "vdp")]
 fn inspect(&self) -> serde_json::Value {
-    serde_json::json!({
-        "state": "playing",
-        "score": self.score,
-        "player": { "x": self.x, "y": self.y },
-    })
+    let view = MyInspect {
+        state: "playing",
+        score: self.score,
+        player: PlayerView { x: self.x, y: self.y },
+    };
+    serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
 }
 
-fn handle_vdp(&mut self, method: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
-    match method {
-        "game.setPlayerPos" => {
-            self.x = params["x"].as_f64().unwrap() as f32;
-            self.y = params["y"].as_f64().unwrap() as f32;
-            Ok(serde_json::json!({"ok": true}))
-        }
-        _ => Err(format!("Unknown: {}", method)),
+// handle_vdp: typed params + declarative dispatch
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPlayerPos { x: f32, y: f32 }
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl MyGame {
+    #[vdp("game.setPlayerPos")]
+    fn vdp_set_player_pos(&mut self, p: SetPlayerPos) -> Result<serde_json::Value, String> {
+        self.x = p.x;
+        self.y = p.y;
+        Ok(serde_json::json!({"ok": true}))
     }
 }
+
+#[cfg(feature = "vdp")]
+fn handle_vdp(&mut self, method: &str, params: &serde_json::Value) -> Result<serde_json::Value, String> {
+    self.dispatch_vdp(method, params)
+        .unwrap_or_else(|| Err(format!("Unknown: {}", method)))
+}
 ```
+
+The macro deserializes params via `vibe2d::vdp::from_params` and serializes
+results via `vibe2d::vdp::to_result`; unmatched methods return `None` so the
+forwarder can fall back (or first forward a namespace like `aoi.*`).

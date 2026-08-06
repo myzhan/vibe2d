@@ -554,46 +554,90 @@ vibe rpc game.inspect
 
 ## 实现自定义方法指南
 
-### 1. 实现 `inspect()`
+推荐用 `#[derive(Serialize)]` 快照写 `inspect`、用 `#[vibe2d::vdp::vdp_methods]` 声明宏写 `handle_vdp`（游戏规模变大时避免手抠 JSON）。游戏 `Cargo.toml` 的 `vdp` feature 需加 `dep:serde`：
+
+```toml
+[features]
+vdp = ["vibe2d/vdp", "dep:serde_json", "dep:serde"]
+
+[dependencies]
+serde = { workspace = true, optional = true }
+```
+
+> 旧的手写 `serde_json::json!` + `match method` 方式仍然完全支持，二者可混用；下面给出推荐写法。
+
+### 1. 实现 `inspect()` —— derive 快照
+
+定义门控在 `vdp` feature 下的快照 struct，把要暴露的状态填进去再 `to_value`：
 
 ```rust
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct MyInspect {
+    state: &'static str,
+    player: PlayerView,   // 嵌套结构用独立的 *View 快照
+    enemies: usize,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct PlayerView { x: f32, y: f32, hp: u32 }
+
 #[cfg(feature = "vdp")]
 fn inspect(&self) -> serde_json::Value {
-    serde_json::json!({
-        "state": "playing",
-        "player": {
-            "x": self.player_x,
-            "y": self.player_y,
-            "hp": self.player_hp,
-        },
-        "enemies": self.enemies.len(),
-    })
+    let view = MyInspect {
+        state: "playing",
+        player: PlayerView { x: self.player_x, y: self.player_y, hp: self.player_hp },
+        enemies: self.enemies.len(),
+    };
+    serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
 }
 ```
 
-### 2. 实现 `handle_vdp()`
+- 纹理句柄等不可序列化字段用 `#[serde(skip)]`；键名不一致用 `#[serde(rename = "...")]`；enum 上加
+  `#[cfg_attr(feature = "vdp", derive(serde::Serialize))]` + `#[serde(rename_all = "snake_case")]`。
+- 状态里含外部/不可序列化类型（`AoiWorld`、glam `Vec2`、`Arc<HashMap>` 等）时，一律用独立快照 struct
+  精选子集，**不要**在游戏主 struct 上整体 derive（参考 `examples/aoi-demo`）。
+
+### 2. 实现 `handle_vdp()` —— typed 入参 + 声明宏
+
+给方法加 typed 入参 struct（`#[derive(Deserialize)]`），宏自动生成 `dispatch_vdp()` 分发，`handle_vdp` 退化成一行转发器：
 
 ```rust
 #[cfg(feature = "vdp")]
-fn handle_vdp(
-    &mut self,
-    method: &str,
-    params: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    match method {
-        "game.setPlayerPos" => {
-            let x = params.get("x").and_then(|v| v.as_f64())
-                .ok_or("Missing 'x' parameter")?;
-            let y = params.get("y").and_then(|v| v.as_f64())
-                .ok_or("Missing 'y' parameter")?;
-            self.player_x = x as f32;
-            self.player_y = y as f32;
-            Ok(serde_json::json!({"x": self.player_x, "y": self.player_y}))
-        }
-        _ => Err(format!("Unknown method: {}", method)),
+#[derive(serde::Deserialize)]
+struct SetPlayerPos { x: f32, y: f32 }
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl MyGame {
+    #[vdp("game.setPlayerPos")]
+    fn vdp_set_player_pos(&mut self, p: SetPlayerPos)
+        -> Result<serde_json::Value, String>
+    {
+        self.player_x = p.x;
+        self.player_y = p.y;
+        Ok(serde_json::json!({"x": p.x, "y": p.y}))
     }
 }
+
+#[cfg(feature = "vdp")]
+fn handle_vdp(&mut self, method: &str, params: &serde_json::Value)
+    -> Result<serde_json::Value, String>
+{
+    // 可选：先把某命名空间整体转发出去（如 aoi-demo 的 aoi.*）
+    // if method.starts_with("aoi.") { return self.aoi.handle_vdp(method, params); }
+    self.dispatch_vdp(method, params)
+        .unwrap_or_else(|| Err(format!("Unknown method: {}", method)))
+}
 ```
+
+- 宏识别方法上的 `#[vdp("namespace.method")]`：命中时用 `vibe2d::vdp::from_params` 反序列化入参、
+  `vibe2d::vdp::to_result` 序列化返回值；未命中返回 `None`（转发器据此 fallback / 命名空间转发）。
+- 支持无参 `fn(&mut self)` 与带参 `fn(&mut self, p: P)`（`P: Deserialize`）两种签名；返回值可以是任意
+  `Serialize` 类型（沿用旧响应形状最省事的是直接返回 `serde_json::json!({...})`）。
+- 底层 helper `vibe2d::vdp::{from_params, to_result}` 也可在宏之外手动调用。
+- 参考实现：`examples/mari0`（最全）、`examples/tetris`、`examples/flappy-bird`、`examples/aoi-demo`。
 
 ### 命名约定
 
