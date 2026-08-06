@@ -8,6 +8,22 @@ description = "AI-friendly 2D game engine"
 [features]
 default = ["vdp"]
 vdp = ["dep:vibe_debug", "dep:serde_json", "dep:vibe_vdp_macros"]
+# Tracy profiler integration (default off, native-only). Adds a TracyLayer to
+# the desktop tracing subscriber and cascades frame/zone marks into the loop.
+profiling = [
+    "dep:tracing-tracy",
+    "dep:tracy-client",
+    "vibe_platform/profiling",
+    "vibe_render/profiling",
+]
+# Capture a Rust call stack for every zone (macOS-friendly alternative to
+# Tracy's sampling, which has no backend on macOS). Non-trivial per-frame
+# overhead — enable only when you need the stacks.
+profiling-callstacks = [
+    "profiling",
+    "vibe_platform/profiling-callstacks",
+    "vibe_render/profiling-callstacks",
+]
 
 [dependencies]
 vibe_render = { workspace = true }
@@ -25,6 +41,10 @@ serde_json = { workspace = true, optional = true }
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tracing-tracy = { workspace = true, optional = true }
+tracy-client = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook.workspace = true

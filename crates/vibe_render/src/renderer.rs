@@ -6,6 +6,36 @@ use wgpu::util::DeviceExt;
 
 use crate::texture::Texture;
 
+// Tracy zone marker: a scoped span guard under `profiling` (native only),
+// otherwise a no-op. `render` compiles for wasm too, where `tracy_client` is
+// unavailable, so the active arms also exclude wasm. With `profiling-callstacks`
+// each zone also captures a Rust call stack (extra per-frame overhead), which is
+// the only way to see per-frame Rust stacks on macOS (no sampling backend there).
+#[cfg(all(
+    feature = "profiling-callstacks",
+    feature = "profiling",
+    not(target_arch = "wasm32")
+))]
+macro_rules! zone {
+    ($name:expr) => {
+        let _tracy_zone = tracy_client::span!($name, 32);
+    };
+}
+#[cfg(all(
+    not(feature = "profiling-callstacks"),
+    feature = "profiling",
+    not(target_arch = "wasm32")
+))]
+macro_rules! zone {
+    ($name:expr) => {
+        let _tracy_zone = tracy_client::span!($name);
+    };
+}
+#[cfg(not(all(feature = "profiling", not(target_arch = "wasm32"))))]
+macro_rules! zone {
+    ($name:expr) => {};
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct SpriteVertex {
@@ -244,6 +274,7 @@ impl Renderer {
 
     /// Render all queued draw commands and present to screen.
     pub fn render(&mut self, clear_color: [f32; 4], textures: &[&Texture]) -> Result<()> {
+        zone!("gpu_submit");
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture

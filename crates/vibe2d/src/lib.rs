@@ -5,6 +5,44 @@ mod screen;
 #[cfg(all(target_arch = "wasm32", feature = "vdp"))]
 mod vdp_web;
 
+// Tracy zone marker: a scoped span guard under `profiling` (native only),
+// otherwise a no-op. `on_render` compiles for wasm too, so the active arms also
+// exclude wasm where `tracy_client` is not available. With `profiling-callstacks`
+// each zone also captures a Rust call stack (extra per-frame overhead), which is
+// the only way to see per-frame Rust stacks on macOS (no sampling backend there).
+#[cfg(all(
+    feature = "profiling-callstacks",
+    feature = "profiling",
+    not(target_arch = "wasm32")
+))]
+macro_rules! zone {
+    ($name:expr) => {
+        let _tracy_zone = tracy_client::span!($name, 32);
+    };
+}
+#[cfg(all(
+    not(feature = "profiling-callstacks"),
+    feature = "profiling",
+    not(target_arch = "wasm32")
+))]
+macro_rules! zone {
+    ($name:expr) => {
+        let _tracy_zone = tracy_client::span!($name);
+    };
+}
+#[cfg(not(all(feature = "profiling", not(target_arch = "wasm32"))))]
+macro_rules! zone {
+    ($name:expr) => {};
+}
+
+// Register the Rust symbol demangler for Tracy. The `demangle` feature makes the
+// bundled C client call `___tracy_demangle`; this macro defines that symbol via
+// `rustc_demangle`, so call-stack frames show readable Rust names instead of the
+// raw `_ZN…`/`_RN…` mangling. Must be invoked exactly once in the final binary —
+// `vibe2d` is linked into every example, so registering here covers all of them.
+#[cfg(all(feature = "profiling", not(target_arch = "wasm32")))]
+tracy_client::register_demangler!();
+
 pub mod prelude {
     pub use crate::Color;
     pub use crate::config::GameConfig;
@@ -102,6 +140,18 @@ struct PendingStepInspect {
 /// Main entry point (desktop). Loads config from YAML and starts the game loop.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run<G: Game + 'static>(config_path: &str) {
+    // With `profiling`, compose a Tracy layer onto the fmt subscriber so
+    // existing tracing events become Tracy messages (and spans become zones).
+    #[cfg(feature = "profiling")]
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer())
+            .with(tracing_tracy::TracyLayer::default())
+            .init();
+    }
+    #[cfg(not(feature = "profiling"))]
     tracing_subscriber::fmt::init();
 
     // Resolve config path: falls back to CARGO_MANIFEST_DIR when running
@@ -741,7 +791,10 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             flush_text_prep(&mut ctx, renderer);
 
             let mut screen = Screen::new(renderer, self.virtual_width, self.virtual_height);
-            game.draw(&ctx, &mut screen);
+            {
+                zone!("draw");
+                game.draw(&ctx, &mut screen);
+            }
 
             // Replay cached UI draw commands on top of game rendering
             for cmd in &ctx.ui_state.cached_draw_commands {

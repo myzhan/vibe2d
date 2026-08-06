@@ -13,6 +13,28 @@ use vibe_render::Renderer;
 
 use crate::common::{PlatformCallbacks, PlatformConfig};
 
+// Tracy zone marker: expands to a scoped span guard when `profiling` is on,
+// otherwise to nothing. Keep each call in its own block so the guard drops at
+// the end of the region being measured. With `profiling-callstacks` each zone
+// also captures a Rust call stack (extra per-frame overhead), which is the only
+// way to see per-frame Rust stacks on macOS (no sampling backend there).
+#[cfg(all(feature = "profiling-callstacks", feature = "profiling"))]
+macro_rules! zone {
+    ($name:expr) => {
+        let _tracy_zone = tracy_client::span!($name, 32);
+    };
+}
+#[cfg(all(not(feature = "profiling-callstacks"), feature = "profiling"))]
+macro_rules! zone {
+    ($name:expr) => {
+        let _tracy_zone = tracy_client::span!($name);
+    };
+}
+#[cfg(not(feature = "profiling"))]
+macro_rules! zone {
+    ($name:expr) => {};
+}
+
 struct App<C: PlatformCallbacks> {
     config: PlatformConfig,
     callbacks: C,
@@ -219,12 +241,16 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                 self.last_frame = Some(now);
 
                 // Update
-                self.callbacks.on_update(dt, &mut self.input);
+                {
+                    zone!("update");
+                    self.callbacks.on_update(dt, &mut self.input);
+                }
 
                 // Render (skip when VDP fast-forward is active)
                 if self.callbacks.should_render()
                     && let Some(renderer) = &mut self.renderer
                 {
+                    zone!("render");
                     self.callbacks.on_render(renderer);
                     let clear_color = self.callbacks.clear_color();
                     let textures = self.callbacks.get_textures();
@@ -240,6 +266,10 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
+
+                // Mark the end of the frame for Tracy.
+                #[cfg(feature = "profiling")]
+                tracy_client::frame_mark();
             }
             _ => {}
         }

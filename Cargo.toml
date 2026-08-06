@@ -58,6 +58,12 @@ clap = { version = "4", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+# Profiling (Tracy) — native-only, gated behind the `profiling` feature.
+# `ondemand` lets the profiler connect/disconnect/reconnect at will (without it
+# the client only serves a single session). `demangle` renders readable Rust
+# symbol names in zones and call stacks.
+tracy-client = { version = "0.18", features = ["ondemand", "demangle"] }
+tracing-tracy = "0.11"
 anyhow = "1"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }

@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Tracy profiler zones/frame marks (default off, native-only).
+profiling = ["dep:tracy-client"]
+# Capture a Rust call stack for every zone (extra per-frame overhead).
+profiling-callstacks = ["profiling"]
+
 [dependencies]
 vibe_render = { workspace = true }
 vibe_input = { workspace = true }
@@ -15,6 +21,7 @@ tracing.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true
 wgpu = { workspace = true, features = ["dx12", "metal", "vulkan-portability"] }
+tracy-client = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

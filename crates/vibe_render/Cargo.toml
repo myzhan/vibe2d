@@ -4,6 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Tracy profiler zones (default off, native-only).
+profiling = ["dep:tracy-client"]
+# Capture a Rust call stack for every zone (extra per-frame overhead).
+profiling-callstacks = ["profiling"]
+
 [dependencies]
 wgpu.workspace = true
 glam.workspace = true
@@ -15,6 +21,7 @@ fontdue.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { workspace = true, features = ["dx12", "metal", "vulkan-portability"] }
+tracy-client = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true, features = ["webgl"] }

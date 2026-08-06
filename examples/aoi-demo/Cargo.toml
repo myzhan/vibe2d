@@ -11,6 +11,8 @@ default = ["vdp"]
 # `AoiWorld::handle_vdp`). Keeping the two crates' feature flags
 # spelled the same way matches the project-wide convention in AGENTS.md.
 vdp = ["vibe2d/vdp", "vibe_aoi/vdp", "dep:serde_json", "dep:serde"]
+profiling = ["vibe2d/profiling"]
+profiling-callstacks = ["vibe2d/profiling-callstacks"]
 
 [dependencies]
 vibe2d = { workspace = true }

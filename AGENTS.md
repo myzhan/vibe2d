@@ -183,6 +183,54 @@ Feature 级联：游戏 crate → `vibe2d/vdp` → `vibe_debug` + `serde_json`
 | `vibe_test` | 启用 VDP 客户端 + 进程 harness（测试工具库） |
 | 游戏 crate | 级联开启 `vibe2d/vdp` + `serde_json` |
 
+### `profiling`（默认**关闭**，Tracy Profiler）
+
+集成 [Tracy](https://github.com/wolfpld/tracy) 帧性能分析器，用于查看每帧耗时及 update / render / draw / GPU 各阶段占比。默认关闭，开启后仅编译进桌面构建（wasm 上为 no-op）。
+
+```bash
+cargo run -p flappy-bird --features profiling              # 开启采集
+cargo run -p flappy-bird                                     # 默认零成本剥离
+
+# 每个 zone 抓 Rust 调用栈。macOS 上分两步（原因见下方“Rust 调用栈”）：
+# 0) 先清旧产物：不同 feature 组合会生成多个 flappy_bird-<hash>，
+#    下面按 mtime 选产物的写法在残留多版本时会选错（可能选到没 .dSYM 的那个 → [unknown frames]）
+rm -rf target/debug/deps/flappy_bird-*
+# 1) 带 packed 构建，让 cargo 跑 dsymutil 生成与产物同名的 .dSYM
+CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed \
+  cargo build -p flappy-bird --features profiling-callstacks
+# 2) 直接运行 deps 下的编译产物（其 .dSYM 内部文件名与它一致，能被符号化）；
+#    不要用 `cargo run`——它跑的是被重命名成带连字符的副本 target/debug/flappy-bird，
+#    该副本 .dSYM 内部 DWARF 仍叫 flappy_bird-<hash>，libbacktrace 按 basename 找不到 → 栈全是 [error]。
+#    注意 CWD：直接跑产物时 CARGO_MANIFEST_DIR 未设置，需在 example 目录下运行才能找到 game.yaml；
+#    用绝对路径调用产物，cd 不影响它自身的 .dSYM 定位。
+BIN="$(ls -t "$PWD"/target/debug/deps/flappy_bird-* | grep -v '\.' | head -1)"
+(cd examples/flappy-bird && "$BIN")
+```
+
+- 通过 `tracing-tracy`（`vibe2d`）把 `TracyLayer` 叠加到桌面 tracing subscriber——现有日志变成 Tracy 消息；`tracy-client`（`vibe_platform` / `vibe_render`）提供帧标记与各阶段 zone。
+- 所有埋点用 `#[cfg(all(feature = "profiling", not(target_arch = "wasm32")))]` 门控（Tracy C 客户端不支持 wasm），并封装成各 crate 内的 `zone!` 宏（开启时为 span guard，否则 no-op）。埋点位置：`vibe_platform/desktop.rs` 帧循环（frame_mark + `update`/`render`）、`vibe2d/lib.rs` `on_render`（`draw`）、`vibe_render/renderer.rs` `Renderer::render`（`gpu_submit`）。
+- **重连支持**：`tracy-client` 开启了 `ondemand`（`TRACY_ON_DEMAND`），因此可以在游戏运行时随意连接 / 断开 / 重连 Tracy GUI，也支持延迟启动后再连。不开该 feature 时客户端只服务单次会话（首次断开后无法重连）。
+- **版本对齐**：Tracy 客户端与 GUI 的协议版本必须一致。当前 crate（`tracy-client` 0.18）内置 **Tracy 0.13.1 / protocol 76**，因此 GUI 需用 Tracy **0.13.1**（`brew install tracy` 的 stable 恰为 0.13.1）。升级 `tracing-tracy`/`tracy-client` 时须同步 GUI 版本,并用 `cargo tree -i tracy-client` 确认只解析出单一 `tracy-client` 版本。
+- **Rust 调用栈（macOS 两个坑）**：
+  1. Tracy 的**自动采样**（sampling）在 macOS 上没有后端，所以 GUI 里基于采样的每帧 Rust 堆栈始终为空——这是 Tracy 的平台限制，不是 bug。macOS 上想看每帧 Rust 栈的唯一途径是 `--features profiling-callstacks`：它让 `zone!` 用 `span!(name, 32)` 为每个 zone 主动抓取深度 32 的调用栈（走 `backtrace()`，有可感知的每帧开销，故单独 opt-in，不进普通 `profiling`）。
+  2. 抓到的栈要能**符号化**成函数名，Tracy 内置的 libbacktrace（`macho.cpp`）会在可执行文件旁找 `.dSYM` 包，并按 `<exe>.dSYM/Contents/Resources/DWARF/<exe-basename>` 拼路径。两个坑叠加：
+     - `cargo build` 在 macOS 默认 `split-debuginfo = "unpacked"`——DWARF 留在 `.o` 里、**不生成 `.dSYM`**（表现为栈全 `[error]` / 无函数名）。→ 用 `CARGO_PROFILE_DEV_SPLIT_DEBUGINFO=packed` 让 cargo 跑 `dsymutil`。
+     - `cargo run` 跑的是 cargo 从 `deps/flappy_bird-<hash>` 拷贝并**重命名成带连字符**的 `target/debug/flappy-bird`；其 `.dSYM` 内部 DWARF 文件仍叫 `flappy_bird-<hash>`，而 libbacktrace 按 basename 找 `.../DWARF/flappy-bird` → 找不到 → 栈全 `[error]`。→ **直接运行 `deps/` 下的产物**（basename 与其 `.dSYM` 内部文件一致），别用 `cargo run`。若坚持用 `cargo run`，可手动补个软链：`ln -sf flappy_bird-<hash> target/debug/flappy-bird.dSYM/Contents/Resources/DWARF/flappy-bird`。
+- **符号 demangle**：`tracy-client` 开了 `demangle` feature，让内置 C 客户端调用 `___tracy_demangle` 把栈帧符号还原成可读 Rust 名（否则显示 `_ZN…`/`_RNv…` 原始 mangling）。**光开 feature 不够**——该符号必须由 Rust 侧提供，故 `vibe2d/src/lib.rs` 在 `profiling` 下调了一次 `tracy_client::register_demangler!()`（用 `rustc_demangle`）。不注册就会 `____tracy_demangle` 链接缺失。`vibe2d` 被链进每个 example，注册一次即可覆盖全部。
+
+Feature 级联：
+- `profiling`：游戏 crate → `vibe2d/profiling` → `vibe_platform/profiling` + `vibe_render/profiling`（+ `vibe2d` 的 `tracing-tracy`/`tracy-client`）
+- `profiling-callstacks`：游戏 crate → `vibe2d/profiling-callstacks` → 各子 crate 的 `profiling-callstacks`（自身 super-set 了 `profiling`）
+
+| Crate | `profiling` feature 含义 |
+|-------|------------------------|
+| `vibe2d` | 挂载 `TracyLayer` + `draw` zone |
+| `vibe_platform` | 帧标记 + `update`/`render` zone |
+| `vibe_render` | `gpu_submit` zone |
+| 游戏 crate | 级联开启 `vibe2d/profiling` |
+
+`profiling-callstacks` 在每个 crate 内 super-set 对应的 `profiling`，仅把 `zone!` 从 `span!(name)` 切换成 `span!(name, 32)`。
+
 ## 线程模型
 
 ```
