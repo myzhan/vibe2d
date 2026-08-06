@@ -3191,7 +3191,11 @@ impl Game for Mari0Game {
                     y: p.y,
                     vx: p.vx,
                     vy: p.vy,
-                    color: if p.portal_index == 0 { "blue" } else { "orange" },
+                    color: if p.portal_index == 0 {
+                        "blue"
+                    } else {
+                        "orange"
+                    },
                 })
                 .collect(),
             crosshair_angle: self.crosshair_angle,

@@ -604,26 +604,24 @@ impl Game for AoiDemo {
 
     #[cfg(feature = "vdp")]
     fn inspect(&self) -> serde_json::Value {
-        let circles: Vec<_> = self
-            .circles
-            .iter()
-            .map(|c| {
-                serde_json::json!({
-                    "x": c.pos.x,
-                    "y": c.pos.y,
-                    "vx": c.vel.x,
-                    "vy": c.vel.y,
-                    "radius": CIRCLE_RADIUS,
+        let view = AoiInspect {
+            circles: self
+                .circles
+                .iter()
+                .map(|c| CircleView {
+                    x: c.pos.x,
+                    y: c.pos.y,
+                    vx: c.vel.x,
+                    vy: c.vel.y,
+                    radius: CIRCLE_RADIUS,
                 })
-            })
-            .collect();
-        serde_json::json!({
-            "circles": circles,
-            "lit_count": self.lit_count(),
-            "enter_total": self.enter_count_total,
-            "leave_total": self.leave_count_total,
-            "paused": self.paused,
-        })
+                .collect(),
+            lit_count: self.lit_count(),
+            enter_total: self.enter_count_total,
+            leave_total: self.leave_count_total,
+            paused: self.paused,
+        };
+        serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
     }
 
     #[cfg(feature = "vdp")]
@@ -638,65 +636,94 @@ impl Game for AoiDemo {
             // same view of the spatial state the game does.
             return self.aoi.handle_vdp(method, params);
         }
-        match method {
-            // Toggle pause from outside (for deterministic stepping in
-            // tests — pair with `engine.step` to advance frame-by-frame).
-            "demo.setPaused" => {
-                let p = params
-                    .get("paused")
-                    .and_then(|v| v.as_bool())
-                    .ok_or("missing bool param `paused`")?;
-                self.paused = p;
-                Ok(serde_json::json!({ "paused": self.paused }))
-            }
-            // Teleport one specific circle. Useful for asserting that
-            // moving an observer onto a known point triggers an Enter
-            // event.
-            //
-            // Params: `{ "index": 0|1|2, "x": f32, "y": f32 }`.
-            //
-            // We deliberately re-run `update_observer` and apply the
-            // pending events **here** rather than waiting for the next
-            // `update()` tick, because tests typically `pause()` first
-            // and then teleport — and `update()` short-circuits while
-            // paused, which would leave `cover_count` stale and make
-            // the next VDP `inspect()` lie about the lit set.
-            "demo.setCirclePos" => {
-                let idx = params
-                    .get("index")
-                    .and_then(|v| v.as_u64())
-                    .map(|n| n as usize)
-                    .unwrap_or(0);
-                if idx >= self.circles.len() {
-                    return Err(format!(
-                        "circle index {} out of range (have {})",
-                        idx,
-                        self.circles.len()
-                    ));
-                }
-                let x = params
-                    .get("x")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("missing number param `x`")? as f32;
-                let y = params
-                    .get("y")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("missing number param `y`")? as f32;
-                // Stop *all* circles and freeze the demo so subsequent
-                // `step_and_wait` calls don't drift any observer onto a
-                // different hit set than the test just asserted. Tests
-                // that need to resume motion can re-enable with
-                // `demo.setPaused {paused: false}`.
-                for c in &mut self.circles {
-                    c.vel = Vec2::ZERO;
-                }
-                self.circles[idx].pos = Vec2::new(x, y);
-                self.paused = true;
-                self.sync_circle_observer(idx);
-                Ok(serde_json::json!({ "index": idx, "x": x, "y": y }))
-            }
-            _ => Err(format!("Unknown method: {method}")),
+        self.dispatch_vdp(method, params)
+            .unwrap_or_else(|| Err(format!("Unknown method: {method}")))
+    }
+}
+
+// ── VDP inspect snapshot + method dispatch ──────────────────────────
+// The demo's state holds non-serializable externals (`AoiWorld`, glam
+// `Vec2`, `Arc<HashMap<..>>`), so `inspect` projects a hand-picked view
+// via these derived snapshot structs rather than deriving on the game.
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct AoiInspect {
+    circles: Vec<CircleView>,
+    lit_count: usize,
+    enter_total: u64,
+    leave_total: u64,
+    paused: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct CircleView {
+    x: f32,
+    y: f32,
+    vx: f32,
+    vy: f32,
+    radius: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPaused {
+    paused: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetCirclePos {
+    #[serde(default)]
+    index: u64,
+    x: f64,
+    y: f64,
+}
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl AoiDemo {
+    // Toggle pause from outside (for deterministic stepping in tests —
+    // pair with `engine.step` to advance frame-by-frame).
+    #[vdp("demo.setPaused")]
+    fn vdp_set_paused(&mut self, p: SetPaused) -> Result<serde_json::Value, String> {
+        self.paused = p.paused;
+        Ok(serde_json::json!({ "paused": self.paused }))
+    }
+
+    // Teleport one specific circle. Useful for asserting that moving an
+    // observer onto a known point triggers an Enter event.
+    //
+    // We deliberately re-run `update_observer` and apply the pending
+    // events **here** rather than waiting for the next `update()` tick,
+    // because tests typically `pause()` first and then teleport — and
+    // `update()` short-circuits while paused, which would leave
+    // `cover_count` stale and make the next VDP `inspect()` lie about the
+    // lit set.
+    #[vdp("demo.setCirclePos")]
+    fn vdp_set_circle_pos(&mut self, p: SetCirclePos) -> Result<serde_json::Value, String> {
+        let idx = p.index as usize;
+        if idx >= self.circles.len() {
+            return Err(format!(
+                "circle index {} out of range (have {})",
+                idx,
+                self.circles.len()
+            ));
         }
+        let x = p.x as f32;
+        let y = p.y as f32;
+        // Stop *all* circles and freeze the demo so subsequent
+        // `step_and_wait` calls don't drift any observer onto a different
+        // hit set than the test just asserted. Tests that need to resume
+        // motion can re-enable with `demo.setPaused {paused: false}`.
+        for c in &mut self.circles {
+            c.vel = Vec2::ZERO;
+        }
+        self.circles[idx].pos = Vec2::new(x, y);
+        self.paused = true;
+        self.sync_circle_observer(idx);
+        Ok(serde_json::json!({ "index": idx, "x": x, "y": y }))
     }
 }
 

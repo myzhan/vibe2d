@@ -435,32 +435,60 @@ rpc("engine.resume")
 
 ### 实现自定义 VDP 方法
 
+推荐用 `#[derive(Serialize)]` 快照写 `inspect`、用 `#[vibe2d::vdp::vdp_methods]` 声明宏写 `handle_vdp`，避免手抠 JSON。（`vdp` feature 里记得加 `dep:serde`；旧的手写 `json!` + `match` 方式仍然支持。）
+
 ```rust
+// ── inspect：定义门控在 vdp feature 下的快照 struct ──
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct MyInspect {
+    state: &'static str,
+    score: u32,
+    player: PlayerView,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct PlayerView { x: f32, y: f32 }
+
 #[cfg(feature = "vdp")]
 fn inspect(&self) -> serde_json::Value {
-    serde_json::json!({
-        "state": "playing",
-        "score": self.score,
-        "player": { "x": self.player_x, "y": self.player_y },
-    })
+    let view = MyInspect {
+        state: "playing",
+        score: self.score,
+        player: PlayerView { x: self.player_x, y: self.player_y },
+    };
+    serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
+}
+
+// ── handle_vdp：typed 入参 struct + 声明宏分发 ──
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPlayerPos { x: f32, y: f32 }
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl MyGame {
+    #[vdp("game.setPlayerPos")]
+    fn vdp_set_player_pos(&mut self, p: SetPlayerPos)
+        -> Result<serde_json::Value, String>
+    {
+        self.player_x = p.x;
+        self.player_y = p.y;
+        Ok(serde_json::json!({"x": p.x, "y": p.y}))
+    }
 }
 
 #[cfg(feature = "vdp")]
 fn handle_vdp(&mut self, method: &str, params: &serde_json::Value)
     -> Result<serde_json::Value, String>
 {
-    match method {
-        "game.setPlayerPos" => {
-            let x = params["x"].as_f64().ok_or("Missing 'x'")? as f32;
-            let y = params["y"].as_f64().ok_or("Missing 'y'")? as f32;
-            self.player_x = x;
-            self.player_y = y;
-            Ok(serde_json::json!({"x": x, "y": y}))
-        }
-        _ => Err(format!("Unknown method: {}", method)),
-    }
+    self.dispatch_vdp(method, params)
+        .unwrap_or_else(|| Err(format!("Unknown method: {}", method)))
 }
 ```
+
+宏识别每个方法上的 `#[vdp("namespace.method")]`：命中时用 `vibe2d::vdp::from_params` 反序列化入参、`vibe2d::vdp::to_result` 序列化返回值；未命中返回 `None`（`handle_vdp` 转发器据此 fallback，或先转发 `aoi.*` 之类命名空间）。支持无参 `fn(&mut self)` 与带参 `fn(&mut self, p: P)`（`P: Deserialize`）两种签名。这两个 helper 也可在宏之外手动调用。
 
 ### VDP 方法命名约定
 
@@ -481,12 +509,13 @@ fn handle_vdp(&mut self, method: &str, params: &serde_json::Value)
 # 游戏的 Cargo.toml
 [features]
 default = ["vdp"]
-vdp = ["vibe2d/vdp", "vibe_aoi/vdp", "dep:serde_json"]
+vdp = ["vibe2d/vdp", "vibe_aoi/vdp", "dep:serde_json", "dep:serde"]
 
 [dependencies]
 vibe2d = { workspace = true }
 vibe_aoi = { workspace = true }
 serde_json = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 ```
 
 `vibe_aoi/vdp` feature 开启时会同时启用 JSON 序列化与 `AoiWorld::handle_vdp` helper；关闭后 `serde_json` 完全不会被拉取，库回到纯 CPU 计算的最小形态。

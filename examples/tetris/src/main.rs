@@ -407,6 +407,8 @@ fn is_difficult(kind: ClearKind) -> bool {
 
 // ── Game phase ──────────────────────────────────────────────────────
 #[derive(PartialEq, Clone, Copy, Debug)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum GamePhase {
     Playing,
     GameOver,
@@ -984,55 +986,34 @@ impl Game for TetrisGame {
 
     #[cfg(feature = "vdp")]
     fn inspect(&self) -> serde_json::Value {
-        let phase_str = match self.phase {
-            GamePhase::Playing => "playing",
-            GamePhase::GameOver => "game_over",
+        let view = TetrisInspect {
+            phase: self.phase,
+            grid: self
+                .grid
+                .iter()
+                .map(|row| row.iter().map(|cell| cell.map(|pt| pt.name())).collect())
+                .collect(),
+            current: self.current.as_ref().map(|p| CurrentView {
+                piece_type: p.piece_type.name(),
+                rotation: p.rotation.idx(),
+                x: p.x,
+                y: p.y,
+                cells: p.cells().iter().map(|&(r, c)| vec![r, c]).collect(),
+            }),
+            ghost_y: self.ghost,
+            hold: self.hold_piece.map(|pt| pt.name()),
+            hold_used: self.hold_used,
+            next: self.next_queue.iter().map(|pt| pt.name()).collect(),
+            score: self.score,
+            level: self.level,
+            lines: self.lines_cleared,
+            combo: self.combo,
+            back_to_back: self.back_to_back,
+            gravity_timer: self.gravity_timer,
+            lock_active: self.lock_active,
+            lock_resets: self.lock_resets,
         };
-
-        // Serialize grid
-        let grid_json: Vec<Vec<serde_json::Value>> = self
-            .grid
-            .iter()
-            .map(|row| {
-                row.iter()
-                    .map(|cell| match cell {
-                        Some(pt) => serde_json::Value::String(pt.name().to_string()),
-                        None => serde_json::Value::Null,
-                    })
-                    .collect()
-            })
-            .collect();
-
-        let current_json = self.current.as_ref().map(|p| {
-            let cells: Vec<Vec<i32>> = p.cells().iter().map(|&(r, c)| vec![r, c]).collect();
-            serde_json::json!({
-                "type": p.piece_type.name(),
-                "rotation": p.rotation.idx(),
-                "x": p.x,
-                "y": p.y,
-                "cells": cells,
-            })
-        });
-
-        let next_json: Vec<&str> = self.next_queue.iter().map(|pt| pt.name()).collect();
-
-        serde_json::json!({
-            "phase": phase_str,
-            "grid": grid_json,
-            "current": current_json,
-            "ghost_y": self.ghost,
-            "hold": self.hold_piece.map(|pt| pt.name()),
-            "hold_used": self.hold_used,
-            "next": next_json,
-            "score": self.score,
-            "level": self.level,
-            "lines": self.lines_cleared,
-            "combo": self.combo,
-            "back_to_back": self.back_to_back,
-            "gravity_timer": self.gravity_timer,
-            "lock_active": self.lock_active,
-            "lock_resets": self.lock_resets,
-        })
+        serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
     }
 
     #[cfg(feature = "vdp")]
@@ -1041,149 +1022,218 @@ impl Game for TetrisGame {
         method: &str,
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        match method {
-            "game.reset" => {
-                self.reset();
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.setGrid" => {
-                let grid_arr = params
-                    .get("grid")
-                    .and_then(|v| v.as_array())
-                    .ok_or("Missing 'grid' array")?;
-                if grid_arr.len() != TOTAL_ROWS {
-                    return Err(format!("Grid must have {} rows", TOTAL_ROWS));
-                }
-                let mut new_grid = empty_grid();
-                for (r, row_val) in grid_arr.iter().enumerate() {
-                    let row = row_val.as_array().ok_or("Each row must be an array")?;
-                    if row.len() != COLS {
-                        return Err(format!("Each row must have {} columns", COLS));
-                    }
-                    for (c, cell) in row.iter().enumerate() {
-                        if cell.is_null() {
-                            new_grid[r][c] = None;
-                        } else {
-                            let name = cell.as_str().ok_or("Cell must be null or string")?;
-                            new_grid[r][c] =
-                                Some(PieceType::from_name(name).ok_or("Invalid piece type")?);
-                        }
-                    }
-                }
-                self.grid = new_grid;
-                // Update ghost
-                if let Some(ref p) = self.current {
-                    self.ghost = ghost_y(p, &self.grid);
-                }
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.clearGrid" => {
-                self.grid = empty_grid();
-                if let Some(ref p) = self.current {
-                    self.ghost = ghost_y(p, &self.grid);
-                }
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.setPiece" => {
-                let pt_name = params
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'type'")?;
-                let pt = PieceType::from_name(pt_name).ok_or("Invalid piece type")?;
-                let rot_idx = params.get("rotation").and_then(|v| v.as_u64()).unwrap_or(0);
-                let rot = match rot_idx {
-                    0 => Rot::N,
-                    1 => Rot::E,
-                    2 => Rot::S,
-                    3 => Rot::W,
-                    _ => return Err("Rotation must be 0-3".to_string()),
-                };
-                let x = params
-                    .get("x")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing 'x'")? as i32;
-                let y = params
-                    .get("y")
-                    .and_then(|v| v.as_i64())
-                    .ok_or("Missing 'y'")? as i32;
-                let piece = Piece {
-                    piece_type: pt,
-                    rotation: rot,
-                    x,
-                    y,
-                };
-                self.ghost = ghost_y(&piece, &self.grid);
-                self.current = Some(piece);
-                self.lock_active = false;
-                self.lock_timer = LOCK_DELAY;
-                self.lock_resets = 0;
-                self.last_was_rotation = false;
-                self.gravity_timer = gravity_interval(self.level);
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.setNextQueue" => {
-                let queue_arr = params
-                    .get("queue")
-                    .and_then(|v| v.as_array())
-                    .ok_or("Missing 'queue' array")?;
-                self.next_queue.clear();
-                for val in queue_arr {
-                    let name = val.as_str().ok_or("Queue elements must be strings")?;
-                    let pt = PieceType::from_name(name).ok_or("Invalid piece type")?;
-                    self.next_queue.push_back(pt);
-                }
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.setHoldPiece" => {
-                let piece_val = params.get("piece").ok_or("Missing 'piece'")?;
-                if piece_val.is_null() {
-                    self.hold_piece = None;
-                } else {
-                    let name = piece_val.as_str().ok_or("'piece' must be null or string")?;
-                    self.hold_piece = Some(PieceType::from_name(name).ok_or("Invalid piece type")?);
-                }
-                self.hold_used = params
-                    .get("hold_used")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                Ok(serde_json::json!({"status": "ok"}))
-            }
-            "game.setScore" => {
-                if let Some(v) = params.get("score").and_then(|v| v.as_u64()) {
-                    self.score = v as u32;
-                }
-                if let Some(v) = params.get("level").and_then(|v| v.as_u64()) {
-                    self.level = v.max(1) as u32;
-                }
-                if let Some(v) = params.get("lines").and_then(|v| v.as_u64()) {
-                    self.lines_cleared = v as u32;
-                }
-                if let Some(v) = params.get("combo").and_then(|v| v.as_i64()) {
-                    self.combo = v as i32;
-                }
-                if let Some(v) = params.get("back_to_back").and_then(|v| v.as_bool()) {
-                    self.back_to_back = v;
-                }
-                Ok(serde_json::json!({
-                    "score": self.score,
-                    "level": self.level,
-                    "lines": self.lines_cleared,
-                }))
-            }
-            "game.setPhase" => {
-                let phase = params
-                    .get("phase")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'phase'")?;
-                match phase {
-                    "playing" => self.phase = GamePhase::Playing,
-                    "game_over" => self.phase = GamePhase::GameOver,
-                    _ => return Err(format!("Unknown phase: {}", phase)),
-                }
-                Ok(serde_json::json!({"phase": phase}))
-            }
-            _ => Err(format!("Unknown method: {}", method)),
+        self.dispatch_vdp(method, params)
+            .unwrap_or_else(|| Err(format!("Unknown method: {}", method)))
+    }
+}
+
+// ── VDP inspect snapshot ────────────────────────────────────────────
+// Typed views derived with `#[derive(Serialize)]` replace the hand-rolled
+// `serde_json::json!` mirror. They reproduce the exact wire shape the VDP
+// tests pin, so the contract is unchanged.
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct TetrisInspect {
+    phase: GamePhase,
+    grid: Vec<Vec<Option<&'static str>>>,
+    current: Option<CurrentView>,
+    ghost_y: i32,
+    hold: Option<&'static str>,
+    hold_used: bool,
+    next: Vec<&'static str>,
+    score: u32,
+    level: u32,
+    lines: u32,
+    combo: i32,
+    back_to_back: bool,
+    gravity_timer: f32,
+    lock_active: bool,
+    lock_resets: u32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct CurrentView {
+    #[serde(rename = "type")]
+    piece_type: &'static str,
+    rotation: usize,
+    x: i32,
+    y: i32,
+    cells: Vec<Vec<i32>>,
+}
+
+// ── VDP method params & dispatch ────────────────────────────────────
+// Typed param structs (deserialized by `#[vdp_methods]`) replace the
+// hand-rolled `params.get().and_then().ok_or()` extraction.
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetGrid {
+    grid: Vec<Vec<Option<String>>>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPiece {
+    #[serde(rename = "type")]
+    piece_type: String,
+    #[serde(default)]
+    rotation: u64,
+    x: i64,
+    y: i64,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetNextQueue {
+    queue: Vec<String>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetHoldPiece {
+    piece: Option<String>,
+    #[serde(default)]
+    hold_used: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetScore {
+    score: Option<u64>,
+    level: Option<u64>,
+    lines: Option<u64>,
+    combo: Option<i64>,
+    back_to_back: Option<bool>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetPhase {
+    phase: String,
+}
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl TetrisGame {
+    #[vdp("game.reset")]
+    fn vdp_reset(&mut self) -> Result<serde_json::Value, String> {
+        self.reset();
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.setGrid")]
+    fn vdp_set_grid(&mut self, p: SetGrid) -> Result<serde_json::Value, String> {
+        if p.grid.len() != TOTAL_ROWS {
+            return Err(format!("Grid must have {} rows", TOTAL_ROWS));
         }
+        let mut new_grid = empty_grid();
+        for (r, row) in p.grid.iter().enumerate() {
+            if row.len() != COLS {
+                return Err(format!("Each row must have {} columns", COLS));
+            }
+            for (c, cell) in row.iter().enumerate() {
+                new_grid[r][c] = match cell {
+                    None => None,
+                    Some(name) => Some(PieceType::from_name(name).ok_or("Invalid piece type")?),
+                };
+            }
+        }
+        self.grid = new_grid;
+        if let Some(ref piece) = self.current {
+            self.ghost = ghost_y(piece, &self.grid);
+        }
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.clearGrid")]
+    fn vdp_clear_grid(&mut self) -> Result<serde_json::Value, String> {
+        self.grid = empty_grid();
+        if let Some(ref piece) = self.current {
+            self.ghost = ghost_y(piece, &self.grid);
+        }
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.setPiece")]
+    fn vdp_set_piece(&mut self, p: SetPiece) -> Result<serde_json::Value, String> {
+        let pt = PieceType::from_name(&p.piece_type).ok_or("Invalid piece type")?;
+        let rot = match p.rotation {
+            0 => Rot::N,
+            1 => Rot::E,
+            2 => Rot::S,
+            3 => Rot::W,
+            _ => return Err("Rotation must be 0-3".to_string()),
+        };
+        let piece = Piece {
+            piece_type: pt,
+            rotation: rot,
+            x: p.x as i32,
+            y: p.y as i32,
+        };
+        self.ghost = ghost_y(&piece, &self.grid);
+        self.current = Some(piece);
+        self.lock_active = false;
+        self.lock_timer = LOCK_DELAY;
+        self.lock_resets = 0;
+        self.last_was_rotation = false;
+        self.gravity_timer = gravity_interval(self.level);
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.setNextQueue")]
+    fn vdp_set_next_queue(&mut self, p: SetNextQueue) -> Result<serde_json::Value, String> {
+        self.next_queue.clear();
+        for name in &p.queue {
+            let pt = PieceType::from_name(name).ok_or("Invalid piece type")?;
+            self.next_queue.push_back(pt);
+        }
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.setHoldPiece")]
+    fn vdp_set_hold_piece(&mut self, p: SetHoldPiece) -> Result<serde_json::Value, String> {
+        self.hold_piece = match p.piece {
+            None => None,
+            Some(ref name) => Some(PieceType::from_name(name).ok_or("Invalid piece type")?),
+        };
+        self.hold_used = p.hold_used;
+        Ok(serde_json::json!({"status": "ok"}))
+    }
+
+    #[vdp("game.setScore")]
+    fn vdp_set_score(&mut self, p: SetScore) -> Result<serde_json::Value, String> {
+        if let Some(v) = p.score {
+            self.score = v as u32;
+        }
+        if let Some(v) = p.level {
+            self.level = v.max(1) as u32;
+        }
+        if let Some(v) = p.lines {
+            self.lines_cleared = v as u32;
+        }
+        if let Some(v) = p.combo {
+            self.combo = v as i32;
+        }
+        if let Some(v) = p.back_to_back {
+            self.back_to_back = v;
+        }
+        Ok(serde_json::json!({
+            "score": self.score,
+            "level": self.level,
+            "lines": self.lines_cleared,
+        }))
+    }
+
+    #[vdp("game.setPhase")]
+    fn vdp_set_phase(&mut self, p: SetPhase) -> Result<serde_json::Value, String> {
+        match p.phase.as_str() {
+            "playing" => self.phase = GamePhase::Playing,
+            "game_over" => self.phase = GamePhase::GameOver,
+            _ => return Err(format!("Unknown phase: {}", p.phase)),
+        }
+        Ok(serde_json::json!({"phase": p.phase}))
     }
 }
 

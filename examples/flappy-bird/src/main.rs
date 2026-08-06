@@ -11,6 +11,8 @@ const COUNTDOWN_DURATION: f32 = 3.0;
 
 // ── Game state machine ────────────────────────────────────────────
 #[derive(PartialEq)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 enum GameState {
     Idle,
     Countdown,
@@ -412,39 +414,29 @@ impl Game for FlappyBirdGame {
 
     #[cfg(feature = "vdp")]
     fn inspect(&self) -> serde_json::Value {
-        let state_str = match self.state {
-            GameState::Idle => "idle",
-            GameState::Countdown => "countdown",
-            GameState::Playing => "playing",
-            GameState::Dead => "dead",
-        };
-
-        let pipes: Vec<serde_json::Value> = self
-            .pipes
-            .iter()
-            .map(|p| {
-                serde_json::json!({
-                    "x": p.x,
-                    "gap_y": p.gap_y,
-                    "scored": p.scored,
-                })
-            })
-            .collect();
-
-        serde_json::json!({
-            "state": state_str,
-            "score": self.score,
-            "best_score": self.best_score,
-            "bird": {
-                "x": self.bird_x,
-                "y": self.bird_y,
-                "vy": self.bird_vy,
-                "width": self.bird_w,
-                "height": self.bird_h,
+        let view = FlappyInspect {
+            state: &self.state,
+            score: self.score,
+            best_score: self.best_score,
+            bird: BirdView {
+                x: self.bird_x,
+                y: self.bird_y,
+                vy: self.bird_vy,
+                width: self.bird_w,
+                height: self.bird_h,
             },
-            "pipes": pipes,
-            "countdown_timer": self.countdown_timer,
-        })
+            pipes: self
+                .pipes
+                .iter()
+                .map(|p| PipeView {
+                    x: p.x,
+                    gap_y: p.gap_y,
+                    scored: p.scored,
+                })
+                .collect(),
+            countdown_timer: self.countdown_timer,
+        };
+        serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
     }
 
     #[cfg(feature = "vdp")]
@@ -453,56 +445,107 @@ impl Game for FlappyBirdGame {
         method: &str,
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        match method {
-            "game.setBirdY" => {
-                let y = params
-                    .get("y")
-                    .and_then(|v| v.as_f64())
-                    .ok_or("Missing 'y' parameter")?;
-                self.bird_y = y as f32;
-                if let Some(vy) = params.get("vy").and_then(|v| v.as_f64()) {
-                    self.bird_vy = vy as f32;
-                }
-                Ok(serde_json::json!({"bird_y": self.bird_y, "bird_vy": self.bird_vy}))
-            }
-            "game.setScore" => {
-                let score = params
-                    .get("score")
-                    .and_then(|v| v.as_u64())
-                    .ok_or("Missing 'score' parameter")?;
-                self.score = score as u32;
-                Ok(serde_json::json!({"score": self.score}))
-            }
-            "game.setState" => {
-                let state = params
-                    .get("state")
-                    .and_then(|v| v.as_str())
-                    .ok_or("Missing 'state' parameter")?;
-                match state {
-                    "idle" => {
-                        self.state = GameState::Idle;
-                        self.reset_bird();
-                    }
-                    "countdown" => {
-                        self.reset_game();
-                        self.countdown_timer = COUNTDOWN_DURATION;
-                        self.state = GameState::Countdown;
-                    }
-                    "playing" => {
-                        self.state = GameState::Playing;
-                    }
-                    "dead" => {
-                        if self.score > self.best_score {
-                            self.best_score = self.score;
-                        }
-                        self.state = GameState::Dead;
-                    }
-                    _ => return Err(format!("Unknown state: {}", state)),
-                }
-                Ok(serde_json::json!({"state": state}))
-            }
-            _ => Err(format!("Unknown method: {}", method)),
+        self.dispatch_vdp(method, params)
+            .unwrap_or_else(|| Err(format!("Unknown method: {}", method)))
+    }
+}
+
+// ── VDP inspect snapshot ────────────────────────────────────────────
+// Typed views derived with `#[derive(Serialize)]` reproduce the exact wire
+// shape the VDP tests pin (bird_* fields regrouped under `bird`).
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct FlappyInspect<'a> {
+    state: &'a GameState,
+    score: u32,
+    best_score: u32,
+    bird: BirdView,
+    pipes: Vec<PipeView>,
+    countdown_timer: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct BirdView {
+    x: f32,
+    y: f32,
+    vy: f32,
+    width: f32,
+    height: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct PipeView {
+    x: f32,
+    gap_y: f32,
+    scored: bool,
+}
+
+// ── VDP method params & dispatch ────────────────────────────────────
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetBirdY {
+    y: f64,
+    vy: Option<f64>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetScore {
+    score: u64,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetState {
+    state: String,
+}
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl FlappyBirdGame {
+    #[vdp("game.setBirdY")]
+    fn vdp_set_bird_y(&mut self, p: SetBirdY) -> Result<serde_json::Value, String> {
+        self.bird_y = p.y as f32;
+        if let Some(vy) = p.vy {
+            self.bird_vy = vy as f32;
         }
+        Ok(serde_json::json!({"bird_y": self.bird_y, "bird_vy": self.bird_vy}))
+    }
+
+    #[vdp("game.setScore")]
+    fn vdp_set_score(&mut self, p: SetScore) -> Result<serde_json::Value, String> {
+        self.score = p.score as u32;
+        Ok(serde_json::json!({"score": self.score}))
+    }
+
+    #[vdp("game.setState")]
+    fn vdp_set_state(&mut self, p: SetState) -> Result<serde_json::Value, String> {
+        match p.state.as_str() {
+            "idle" => {
+                self.state = GameState::Idle;
+                self.reset_bird();
+            }
+            "countdown" => {
+                self.reset_game();
+                self.countdown_timer = COUNTDOWN_DURATION;
+                self.state = GameState::Countdown;
+            }
+            "playing" => {
+                self.state = GameState::Playing;
+            }
+            "dead" => {
+                if self.score > self.best_score {
+                    self.best_score = self.score;
+                }
+                self.state = GameState::Dead;
+            }
+            _ => return Err(format!("Unknown state: {}", p.state)),
+        }
+        Ok(serde_json::json!({"state": p.state}))
     }
 }
 

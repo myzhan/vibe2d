@@ -213,11 +213,12 @@ Feature 级联：游戏 crate → `vibe2d/vdp` → `vibe_debug` + `serde_json`
 
    [features]
    default = ["vdp"]
-   vdp = ["vibe2d/vdp", "dep:serde_json"]
+   vdp = ["vibe2d/vdp", "dep:serde_json", "dep:serde"]
 
    [dependencies]
    vibe2d = { workspace = true }
    serde_json = { workspace = true, optional = true }
+   serde = { workspace = true, optional = true }  # derive inspect 快照 / typed params
    ```
 2. 创建 `examples/my-game/game.yaml`，配置窗口/资源/输入
 3. 创建 `examples/my-game/src/main.rs`，实现 `Game` trait
@@ -237,7 +238,61 @@ Feature 级联：游戏 crate → `vibe2d/vdp` → `vibe_debug` + `serde_json`
 
 **引擎级别**（所有游戏通用）：在 `crates/vibe2d/src/lib.rs` 的 `GameBridge::handle_vdp_request()` 中添加 match 分支。
 
-**游戏级别**（特定游戏）：在游戏结构体上实现 `handle_vdp()`。示例见 [docs/api.md](docs/api.md#实现自定义-vdp-方法)。
+**游戏级别**（特定游戏）：在游戏结构体上实现 `inspect()` / `handle_vdp()`。示例见 [docs/api.md](docs/api.md#实现自定义-vdp-方法)。推荐用下面的 derive + 声明宏写法（游戏规模变大时避免手抠 JSON），旧的手写 `serde_json::json!` + `match` 方式仍然支持。
+
+**`inspect` —— 用 `#[derive(Serialize)]` 快照**：不要手写 `serde_json::json!({...})` 镜像每个字段，而是定义一个（或几个）门控在 `vdp` feature 下的快照 struct，把要暴露的状态填进去再 `serde_json::to_value`：
+
+```rust
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+struct MyInspect<'a> {
+    state: &'a GameState,   // enum 上加 #[cfg_attr(feature="vdp", derive(Serialize))]
+    score: u32,             //          + #[serde(rename_all = "snake_case")]
+    player: PlayerView,     // 嵌套结构用独立的 *View 快照 struct
+}
+
+#[cfg(feature = "vdp")]
+fn inspect(&self) -> serde_json::Value {
+    let view = MyInspect { state: &self.state, score: self.score, player: PlayerView { /* … */ } };
+    serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
+}
+```
+
+- 纹理句柄等不可序列化字段用 `#[serde(skip)]`；键名不一致的字段用 `#[serde(rename = "...")]`。
+- 若游戏状态里有外部/不可序列化类型（`AoiWorld`、glam `Vec2`、`Arc<HashMap>` 等），一律用独立快照 struct 精选子集，**不要**在游戏主 struct 上整体 derive。参考 `examples/aoi-demo`。
+
+**`handle_vdp` —— 用 `#[vibe2d::vdp::vdp_methods]` 声明宏**：给方法体加 typed 入参 struct（`#[derive(Deserialize)]`），宏自动生成 `dispatch_vdp()` 分发；`handle_vdp` 退化成一行转发器（还可先转发命名空间，如 aoi-demo 的 `aoi.*`）：
+
+```rust
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+struct SetScore { score: Option<u32>, level: Option<u32> }
+
+#[cfg(feature = "vdp")]
+#[vibe2d::vdp::vdp_methods]
+impl MyGame {
+    #[vdp("game.reset")]                                  // 无参：fn(&mut self)
+    fn vdp_reset(&mut self) -> Result<serde_json::Value, String> { /* … */ }
+
+    #[vdp("game.setScore")]                               // 带参：fn(&mut self, p: P)，P: Deserialize
+    fn vdp_set_score(&mut self, p: SetScore) -> Result<serde_json::Value, String> { /* … */ }
+}
+
+#[cfg(feature = "vdp")]
+fn handle_vdp(&mut self, method: &str, params: &serde_json::Value)
+    -> Result<serde_json::Value, String>
+{
+    // 可选：先把某命名空间整体转发出去
+    // if method.starts_with("aoi.") { return self.aoi.handle_vdp(method, params); }
+    self.dispatch_vdp(method, params)
+        .unwrap_or_else(|| Err(format!("Unknown method: {}", method)))
+}
+```
+
+- 宏识别每个方法上的 `#[vdp("namespace.method")]`，命中时用 `from_params` 反序列化入参、`to_result` 序列化返回值；未命中返回 `None`（便于 fallback / 命名空间转发）。
+- 返回值可以是任意 `Serialize` 类型；沿用现有响应形状最省事的是直接返回 `serde_json::json!({...})`。
+- 底层 helper `vibe2d::vdp::{from_params, to_result}` 也可手动调用（宏之外的场景）。
+- 参考实现：`examples/mari0`（最全）、`examples/tetris`、`examples/flappy-bird`、`examples/aoi-demo`。
 
 ### 添加新 UI 组件
 
