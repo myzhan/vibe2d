@@ -1,0 +1,370 @@
+name: PR Playthrough
+
+# Single-workflow design using `pull_request_target`. The previous
+# split (record + workflow_run-triggered publish) hit GitHub's hard
+# rule that `workflow_run` only fires from workflows already on the
+# default branch — so the publish workflow never registered.
+#
+# Why this is safe despite holding write tokens:
+#
+#   * `pull_request_target` reads the workflow YAML from the BASE
+#     branch (main), not from the PR's HEAD. PR authors cannot
+#     modify what runs here.
+#   * Per-job `permissions:` limit each job to the smallest token
+#     it needs. `record` is read-only — even though it executes
+#     PR-controlled code (cargo test runs PR `build.rs`/proc
+#     macros etc.), the worst it can do is exfiltrate a
+#     contents:read token.
+#   * `publish` and `cleanup` hold write tokens but NEVER execute
+#     PR code: they only check out the `playthrough-assets`
+#     branch from the base repo, never PR HEAD.
+#
+# Recording recipe:
+#   The harness's `ScreenshotPacer` (see crates/vibe_test) polls
+#   `game.screenshot` over VDP at 15fps and writes PNGs. This is a
+#   wgpu texture readback — totally independent of the X11 display
+#   path, which under Xvfb + lavapipe presents to a drawable that
+#   x11grab can't see (verified: VDP screenshots come back YAVG=103,
+#   x11grab gave YAVG=16/black). After the scenario completes,
+#   ffmpeg assembles the PNGs into both GIF (for inline comment
+#   preview) and MP4 (for scrubable download). GitHub's PR-comment
+#   sanitizer only renders <video> tags whose src is a
+#   user-attachments URL (web UI drag-drop, no API), so GIF inline +
+#   MP4 link is the only working combo for an auto-posted comment.
+#
+# References:
+#   https://docs.github.com/en/actions/writing-workflows/choosing-when-your-workflow-runs/events-that-trigger-workflows#pull_request_target
+#   https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - 'crates/vibe_render/**'
+      - 'crates/vibe_ui/**'
+      - 'crates/vibe_platform/**'
+      - 'crates/vibe_test/**'
+      - 'examples/**'
+      - '.github/workflows/playthrough.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  # ── Record: matrix over every demo, READ-ONLY token ───────────
+  record:
+    name: Record ${{ matrix.game.pkg }}
+    runs-on: ubuntu-latest
+    if: github.event.action != 'closed'
+    # Hard cap so a hung recorder can't burn 60min × N runners.
+    # Cold compile ~3min, playthrough ~12s, ffmpeg ~5s — 15min has
+    # plenty of headroom.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    strategy:
+      # One game's playthrough flaking shouldn't blank the whole
+      # comment — let the others finish and we'll post what we got.
+      fail-fast: false
+      matrix:
+        game:
+          - { pkg: aoi-demo }
+          - { pkg: flappy-bird }
+          - { pkg: mari0 }
+          - { pkg: tetris }
+          - { pkg: ui-demo }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Per-game cache key so 5 runners don't trash each other's
+          # incremental cache when they all write back at once.
+          key: playthrough-${{ matrix.game.pkg }}
+
+      - name: Install audio + display + Vulkan + assembly deps
+        # Xvfb still required because winit's X11 backend needs an X
+        # connection to start. ffmpeg is the PNG → MP4 assembler.
+        # libxkbcommon-x11-0 is the runtime winit dlopens for X11
+        # keyboard mapping.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libxkbcommon-x11-0 \
+            xvfb \
+            mesa-vulkan-drivers \
+            vulkan-tools \
+            ffmpeg
+
+      - name: Start Xvfb
+        run: |
+          # Generous virtual screen so different demos' window sizes
+          # all fit even if winit picks a non-(0,0) position.
+          Xvfb :99 -screen 0 1440x960x24 \
+            +extension RANDR +extension GLX +extension COMPOSITE \
+            -noreset -ac &
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          sleep 1
+
+      - name: Run playthrough scenario (with VDP-screenshot recorder)
+        env:
+          WGPU_BACKEND: vulkan
+          RUST_LOG: warn
+          VIBE_TEST_RELEASE: "1"
+          VIBE_TEST_FORCE_VISIBLE: "1"
+          VIBE_TEST_CHILD_LOG_DIR: ${{ runner.temp }}/child-logs
+          # ScreenshotPacer (crates/vibe_test) picks this up and
+          # writes ${dir}/<pkg>/####.png at 15fps on the harness's
+          # existing VDP connection.
+          VIBE_TEST_RECORDING_DIR: /tmp/recording
+        run: |
+          mkdir -p /tmp/recording
+          cargo test -p ${{ matrix.game.pkg }} --release \
+            --test playthrough -- --ignored --nocapture
+
+      - name: Dump child game logs on failure
+        if: failure()
+        run: |
+          dir="${{ runner.temp }}/child-logs"
+          if [ -d "$dir" ]; then
+            for f in "$dir"/*.log; do
+              echo "::group::$(basename "$f")"
+              cat "$f"
+              echo "::endgroup::"
+            done
+          else
+            echo "No child log dir at $dir"
+          fi
+
+      - name: Assemble PNGs into GIF + MP4
+        if: always()
+        env:
+          PKG: ${{ matrix.game.pkg }}
+        run: |
+          dir="/tmp/recording/${PKG}"
+          if [ ! -d "$dir" ] || [ -z "$(ls -A "$dir" 2>/dev/null)" ]; then
+            echo "No PNGs in $dir — skipping assembly."
+            exit 0
+          fi
+          # GIF for inline preview in PR comments. <video> tags get
+          # stripped by GitHub's sanitizer unless the src is a
+          # user-attachments URL (web UI drag-drop only — no API),
+          # so GIF is the only inline format that works for an
+          # auto-posted comment. Smaller width keeps it cheap.
+          ffmpeg -y -framerate 15 -i "$dir/%04d.png" \
+            -vf "scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=128[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5" \
+            /tmp/play.gif
+          # MP4 alongside as the higher-quality download — reviewers
+          # who want scrub controls click the link in the comment.
+          # h264 + yuv420p + faststart + even dims (libx264 requires).
+          ffmpeg -y -framerate 15 -i "$dir/%04d.png" \
+            -c:v libx264 -pix_fmt yuv420p \
+            -preset medium -crf 23 \
+            -movflags +faststart \
+            -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" \
+            /tmp/play.mp4
+          ls -la /tmp/play.gif /tmp/play.mp4
+
+      - name: Save PR metadata for publish job
+        if: always()
+        run: |
+          mkdir -p /tmp/meta
+          echo "${{ github.event.pull_request.number }}" > /tmp/meta/pr_number
+          echo "${{ github.event.pull_request.head.sha }}" > /tmp/meta/head_sha
+          echo "${{ matrix.game.pkg }}" > /tmp/meta/pkg
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playthrough-${{ matrix.game.pkg }}
+          path: |
+            /tmp/play.gif
+            /tmp/play.mp4
+            /tmp/meta/
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ── Publish: WRITE token, NEVER touches PR code ───────────────
+  publish:
+    name: Publish playthrough comment
+    runs-on: ubuntu-latest
+    needs: [record]
+    # `always()` so a single matrix entry failing still lets us
+    # publish whatever MP4s the rest produced. Inside the steps we
+    # tolerate missing artifacts gracefully.
+    if: ${{ always() && github.event.action != 'closed' }}
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Ensure playthrough-assets branch exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/${{ github.repository }}/branches/playthrough-assets" --silent 2>/dev/null; then
+            exit 0
+          fi
+          tmp=$(mktemp -d)
+          cd "$tmp"
+          git init -q -b playthrough-assets
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -q --allow-empty -m "init: playthrough assets branch"
+          git push -q "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" playthrough-assets
+
+      - uses: actions/checkout@v4
+        with:
+          ref: playthrough-assets
+
+      - name: Download all record artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: playthrough-*
+          path: /tmp/dl
+
+      - name: Stage GIF+MP4 + build comment body
+        id: stage
+        # For each game we publish two files: the GIF for inline
+        # preview in the PR comment (only format the GitHub
+        # sanitizer renders inline from raw.githubusercontent.com)
+        # and the MP4 as a "watch with controls" download link.
+        # See memory/github-pr-video-render — <video> tags only
+        # render for user-attachments URLs which there's no API to
+        # produce, so the GIF+link combo is the working compromise.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          if [ ! -d /tmp/dl ] || [ -z "$(ls -A /tmp/dl 2>/dev/null)" ]; then
+            echo "No artifacts downloaded — nothing to publish."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # PR/SHA are the same across all matrix entries; read from
+          # whichever artifact happens to land first.
+          pr=""
+          sha=""
+
+          body_file=/tmp/comment_body.md
+          : > "$body_file"
+          echo "### 🎮 Playthroughs" >> "$body_file"
+          echo "" >> "$body_file"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Sort so the body is stable across re-runs.
+          for d in $(ls -1d /tmp/dl/playthrough-* 2>/dev/null | sort); do
+            pkg=$(cat "$d/meta/pkg" 2>/dev/null || echo "")
+            # Need at least the GIF; MP4 is bonus.
+            if [ -z "$pkg" ] || [ ! -f "$d/play.gif" ]; then
+              echo "Skipping $d (missing meta or play.gif)"
+              continue
+            fi
+            if [ -z "$pr" ]; then
+              pr=$(cat "$d/meta/pr_number")
+              sha=$(cat "$d/meta/head_sha")
+            fi
+            short="${sha:0:7}"
+            gif_out="pr-${pr}-${short}-${pkg}.gif"
+            cp "$d/play.gif" "$gif_out"
+            git add "$gif_out"
+            gif_url="https://raw.githubusercontent.com/${{ github.repository }}/playthrough-assets/${gif_out}"
+
+            mp4_link=""
+            if [ -f "$d/play.mp4" ]; then
+              mp4_out="pr-${pr}-${short}-${pkg}.mp4"
+              cp "$d/play.mp4" "$mp4_out"
+              git add "$mp4_out"
+              mp4_url="https://raw.githubusercontent.com/${{ github.repository }}/playthrough-assets/${mp4_out}"
+              mp4_link=" · [📹 watch as MP4](${mp4_url})"
+            fi
+
+            printf '#### %s\n\n![%s playthrough](%s)\n\n_GIF inline preview%s_\n\n' \
+              "$pkg" "$pkg" "$gif_url" "$mp4_link" >> "$body_file"
+          done
+
+          if git diff --cached --quiet; then
+            echo "Nothing ready to publish — skipping commit + comment."
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "*Auto-generated from ${sha:0:7} via VDP screenshot recorder + ffmpeg.*" >> "$body_file"
+
+          git commit -m "playthrough: pr-${pr} @ ${sha:0:7}"
+          git push
+
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "body_file=$body_file" >> "$GITHUB_OUTPUT"
+          echo "skip=0" >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        if: steps.stage.outputs.skip != '1'
+        uses: actions/github-script@v7
+        env:
+          PR: ${{ steps.stage.outputs.pr }}
+          BODY_FILE: ${{ steps.stage.outputs.body_file }}
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(process.env.BODY_FILE, 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: parseInt(process.env.PR, 10),
+              body,
+            });
+
+  # ── Cleanup: WRITE token, only on PR closed ────────────────────
+  cleanup:
+    name: Remove playthrough MP4s for closed PR
+    runs-on: ubuntu-latest
+    if: github.event.action == 'closed'
+    permissions:
+      contents: write
+    steps:
+      - name: Skip if playthrough-assets branch missing
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh api "repos/${{ github.repository }}/branches/playthrough-assets" --silent 2>/dev/null; then
+            echo "exists=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "Branch playthrough-assets does not exist — nothing to clean."
+            echo "exists=0" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.check.outputs.exists == '1'
+        uses: actions/checkout@v4
+        with:
+          ref: playthrough-assets
+
+      - name: Delete this PR's playthrough files
+        if: steps.check.outputs.exists == '1'
+        env:
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          shopt -s nullglob
+          # Glob both new (.mp4) and legacy (.gif) artifacts so a PR
+          # opened before the MP4 migration still cleans up correctly.
+          files=( "pr-${PR}-"*.mp4 "pr-${PR}-"*.gif )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No playthrough files found for PR ${PR} — nothing to clean."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm "${files[@]}"
+          git commit -m "cleanup: remove playthrough files for closed pr-${PR}"
+          git push
