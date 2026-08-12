@@ -430,6 +430,16 @@ struct TetrisGame {
     lock_active: bool,
     lock_resets: u32,
     last_was_rotation: bool,
+    /// Lines cleared by the most recent lock, awaiting a rumble pulse.
+    ///
+    /// Recorded here rather than rumbling directly from `do_lock` because that
+    /// method has no `Context`, and because `update` has several early `return`
+    /// paths — draining a field at the *top* of `update` catches every one of
+    /// them. Costs one frame of latency, which is imperceptible for rumble.
+    pending_rumble_lines: u32,
+    /// Set when the most recent lock ended the game, so the game-over pulse
+    /// fires exactly once.
+    pending_rumble_game_over: bool,
 
     das_direction: i32,
     das_timer: f32,
@@ -602,6 +612,7 @@ impl TetrisGame {
 
         // Clear lines
         let lines = clear_lines(&mut self.grid);
+        self.pending_rumble_lines = lines;
 
         // Classify and score
         let kind = classify_clear(lines, t_spin, false);
@@ -638,6 +649,7 @@ impl TetrisGame {
         // Spawn next
         if !self.spawn_piece() {
             self.phase = GamePhase::GameOver;
+            self.pending_rumble_game_over = true;
         }
     }
 
@@ -701,6 +713,9 @@ impl TetrisGame {
         self.das_direction = 0;
         self.das_timer = 0.0;
         self.arr_timer = 0.0;
+        // Don't let a pulse from the previous game leak into the new one.
+        self.pending_rumble_lines = 0;
+        self.pending_rumble_game_over = false;
         self.spawn_piece();
     }
 
@@ -771,14 +786,36 @@ impl Game for TetrisGame {
             block_tex,
             ghost_tex,
             bg_tex,
+            pending_rumble_lines: 0,
+            pending_rumble_game_over: false,
         };
         game.spawn_piece();
         game
     }
 
-    fn update(&mut self, _ctx: &mut Context, dt: f32, input: &InputState) {
+    fn update(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
+        // ── Rumble ──
+        // Drained first, ahead of every early `return` below, so no pulse is
+        // ever swallowed by the game-over or no-piece paths.
+        //
+        // Both motors get the same value on purpose: they're two independent
+        // pieces of hardware and plenty of pads only wire up one (an 8BitDo
+        // Ultimate Wired on Linux responds to `weak` only). Setting just one
+        // would make the rumble silent on those pads. See docs/api.md.
+        if self.pending_rumble_game_over {
+            self.pending_rumble_game_over = false;
+            ctx.rumble(1.0, 1.0, 500);
+        } else if self.pending_rumble_lines > 0 {
+            let lines = self.pending_rumble_lines;
+            // Scale with the clear: a single line is a nudge, a Tetris is a jolt.
+            let strength = 0.35 + 0.65 * (lines.min(4) as f32 / 4.0);
+            let duration = 80 + 40 * lines.min(4);
+            ctx.rumble(strength, strength, duration);
+        }
+        self.pending_rumble_lines = 0;
+
         if self.phase == GamePhase::GameOver {
-            // Press space to restart
+            // Press space / hard-drop button to restart
             if input.is_action_just_pressed("hard_drop") {
                 self.reset();
             }

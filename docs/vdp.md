@@ -213,7 +213,7 @@ debug:
 
 ### `engine.simulateInput`
 
-模拟输入事件注入。通过 `device` 字段区分设备类型，支持键盘和鼠标，预留手柄扩展。
+模拟输入事件注入。通过 `device` 字段区分设备类型，支持键盘、鼠标和手柄。
 
 输入在下一次 `game.update()` 执行时生效。暂停时入队的输入会在下一次 step 时注入。
 
@@ -253,14 +253,71 @@ debug:
 {"device": "mouse", "action": "click", "button": "Left"}
 ```
 
-#### 手柄（预留）
+#### 手柄输入
 
-`device: "gamepad"` 当前返回错误 `-32000 "Gamepad simulation not yet supported"`。
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `device` | string | 是 | 固定 `"gamepad"` |
+| `action` | string | 是 | `"press"` / `"release"` / `"tap"` / `"value"` / `"axis"` / `"connect"` / `"disconnect"` |
+| `pad` | integer | 否 | 手柄序号，**默认 `0`** |
+| `button` | string | press/release/tap/value 时必填 | 位置名或别名，见 [api.md 的按键命名表](api.md#按键命名) |
+| `axis` | string | axis 时必填 | `"LeftStickX"` / `"LeftStickY"` / `"RightStickX"` / `"RightStickY"` |
+| `value` | float | value/axis 时必填 | axis 为 −1.0..1.0；value 为 0.0..1.0 |
+| `name` | string | 否 | connect 时的显示名，默认 `"Virtual Gamepad"` |
+
+`tap` = 按下后下一帧自动释放（等价于键盘的 `tap`）。
+
+**不需要先 connect**：`press` / `axis` / `value` 会自动创建该手柄并标记为已连接，
+所以简单脚本可以直接按键。`connect` 的作用是设置**名字**（并覆盖连接事件路径），
+`disconnect` 则用于验证断开时的状态清理。
+
+`value` 只更新模拟量，**不会**伪造数字按下事件 —— 真实手柄上 gilrs 会另外发
+`ButtonPressed`，两边都合成就会重复触发 `just_pressed`。
+
+**示例**:
+
+```json
+{"device": "gamepad", "action": "connect", "pad": 0, "name": "Test Pad"}
+{"device": "gamepad", "action": "press", "button": "South"}
+{"device": "gamepad", "action": "tap", "button": "DPadLeft", "pad": 1}
+{"device": "gamepad", "action": "value", "button": "RightTrigger", "value": 0.75}
+{"device": "gamepad", "action": "axis", "axis": "LeftStickX", "value": -1.0}
+{"device": "gamepad", "action": "disconnect", "pad": 0}
+```
+
+> 手柄模拟**不依赖 `gamepad` feature**：它直接写入 `InputState`，完全不经过 gilrs。
+> 所以没有实体手柄（也没有 libudev）的机器照样能端到端测试整套手柄逻辑。
+
+##### ⚠️ 模拟手柄与真实手柄会撞 id
+
+模拟手柄和真实手柄共用同一套 `GamepadId` 空间。真实手柄通常从 0 开始编号，
+而 `pad` 的默认值也是 0 —— **两者会写进同一个手柄条目**。
+
+VDP 客户端**连接期间**真实输入被抑制，所以正常的集成测试（客户端全程连着）不受影响。
+但 `vibe rpc` 是**每条命令连一次、发完就断**：断开瞬间真实输入恢复，静止手柄上报的
+轴事件会把你刚模拟的值覆盖掉。表现就是「摇杆模拟了 0.9，一秒后自己变回 0」。
+
+两个办法：
+- 用一个真实手柄不会占用的序号，如 `"pad": 5`（诊断/手动调试时最省事）
+- 写测试时把被测游戏用 `--no-default-features --features vdp` 起起来，
+  彻底关掉 `gamepad`，真实手柄就不会被枚举进来。`vibe_test` 有现成支持：
+
+  ```rust
+  GameHarness::launch_with(
+      LaunchOptions::new("my-game", 9233)
+          .without_default_features()
+          .with_features(&["vdp"]),
+  ).await?
+  ```
+
+  `examples/gamepad/tests/vdp_gamepad.rs` 就是这么做的 —— 否则开发机上插着手柄时，
+  `pad_count == 1` 这类断言会因为多枚举出一个真实手柄而失败。
 
 #### 响应
 
 ```json
 {"device": "keyboard", "action": "tap", "key": "Space", "queued": true}
+{"device": "gamepad", "action": "press", "pad": 0, "button": "South", "queued": true}
 ```
 
 ---
@@ -472,18 +529,28 @@ pub trait Game {
 ### 每帧处理流程
 
 ```
-on_update(dt, &mut input):
-  ├─ [VDP] auto-release 上帧 tap/click
-  ├─ [VDP] process_vdp_requests()
-  ├─ [VDP] 判断 will_update (paused? stepping?)
-  ├─ [VDP] 若 will_update: 注入模拟输入到 InputState
-  ├─ [VDP] 计算 effective_dt
-  └─ 若 will_update: game.update(ctx, effective_dt, input)
+RedrawRequested (平台层):
+  ├─ [gamepad] 轮询 gilrs 事件 → InputState（在 on_update 之前）
+  ├─ on_update(dt, &mut input):
+  │    ├─ [VDP] auto-release 上帧 tap/click（键盘 + 鼠标 + 手柄）
+  │    ├─ [VDP] process_vdp_requests()
+  │    ├─ [VDP] 判断 will_update (paused? stepping?)
+  │    ├─ [VDP] 若 will_update: 注入模拟输入到 InputState
+  │    ├─ [VDP] 计算 effective_dt
+  │    └─ 若 will_update: game.update(ctx, effective_dt, input)
+  ├─ 渲染
+  ├─ [gamepad] take_rumble_requests() → 播放 / 回收震动效果
+  └─ input.begin_frame()   ← 清 just_* 并快照 prev_axes_raw
 ```
 
 ### 关键约束
 
 - VDP 请求在 `game.update()` **之前**处理（每帧开头）
+- **手柄事件必须在 `on_update` 之前排空**：`begin_frame()` 跑在上一帧的**末尾**，
+  此时 `just_pressed` 已清空、`prev_axes_raw` 已快照，所以此刻取到的手柄输入
+  本帧对 `game.update` 可见且边沿正确
+- VDP 客户端连接时真实输入被抑制，但手柄队列**仍然照常排空后丢弃** ——
+  否则 OS 事件队列会堆积，VDP 断开瞬间灌进一大把过期输入
 - 暂停时渲染仍进行（截图可用）
 - 模拟输入在 `game.update()` 执行前注入，暂停时入队等待 step
 - 所有方法调用是**同步**的，阻塞当前帧

@@ -47,9 +47,9 @@ vibe2d/
 | crate | 依赖 | 职责 |
 |-------|------|------|
 | vibe2d | render, platform, input, asset, audio, debug (optional) | 顶层协调器 |
-| vibe_platform | render, input, wgpu, winit | 事件循环与窗口管理 |
+| vibe_platform | render, input, wgpu, winit, gilrs (optional) | 事件循环、窗口管理与手柄轮询 |
 | vibe_render | wgpu, image, fontdue, glam | GPU 渲染管线 |
-| vibe_input | winit (KeyCode) | 键盘/鼠标状态追踪 |
+| vibe_input | winit (KeyCode) | 键盘/鼠标/手柄状态追踪 |
 | vibe_asset | vibe_render | 资源加载与缓存 |
 | vibe_audio | rodio | 音效播放 |
 | vibe_debug | tokio, tokio-tungstenite | VDP WebSocket 服务 |
@@ -60,6 +60,7 @@ vibe2d/
 |------|------|------|
 | wgpu | 24 | GPU 抽象层（Vulkan/Metal/DX12） |
 | winit | 0.30 | 跨平台窗口与事件 |
+| gilrs | 0.11 | 手柄输入（可选，`gamepad` feature；桌面 + wasm 通用） |
 | image | 0.25 | PNG 纹理加载 |
 | glam | 0.29 | 向量/矩阵运算 |
 | fontdue | 0.9 | TTF 字形光栅化 |
@@ -285,6 +286,11 @@ pub trait PlatformCallbacks {
     fn on_render(&mut self, renderer: &mut Renderer);
     fn clear_color(&self) -> [f32; 4];
     fn get_textures(&self) -> Vec<&Texture>;
+    fn should_render(&self) -> bool { true }
+    fn should_suppress_input(&self) -> bool { false }
+    /// 排空游戏本帧通过 `Context::rumble` 排入的震动请求。
+    /// 默认空实现，所以新增它不会破坏任何既有实现。
+    fn take_rumble_requests(&mut self) -> Vec<RumbleRequest> { Vec::new() }
 }
 ```
 
@@ -306,9 +312,13 @@ EventLoop resumed()
 
 ---
 
-### vibe_input — 输入系统（200 行）
+### vibe_input — 输入系统
 
-键盘与鼠标状态追踪，支持通过 YAML 配置 action 映射。
+键盘、鼠标与手柄状态追踪，支持通过 YAML 配置 action 映射。
+
+本 crate 是**纯逻辑、无 I/O** 的：它不依赖 gilrs，手柄状态由平台层喂进来，
+和 `winit::MouseButton → vibe_input::MouseButton` 的翻译方式完全同构。
+好处是单元测试不需要事件循环、不需要实体手柄，也不需要 libudev。
 
 ```rust
 pub struct InputState {
@@ -325,31 +335,87 @@ pub struct InputState {
     mouse_just_pressed: HashMap<MouseButton, bool>,
     mouse_just_released: HashMap<MouseButton, bool>,
     mouse_actions: HashMap<String, Vec<MouseButton>>, // action → 鼠标按键列表
+
+    // 手柄状态
+    // BTreeMap 而非 HashMap：确定的迭代顺序让「1P = 最小已连接 id」跨运行稳定，
+    // 诊断界面的手柄列表也不会逐帧重排。
+    gamepads: BTreeMap<GamepadId, GamepadState>,
+    gamepad_actions: HashMap<String, Vec<GamepadButton>>,
+    gamepad_axis_actions: HashMap<String, Vec<AxisSpec>>,
+    gamepad_deadzone: f32,        // 径向摇杆死区，默认 0.15
+    gamepad_axis_threshold: f32,  // 摇杆当按键的阈值，默认 0.5
+    gamepads_connected_this_frame: Vec<GamepadId>,
+    gamepads_disconnected_this_frame: Vec<GamepadId>,
+}
+
+pub struct GamepadState {
+    name: String,
+    connected: bool,
+    pressed / just_pressed / just_released: HashMap<GamepadButton, bool>,
+    values: HashMap<GamepadButton, f32>,  // 扳机 0..1；数字键落 0.0/1.0
+    axes_raw: [f32; 4],                   // 原始值，死区在**读取时**施加
+    prev_axes_raw: [f32; 4],              // 上一帧快照，摇杆边沿检测的唯一依据
 }
 ```
 
-鼠标按键类型：
+按键与轴类型：
 
 ```rust
 pub enum MouseButton { Left, Right, Middle }
+
+// 位置命名，不是按键上印的字母（Xbox 布局：South=A, East=B, West=X, North=Y）
+pub enum GamepadButton {
+    South, East, North, West,
+    LeftShoulder, RightShoulder,   // gilrs 的 LeftTrigger / RightTrigger
+    LeftTrigger, RightTrigger,     // gilrs 的 LeftTrigger2 / RightTrigger2
+    Select, Start, Mode,
+    LeftThumb, RightThumb,
+    DPadUp, DPadDown, DPadLeft, DPadRight,
+}
+
+// Y 上为正（SDL 约定），与屏幕 y 向下相反。无 DPadX/DPadY：
+// gilrs 默认过滤器已把以轴上报的十字键转成 DPad* 按键。
+pub enum GamepadAxis { LeftStickX, LeftStickY, RightStickX, RightStickY }
 ```
 
 每帧生命周期：
-1. 事件循环分发键盘/鼠标事件 → 更新各自的 pressed / just_pressed / just_released
-2. 鼠标 `CursorMoved` 事件 → 物理坐标转虚拟坐标（按窗口/虚拟分辨率比例缩放）
-3. 游戏代码查询：`input.is_action_just_pressed("flap")`（同时检查键盘和鼠标绑定）
-4. 帧末清理：`begin_frame()` 清空所有 just_pressed / just_released
+1. **平台层在 `on_update` 之前轮询 gilrs** → `on_gamepad_*` 摄入接口。
+   手柄是**轮询**而非事件驱动的（winit 完全不产生手柄事件），所以必须显式调用
+2. 事件循环分发键盘/鼠标事件 → 更新各自的 pressed / just_pressed / just_released
+3. 鼠标 `CursorMoved` 事件 → 物理坐标转虚拟坐标（按窗口/虚拟分辨率比例缩放）
+4. 游戏代码查询：`input.is_action_just_pressed("flap")`（同时检查四类绑定）
+5. 帧末清理：`begin_frame()` 清空所有 just_pressed / just_released，
+   并把 `axes_raw` 快照进 `prev_axes_raw`
 
-Action 映射配置（支持键盘和鼠标混合绑定）：
+**摇杆边沿检测**（`gamepad_axes` 绑定的 `just_pressed` / `just_released`）依赖
+`prev_axes_raw`，而它**只在 `begin_frame()` 里写入**。这条顺序是承重的：
+`begin_frame()` 跑在第 N 帧的**末尾**，所以第 N+1 帧开头时 `prev_axes_raw` 恰好是
+游戏在第 N 帧 `update` 里看到的值；第 N+1 帧的手柄事件在这之后才排空，只动
+`axes_raw`。于是比较永远是「现在游戏看到的」vs「上一帧游戏看到的」，构造上就正确。
+
+已知限制：摇杆在单帧内越过阈值又回来不产生边沿（一帧内多个 `AxisChanged`
+会塌缩成最终值，与鼠标位置同语义）。60 Hz 下物理上不可能。
+
+**手柄摄入接口会自动创建条目**并标记为已连接，所以按键事件先于 `Connected` 到达
+（或 VDP 模拟手柄从不发 `Connected`）时也能正常工作。断开时条目保留但按住状态清空，
+详见 [api.md](api.md#手柄gamepad)。
+
+Action 映射配置（键盘 / 鼠标 / 手柄按键 / 摇杆方向四类混合绑定，或的关系）：
 
 ```yaml
 input:
+  gamepad:                              # 可选
+    deadzone: 0.15
+    axis_threshold: 0.5
   actions:
     flap:
       keys: ["Space"]
-      mouse_buttons: ["Left"]    # 鼠标左键也触发 flap
+      mouse_buttons: ["Left"]           # 鼠标左键也触发 flap
+      gamepad_buttons: ["South"]        # 手柄 A 键也触发
     move_left:
-      keys: ["Left", "A"]       # 多键绑定，任一触发
+      keys: ["Left", "A"]               # 多键绑定，任一触发
+      gamepad_buttons: ["DPadLeft"]
+      gamepad_axes: ["LeftStickLeft"]   # 左摇杆左推也算按下
 ```
 
 ---

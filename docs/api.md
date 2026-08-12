@@ -182,10 +182,13 @@ input.is_key_just_released(KeyCode::Space)   // 本帧刚松开
 ### Action 映射（推荐方式）
 
 ```rust
-input.is_action_pressed("jump")              // 检查键盘和鼠标绑定
+input.is_action_pressed("jump")              // 检查键盘 / 鼠标 / 手柄按键 / 摇杆绑定
 input.is_action_just_pressed("jump")
 input.is_action_just_released("jump")
 ```
+
+四类绑定是**或**的关系：任一绑定激活，action 即触发。这就是同一个 action 名能同时
+服务键盘、十字键和模拟摇杆的原因。
 
 ### 鼠标
 
@@ -203,6 +206,140 @@ input.is_mouse_button_just_released(MouseButton::Left)
 input.chars_this_frame()       // -> &[char]，本帧收到的可打印字符
 input.mouse_scroll_delta()     // -> f32，本帧滚轮增量（正值 = 向上）
 ```
+
+### 手柄（Gamepad）
+
+由 [gilrs](https://gitlab.com/gilrs-project/gilrs) 提供支持，桌面与 Web 都可用
+（Web 走浏览器 `navigator.getGamepads()`）。需要 `gamepad` feature（默认开启，
+见下方 Feature 一节）。完整示例见 `examples/gamepad`（`cargo run -p gamepad-tester`）。
+
+**合并查询** —— 语义是「任一已连接手柄」，单人游戏用这套最省事：
+
+```rust
+input.is_gamepad_button_pressed(GamepadButton::South)
+input.is_gamepad_button_just_pressed(GamepadButton::South)
+input.is_gamepad_button_just_released(GamepadButton::South)
+input.gamepad_button_value(GamepadButton::RightTrigger)  // 模拟扳机 0.0..=1.0
+input.gamepad_axis(GamepadAxis::LeftStickX)              // 死区处理后，-1.0..=1.0
+input.gamepad_axis_raw(GamepadAxis::LeftStickX)          // 原始值，未过死区
+```
+
+**按手柄查询** —— 本地多人用：
+
+```rust
+input.gamepad_count()            // 已连接数量
+input.connected_gamepads()       // -> Vec<GamepadId>，升序
+input.primary_gamepad()          // -> Option<GamepadId>，最小 id（即「1P」）
+input.gamepad_name(pad)          // -> Option<&str>，驱动上报的名字
+
+input.is_gamepad_button_pressed_on(pad, GamepadButton::South)
+input.gamepad_axis_on(pad, GamepadAxis::LeftStickX)
+
+// action 的按手柄版本：只看手柄绑定，刻意忽略键鼠
+// —— 键鼠不属于任何手柄，分屏游戏不能让 1P 的键盘驱动 2P。
+input.is_action_pressed_on(pad, "jump")
+input.is_action_just_pressed_on(pad, "jump")
+
+// 对象式路径，在 `for pad in players` 循环里更好读
+if let Some(g) = input.gamepad(pad) {
+    g.is_pressed(GamepadButton::South);
+    g.axis(GamepadAxis::LeftStickX, input.gamepad_deadzone());
+}
+```
+
+**连接 / 断开**（两个列表都只维持一帧）：
+
+```rust
+for id in input.gamepads_connected_this_frame() { /* … */ }
+for id in input.gamepads_disconnected_this_frame() { /* … */ }
+```
+
+手柄断开时条目会保留（gilrs 按设备 UUID 复用 id，这样重插后 玩家↔手柄 的对应关系不丢），
+但**按住状态会被清空**并产生一次 release 边沿 —— 否则会出现「拔手柄时正推着右，
+角色永远撞墙」这个经典 bug。
+
+#### 按键命名
+
+规范名是**位置名**，不是按键上印的字母。Xbox 布局下 `South` = A、`East` = B、
+`West` = X、`North` = Y。位置命名是各手柄映射库的通用做法，也是唯一跨布局仍然正确的命名：
+任天堂布局手柄上印着「A」的键其实在 `East` 位。
+
+| 位置名 | Xbox 别名 | 其它别名 |
+|---|---|---|
+| `South` `East` `West` `North` | `A` `B` `X` `Y` | — |
+| `LeftShoulder` `RightShoulder` | `LB` `RB` | `L1` `R1` |
+| `LeftTrigger` `RightTrigger` | `LT` `RT` | `L2` `R2` |
+| `Select` `Start` `Mode` | `Back` `Start` `Guide` | `Home` |
+| `LeftThumb` `RightThumb` | `LeftStick` `RightStick` | — |
+| `DPadUp/Down/Left/Right` | — | — |
+
+> **注意肩键与扳机**：gilrs 内部把**肩键**叫 `LeftTrigger`、把**模拟扳机**叫
+> `LeftTrigger2`。vibe2d 在平台层把它们重命名成 `LeftShoulder` / `LeftTrigger`，
+> 所以按 LB 亮的是 `LeftShoulder`、扣 LT 亮的是 `LeftTrigger`。
+
+#### 摇杆轴与 Y 方向
+
+轴只有四条：`LeftStickX` `LeftStickY` `RightStickX` `RightStickY`。
+没有 `DPadX/DPadY` —— gilrs 默认过滤器已把以轴上报的十字键转成 `DPad*` **按键**。
+
+> ⚠️ **Y 是上为正**（SDL / gilrs 约定），与 vibe2d 的**屏幕 y 向下**相反。
+> 把摇杆读数转成屏幕增量时**要取负**：
+> ```rust
+> let dx = input.gamepad_axis(GamepadAxis::LeftStickX);
+> let dy = -input.gamepad_axis(GamepadAxis::LeftStickY); // 注意负号
+> ```
+
+#### 死区与阈值
+
+死区是**径向**的（按摇杆整体，而不是逐轴），并在**读取时**施加而非写入时：
+
+- 径向而非逐轴：逐轴死区会保留两个原始分量各自减去阈值的结果，从而**扭曲方向**
+  （`(0.9, 0.2)` 过 0.15 逐轴死区变成 `(0.75, 0.05)`，角度从 ~12.5° 歪到 ~3.8°）；
+  径向死区对两个分量乘同一个系数，方向精确保留。而且逐轴死区的死区是个**正方形**，
+  对角线要多走 `死区 × √2` 才触发，手感在对角方向偏黏。
+- 读取时施加：原始值仍然保留（`gamepad_axis_raw`），诊断界面能并排显示两者。
+
+死区外的区间会被**重新映射**到 0→1，而不是从死区值起跳。配置见 `game.yaml` 的
+`input.gamepad`（默认 `deadzone: 0.15`、`axis_threshold: 0.5`）。
+
+#### 震动（Rumble）
+
+震动走 `Context` 而不是 `InputState`，因为 `Game::update` 拿到的 `input` 是不可变引用：
+
+```rust
+ctx.rumble(1.0, 0.5, 250);          // strong（低频）, weak（高频）, 时长 ms
+ctx.rumble_pad(pad, 1.0, 0.0, 250); // 只震一个手柄
+```
+
+请求是**一次性的，不是持续的**：在事件发生的那一帧调用，不要每帧调（每帧调会不断重触发）。
+不支持力反馈的手柄会被静默跳过。**仅桌面可用** —— Web 上以及不带 `gamepad` feature
+构建时都是 no-op。
+
+**命名说明**：手柄里是两个**偏心配重马达**。大配重转得慢但力大，小配重转得快但力小 ——
+所以「重 = 强 = 低频」是同一个马达的三种说法。各家 API 挑了不同的维度命名：
+
+| | 大马达 | 小马达 |
+|---|---|---|
+| 按力量（Linux evdev / **本引擎**） | `strong` | `weak` |
+| 按频率（SDL） | low-frequency | high-frequency |
+| 按位置（Windows XInput） | 左马达 | 右马达 |
+
+内核头文件 `linux/input.h` 的原话是 `strong_magnitude: magnitude of the heavy motor` /
+`weak_magnitude: magnitude of the light one`，我们沿用这套叫法。
+
+> ⚠️ **`strong` 和 `weak` 是两个独立的物理马达，很多手柄只接了其中一个。**
+> 底层是 evdev `FF_RUMBLE` 的 `strong_magnitude` / `weak_magnitude` 两个字段
+> （Windows/XInput 上对应左右马达）。实测 8BitDo Ultimate Wired 在 Linux 上
+> **只有 `weak` 有反应，`strong` 静默无声** —— 引擎侧 ioctl 是成功的，是设备没接那个马达。
+>
+> 所以：**如果你只想要「一定能感觉到」的震动，两个都给值**，别只设 `strong`：
+> ```rust
+> ctx.rumble(0.8, 0.8, 200);   // ✅ 任意一个马达存在就能感觉到
+> ctx.rumble(0.8, 0.0, 200);   // ⚠️ 在只有 weak 马达的手柄上完全没感觉
+> ```
+> 只有在你**刻意**要区分两种手感（例如低频闷震 vs 高频细颤）时才单独用一个，
+> 并且要接受部分手柄上会没反应。用 `examples/gamepad` 的三个震动按钮可以快速
+> 摸清手上这只手柄接了哪个马达。
 
 ---
 
@@ -236,12 +373,18 @@ assets:                          # 可选，资源声明
     jump: "assets/sfx/jump.wav"
 
 input:                           # 可选，输入映射
+  gamepad:                       # 可选，手柄参数（省略则用引擎默认值）
+    deadzone: 0.15               # 径向摇杆死区
+    axis_threshold: 0.5          # gamepad_axes 视为「按下」的 |轴| 阈值
   actions:
     jump:
       keys: ["Space", "W"]
       mouse_buttons: ["Left"]    # 可选，鼠标按键绑定
+      gamepad_buttons: ["South"] # 可选，手柄按键（Xbox 布局的 A）
     move_left:
-      keys: ["Left", "A"]       # 多键绑定，任一触发
+      keys: ["Left", "A"]        # 多键绑定，任一触发
+      gamepad_buttons: ["DPadLeft"]
+      gamepad_axes: ["LeftStickLeft"]  # 摇杆方向当按键用
 
 debug:                           # 可选，调试配置
   vdp:
@@ -253,7 +396,15 @@ debug:                           # 可选，调试配置
 
 - **资源按名称加载**：在代码中使用 `ctx.assets.texture_id("player")` 或 `ctx.assets.font("ui")` 获取
 - **字体格式**：`"路径:字号"`，如 `"assets/fonts/font.ttf:32"`
-- **Action 映射**：支持键盘和鼠标混合绑定，`input.is_action_just_pressed("jump")` 会同时检查两者
+- **Action 映射**：支持键盘 / 鼠标 / 手柄按键 / 摇杆方向混合绑定，
+  `input.is_action_just_pressed("jump")` 会同时检查全部四类
+- **`gamepad_axes` 写法**：推荐具名式 `LeftStickUp` / `LeftStickDown` /
+  `LeftStickLeft` / `LeftStickRight`（以及 `RightStick*`）；也接受后缀式
+  `LeftStickY+` / `LeftStickX-`。**具名式更不容易写错** —— `LeftStickY+` 要求读者
+  记得 Y 是上为正，`LeftStickUp` 不用。裸轴名（`LeftStickX`）会被拒绝：整条轴不是
+  布尔量，猜方向比丢掉绑定更糟。
+- **未知的绑定名会被静默丢弃**（键盘、鼠标、手柄一致的既有约定），所以拼错
+  `"south"`（小写）只会让该绑定失效，不会报错
 
 ---
 

@@ -18,6 +18,19 @@ pub struct Context {
     /// Public to the engine crate for the take/swap dance, but games
     /// should always go through [`Context::prepare_text`].
     pub pending_text_prep: Vec<(String, String)>,
+
+    /// Queued gamepad rumble requests. Populated by [`Context::rumble`] /
+    /// [`Context::rumble_pad`] during `update`, drained by `GameBridge` via
+    /// `PlatformCallbacks::take_rumble_requests` and applied by the platform's
+    /// gamepad backend.
+    ///
+    /// Rumble has to go through `Context` rather than `InputState` because
+    /// `Game::update` receives `&InputState` (immutable) — this follows the
+    /// same take/swap precedent as `pending_text_prep`.
+    ///
+    /// Public to the engine crate for the take/swap dance; games should always
+    /// go through [`Context::rumble`].
+    pub pending_rumble: Vec<vibe_input::RumbleRequest>,
 }
 
 impl Context {
@@ -44,5 +57,42 @@ impl Context {
         }
         self.pending_text_prep
             .push((font_name.to_string(), text.to_string()));
+    }
+
+    /// Rumble every connected gamepad.
+    ///
+    /// `strong` drives the low-frequency motor and `weak` the high-frequency
+    /// one, both clamped to 0.0..=1.0. A pad with no force-feedback support is
+    /// skipped silently.
+    ///
+    /// Requests are **one-shot, not sticky**: call this on the frame the event
+    /// happens (a hit landed, a wall was struck) rather than every frame.
+    /// Calling it every frame re-triggers the effect continuously.
+    ///
+    /// No-op on web (browsers expose no rumble through the Gamepad API path we
+    /// use) and when the engine is built without the `gamepad` feature.
+    pub fn rumble(&mut self, strong: f32, weak: f32, duration_ms: u32) {
+        self.pending_rumble.push(vibe_input::RumbleRequest {
+            pad: None,
+            strong,
+            weak,
+            duration_ms,
+        });
+    }
+
+    /// Rumble one specific gamepad. See [`Context::rumble`] for the semantics.
+    pub fn rumble_pad(
+        &mut self,
+        pad: vibe_input::GamepadId,
+        strong: f32,
+        weak: f32,
+        duration_ms: u32,
+    ) {
+        self.pending_rumble.push(vibe_input::RumbleRequest {
+            pad: Some(pad),
+            strong,
+            weak,
+            duration_ms,
+        });
     }
 }

@@ -52,6 +52,10 @@ pub struct PhysicsConfig {
 #[derive(Debug, Deserialize)]
 pub struct InputConfig {
     pub actions: HashMap<String, vibe_input::ActionConfig>,
+    /// Optional `input.gamepad` block (deadzone / axis threshold). Omitted
+    /// means engine defaults.
+    #[serde(default)]
+    pub gamepad: Option<vibe_input::GamepadConfig>,
 }
 
 #[derive(Debug, Deserialize)]

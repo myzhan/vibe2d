@@ -6,8 +6,16 @@ license.workspace = true
 description = "AI-friendly 2D game engine"
 
 [features]
-default = ["vdp"]
+default = ["vdp", "gamepad"]
 vdp = ["dep:vibe_debug", "dep:serde_json", "dep:vibe_vdp_macros"]
+# Physical gamepad polling via gilrs (desktop + web). Default-on but
+# strippable: on Linux/BSD gilrs hard-links libudev, which is a new *system*
+# dependency for downstream builders.
+#
+# Note the gamepad API on `InputState` is unconditional — with this feature off,
+# queries simply report nothing and VDP gamepad simulation still works end to
+# end, because that path writes into `InputState` and never touches gilrs.
+gamepad = ["vibe_platform/gamepad"]
 # Tracy profiler integration (default off, native-only). Adds a TracyLayer to
 # the desktop tracing subscriber and cascades frame/zone marks into the loop.
 profiling = [

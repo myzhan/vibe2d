@@ -22,9 +22,19 @@ pub trait PlatformCallbacks {
     fn should_render(&self) -> bool {
         true
     }
-    /// Returns `true` when real keyboard/mouse input should be suppressed
-    /// (e.g. a VDP client is connected and providing simulated input).
+    /// Returns `true` when real keyboard/mouse/gamepad input should be
+    /// suppressed (e.g. a VDP client is connected and providing simulated
+    /// input).
     fn should_suppress_input(&self) -> bool {
         false
+    }
+    /// Drain any gamepad rumble requests the game queued this frame (via
+    /// `Context::rumble`).
+    ///
+    /// Called once per frame *after* `on_update`, so the queue never outlives a
+    /// single frame. The default returns nothing, which keeps every other
+    /// `PlatformCallbacks` implementor source-compatible.
+    fn take_rumble_requests(&mut self) -> Vec<vibe_input::RumbleRequest> {
+        Vec::new()
     }
 }

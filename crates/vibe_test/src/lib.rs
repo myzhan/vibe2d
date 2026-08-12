@@ -216,6 +216,112 @@ impl VdpClient {
         .await
     }
 
+    // ── Gamepad simulation ──────────────────────────────────────────
+    //
+    // The engine defaults `pad` to 0, so the un-suffixed helpers drive the
+    // virtual pad 0; the `_on` variants take an explicit index for
+    // local-multiplayer tests.
+    //
+    // Note these work regardless of whether the engine was built with the
+    // `gamepad` feature: simulated input writes straight into `InputState` and
+    // never touches gilrs.
+
+    pub async fn simulate_gamepad_connect(&mut self, pad: u32, name: &str) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "connect", "pad": pad, "name": name }),
+        )
+        .await
+    }
+
+    pub async fn simulate_gamepad_disconnect(&mut self, pad: u32) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "disconnect", "pad": pad }),
+        )
+        .await
+    }
+
+    pub async fn simulate_gamepad_press(&mut self, button: &str) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "press", "button": button }),
+        )
+        .await
+    }
+
+    pub async fn simulate_gamepad_release(&mut self, button: &str) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "release", "button": button }),
+        )
+        .await
+    }
+
+    /// Press now, auto-release next frame (the gamepad analogue of
+    /// `simulate_key_tap`).
+    pub async fn simulate_gamepad_tap(&mut self, button: &str) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "tap", "button": button }),
+        )
+        .await
+    }
+
+    /// Set a button's analog value (0.0..=1.0) — meaningful for the triggers.
+    pub async fn simulate_gamepad_button_value(
+        &mut self,
+        button: &str,
+        value: f32,
+    ) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "value", "button": button, "value": value }),
+        )
+        .await
+    }
+
+    /// Set a stick axis (-1.0..=1.0). Remember Y is up-positive.
+    pub async fn simulate_gamepad_axis(&mut self, axis: &str, value: f32) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "axis", "axis": axis, "value": value }),
+        )
+        .await
+    }
+
+    pub async fn simulate_gamepad_press_on(&mut self, pad: u32, button: &str) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "press", "pad": pad, "button": button }),
+        )
+        .await
+    }
+
+    pub async fn simulate_gamepad_release_on(&mut self, pad: u32, button: &str) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({ "device": "gamepad", "action": "release", "pad": pad, "button": button }),
+        )
+        .await
+    }
+
+    pub async fn simulate_gamepad_axis_on(
+        &mut self,
+        pad: u32,
+        axis: &str,
+        value: f32,
+    ) -> Result<Value> {
+        self.call_ok(
+            "engine.simulateInput",
+            json!({
+                "device": "gamepad", "action": "axis",
+                "pad": pad, "axis": axis, "value": value,
+            }),
+        )
+        .await
+    }
+
     // ── UI methods ──────────────────────────────────────────────────
 
     /// Returns the raw `widgets` array from `ui.listWidgets`.
@@ -299,6 +405,10 @@ pub struct LaunchOptions<'a> {
     /// If `Some`, sets `CARGO_TARGET_DIR` for the child — useful in CI to
     /// reuse a shared build cache.
     pub target_dir: Option<PathBuf>,
+    /// Pass `--no-default-features` to the child `cargo run`.
+    pub no_default_features: bool,
+    /// Features to enable explicitly (`--features a,b`).
+    pub features: &'a [&'a str],
 }
 
 impl<'a> LaunchOptions<'a> {
@@ -308,7 +418,26 @@ impl<'a> LaunchOptions<'a> {
             port,
             ready_timeout: Duration::from_secs(180),
             target_dir: None,
+            no_default_features: false,
+            features: &[],
         }
+    }
+
+    /// Build the game under test with `--no-default-features`.
+    ///
+    /// Useful for pinning a deterministic feature set: e.g. a test that asserts
+    /// on gamepad state wants `gamepad` OFF so a controller physically attached
+    /// to the developer's machine can't be enumerated into the assertions.
+    pub fn without_default_features(mut self) -> Self {
+        self.no_default_features = true;
+        self
+    }
+
+    /// Enable specific features (combine with [`Self::without_default_features`]
+    /// to get an exact set).
+    pub fn with_features(mut self, features: &'a [&'a str]) -> Self {
+        self.features = features;
+        self
     }
 }
 
@@ -326,6 +455,12 @@ impl GameHarness {
             .env("RUST_LOG", "warn")
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        if opts.no_default_features {
+            cmd.arg("--no-default-features");
+        }
+        if !opts.features.is_empty() {
+            cmd.args(["--features", &opts.features.join(",")]);
+        }
         if let Some(dir) = &opts.target_dir {
             cmd.env("CARGO_TARGET_DIR", dir);
         }

@@ -31,7 +31,9 @@ vibe2d/
 │   │       ├── texture.rs      # Texture、TextureId
 │   │       └── sprite.wgsl     # 顶点/片段着色器
 │   ├── vibe_platform/          # 平台抽象层（winit + wgpu 桌面端）
-│   ├── vibe_input/             # InputState + action 映射（键盘 + 鼠标）
+│   │   └── src/
+│   │       └── gamepad.rs      # gilrs → vibe_input 翻译 + 震动播放（`gamepad` feature）
+│   ├── vibe_input/             # InputState + action 映射（键盘 + 鼠标 + 手柄）
 │   ├── vibe_asset/             # AssetManager（纹理、字体，名称→ID 查找）
 │   ├── vibe_audio/             # AudioEngine（rodio，WAV 播放）
 │   ├── vibe_debug/             # VDP WebSocket 服务（tokio，JSON-RPC 2.0）
@@ -62,7 +64,8 @@ vibe2d/
 │   ├── tetris/                 # 俄罗斯方块
 │   ├── mari0/                  # 马里奥风格游戏
 │   ├── ui/                     # UI 系统演示
-│   └── aoi-demo/               # AOI 演示：移动圆 + 散点 + Observer enter/leave
+│   ├── aoi-demo/               # AOI 演示：移动圆 + 散点 + Observer enter/leave
+│   └── gamepad/                # 手柄测试器（按键网格 / 摇杆 / 扳机 / action / 震动）
 ├── docs/
 │   ├── architecture.md         # 详细架构文档
 │   ├── vdp.md                  # VDP 协议规范
@@ -79,8 +82,8 @@ vibe2d/
   ├── [dependencies]
   │     ├── vibe2d
   │     │     ├── vibe_render      （wgpu 渲染）
-  │     │     ├── vibe_platform    （winit 窗口/事件循环）
-  │     │     ├── vibe_input       （键盘/鼠标状态）
+  │     │     ├── vibe_platform    （winit 窗口/事件循环；可选 gilrs 手柄轮询）
+  │     │     ├── vibe_input       （键盘/鼠标/手柄状态）
   │     │     ├── vibe_asset       （纹理/字体加载）
   │     │     ├── vibe_audio       （rodio 音效播放）
   │     │     ├── vibe_ui          （即时模式 UI）
@@ -183,6 +186,30 @@ Feature 级联：游戏 crate → `vibe2d/vdp` → `vibe_debug` + `serde_json`
 | `vibe_test` | 启用 VDP 客户端 + 进程 harness（测试工具库） |
 | 游戏 crate | 级联开启 `vibe2d/vdp` + `serde_json` |
 
+### `gamepad`（默认启用，可编译时剥离）
+
+通过 [gilrs](https://gitlab.com/gilrs-project/gilrs) 提供手柄输入（按键 / 摇杆 / 扳机 /
+连接断开 / 震动）。桌面与 Web 共用同一个 crate（Web 走 `navigator.getGamepads()`）。
+
+```bash
+cargo build                                   # 手柄启用（默认）
+cargo build --no-default-features             # 剥离手柄（同时也剥离 vdp）
+cargo build -p vibe2d --no-default-features --features gamepad   # 只要手柄
+```
+
+**为什么留了剥离开关**：gilrs 在 Linux/BSD 上硬链 `libudev`，这是给所有下游引入的
+**新系统依赖**（CI 需要 `libudev-dev`），所以必须留逃生口。
+
+| Crate | `gamepad` feature 含义 |
+|-------|----------------------|
+| `vibe_platform` | 启用 gilrs 轮询后端（`src/gamepad.rs`）。**刻意不进 `default`** —— `vibe2d` 以默认 feature 依赖它，放进 default 这个门就永远剥不掉了 |
+| `vibe2d` | 级联开启 `vibe_platform/gamepad` |
+| 游戏 crate | 级联开启 `vibe2d/gamepad` |
+
+**关键性质**：`InputState` 上的手柄 API 是**无条件**的（不依赖 gilrs）。关掉 feature 时
+所有查询返回 `false`/`0.0`/空，而 **VDP 手柄模拟依然端到端可用**（它直接写 `InputState`）。
+所以没有实体手柄、没有 libudev 的机器照样能跑完整的手柄测试。
+
 ### `profiling`（默认**关闭**，Tracy Profiler）
 
 集成 [Tracy](https://github.com/wolfpld/tracy) 帧性能分析器，用于查看每帧耗时及 update / render / draw / GPU 各阶段占比。默认关闭，开启后仅编译进桌面构建（wasm 上为 no-op）。
@@ -279,7 +306,9 @@ Feature 级联：
 2. 在 `crates/vibe2d/Cargo.toml` 中添加依赖
 3. 在 `Context` 中添加字段（`crates/vibe2d/src/context.rs`）
 4. 在 `GameBridge` 中添加字段（`crates/vibe2d/src/lib.rs`）
-5. 在三个 take/swap 位置都包含该字段：`on_init()`、`on_update()`、`on_render()`
+5. 在**四个** take/swap 位置都包含该字段：`on_init()`、`on_update()` 的
+   **stepAndInspect 快进循环**、`on_update()` 的常规路径、`on_render()`。
+   漏掉快进那一处不会报错，但 VDP `stepAndInspect` 会静默丢弃该字段的改动
 6. 如果是用户可见的 API，在 `prelude` 中重新导出（`crates/vibe2d/src/lib.rs`）
 
 ### 添加新 VDP 方法
@@ -397,8 +426,21 @@ Vibe2D 分两层：
    anyhow.workspace = true
    serde_json.workspace = true
    ```
-2. 确保 `game.yaml` 中 `debug.vdp.enabled: true`，并使用**独立端口**避免与其他 example 冲突（如 flappy-bird=9229、ui-demo=9230、tetris=9231……）。
+2. 确保 `game.yaml` 中 `debug.vdp.enabled: true`，并使用**独立端口**避免与其他 example 冲突
+   （ui-demo=9230、aoi-demo=9232、gamepad-tester=9233；flappy-bird / tetris / mari0 目前
+   都用 9229，串行跑测试时才没暴露成问题）。
 3. 在 `examples/<game>/tests/<name>.rs` 中写 `#[tokio::test(flavor = "multi_thread")] #[ignore]` 测试，用 `vibe_test::GameHarness::launch("<game>", <port>)` 启动进程并拿到一个带 VDP 客户端的 harness。
+   **断言依赖某个 feature 的状态时，用 `LaunchOptions` 把 feature 集钉死**，
+   否则测试会受开发机环境影响：
+   ```rust
+   GameHarness::launch_with(
+       LaunchOptions::new("my-game", 9233)
+           .without_default_features()
+           .with_features(&["vdp"]),
+   ).await?
+   ```
+   典型例子是手柄：`gamepad` 开着时，插在开发机上的真实手柄会在启动时被枚举进来，
+   把 `pad_count == 1` 这类断言顶成 2（详见 [docs/vdp.md](docs/vdp.md) 的「模拟手柄与真实手柄会撞 id」）。
 4. 运行：`cargo test -p <game> -- --ignored --test-threads=1`（必须串行，因为 harness 占用固定 VDP 端口）。
 
 参考样例见 `examples/ui/tests/vdp_ui.rs`。

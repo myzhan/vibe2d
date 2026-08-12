@@ -43,12 +43,15 @@ jobs:
       - name: Cache cargo registry + build artifacts
         uses: Swatinem/rust-cache@v2
 
-      # Linux needs ALSA headers for vibe_audio (rodio → cpal → alsa-sys).
-      - name: Install Linux audio deps
+      # Linux needs ALSA headers for vibe_audio (rodio → cpal → alsa-sys) and
+      # libudev headers for the `gamepad` feature (gilrs → gilrs-core →
+      # libudev-sys). Both are default-on features, so `cargo test --workspace`
+      # needs them. macOS needs neither.
+      - name: Install Linux system deps
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev
+          sudo apt-get install -y libasound2-dev libudev-dev
 
       - name: Run unit tests
         # --workspace: every crate in the workspace
@@ -87,10 +90,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install Linux audio deps
+      - name: Install Linux system deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev
+          sudo apt-get install -y libasound2-dev libudev-dev
       - name: Clippy on engine crates + cli
         # See the `test` job for why we don't pass --locked.
         run: |
@@ -108,13 +111,24 @@ jobs:
             -p vibe_test \
             -p vibe-cli \
             --all-targets -- -D warnings
+      # `vibe_platform` above is linted with `gamepad` OFF (it's deliberately
+      # not in that crate's default set — see AGENTS.md), so the gilrs-facing
+      # code would otherwise never be linted at all.
+      - name: Clippy with the gamepad backend enabled
+        run: |
+          cargo clippy -p vibe2d --features gamepad --all-targets -- -D warnings
+          cargo clippy -p vibe_platform --features gamepad --all-targets -- -D warnings
 
-  # ── Release build without VDP ────────────────────────────────
-  # Confirms the `--no-default-features` path (VDP stripped) still compiles.
-  # AGENTS.md mandates testing this whenever feature gating changes,
+  # ── Release build without VDP / gamepad ──────────────────────
+  # Confirms the `--no-default-features` path (VDP *and* gamepad stripped) still
+  # compiles. AGENTS.md mandates testing this whenever feature gating changes,
   # and running it on every push catches regressions cheaply.
+  #
+  # Deliberately does NOT install libudev-dev: stripping `gamepad` must remove
+  # the gilrs dependency entirely, so this job doubles as proof that the escape
+  # hatch actually works on a machine without libudev headers.
   no-default-features:
-    name: Build without VDP
+    name: Build without VDP or gamepad
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

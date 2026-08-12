@@ -1,12 +1,14 @@
 [package]
-name = "tetris"
+name = "gamepad-tester"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [features]
-# Examples don't inherit vibe2d's default features (the root Cargo.toml pins
-# `default-features = false`), so `gamepad` has to be opted into explicitly.
+# `gamepad` is in `default` because a hardware tester that can't read hardware
+# is pointless. Note it pulls libudev headers in on Linux — strip it with
+# --no-default-features and the VDP integration tests still pass, since
+# simulated input writes straight into InputState and never touches gilrs.
 default = ["vdp", "gamepad"]
 vdp = ["vibe2d/vdp", "dep:serde_json", "dep:serde"]
 gamepad = ["vibe2d/gamepad"]
@@ -15,12 +17,16 @@ profiling-callstacks = ["vibe2d/profiling-callstacks"]
 
 [dependencies]
 vibe2d = { workspace = true }
-rand.workspace = true
 tracing.workspace = true
 serde_json = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-getrandom.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
+
+[dev-dependencies]
+vibe_test = { workspace = true, features = ["vdp"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+anyhow.workspace = true
+serde_json.workspace = true

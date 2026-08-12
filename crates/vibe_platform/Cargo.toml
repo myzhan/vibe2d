@@ -9,6 +9,12 @@ license.workspace = true
 profiling = ["dep:tracy-client"]
 # Capture a Rust call stack for every zone (extra per-frame overhead).
 profiling-callstacks = ["profiling"]
+# Physical gamepad polling via gilrs.
+#
+# Deliberately NOT in a `default` set here: `vibe2d` depends on this crate with
+# default features on, so a default-on feature would be unconditionally enabled
+# and the gate would be a fiction. `vibe2d/gamepad` turns it on instead.
+gamepad = ["dep:gilrs"]
 
 [dependencies]
 vibe_render = { workspace = true }
@@ -17,6 +23,9 @@ wgpu.workspace = true
 winit.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
+# Works on desktop AND wasm32 (gilrs-core has a web-sys Gamepad backend), so
+# one dependency covers both platforms.
+gilrs = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster.workspace = true

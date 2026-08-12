@@ -1,6 +1,10 @@
 mod common;
 pub use common::{PlatformCallbacks, PlatformConfig};
 
+/// gilrs-backed gamepad polling, shared by the desktop and web backends.
+#[cfg(feature = "gamepad")]
+mod gamepad;
+
 #[cfg(not(target_arch = "wasm32"))]
 mod desktop;
 #[cfg(not(target_arch = "wasm32"))]

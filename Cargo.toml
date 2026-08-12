@@ -19,6 +19,7 @@ members = [
     "examples/mari0",
     "examples/ui",
     "examples/aoi-demo",
+    "examples/gamepad",
 ]
 
 [workspace.package]
@@ -44,6 +45,9 @@ vibe_test = { path = "crates/vibe_test" }
 # External dependencies
 wgpu = { version = "24", default-features = false, features = ["wgsl"] }
 winit = "0.30"
+# Gamepad input. Default features keep the modern `wgi` Windows backend, which
+# only pulls the `windows` crate on Windows targets.
+gilrs = "0.11"
 image = { version = "0.25", default-features = false, features = ["png"] }
 glam = "0.29"
 serde = { version = "1", features = ["derive"] }

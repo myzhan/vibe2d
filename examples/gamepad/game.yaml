@@ -1,0 +1,66 @@
+meta:
+  name: "Gamepad Tester"
+  version: "0.1.0"
+
+window:
+  width: 1280
+  height: 720
+  title: "Gamepad Tester - Vibe2D"
+  vsync: true
+
+virtual_resolution:
+  # Pinned 1:1 to the window on purpose. Most examples render at half resolution
+  # and let the engine upscale, but this screen is almost entirely small text —
+  # at 2x every glyph gets resampled and turns mushy. There's no pixel art here
+  # that wants chunky scaling, so 1:1 is pure win for legibility.
+  width: 1280
+  height: 720
+
+assets:
+  fonts:
+    title: "assets/fonts/ui.ttf:28"
+    body: "assets/fonts/ui.ttf:20"
+    small: "assets/fonts/ui.ttf:16"
+
+input:
+  gamepad:
+    # Radial stick deadzone. Runtime-tunable via `tester.setDeadzone` — the
+    # tester applies it at read time, so changes show up immediately.
+    deadzone: 0.15
+    # |axis| past which a `gamepad_axes` binding counts as pressed.
+    axis_threshold: 0.5
+
+  actions:
+    # Bindings are mixed on purpose: the action readout panel proves that
+    # keyboard, d-pad and analog stick all feed the SAME action name.
+    move_left:
+      keys: ["Left", "A"]
+      gamepad_buttons: ["DPadLeft"]
+      gamepad_axes: ["LeftStickLeft"]
+    move_right:
+      keys: ["Right", "D"]
+      gamepad_buttons: ["DPadRight"]
+      gamepad_axes: ["LeftStickRight"]
+    jump:
+      keys: ["Space"]
+      gamepad_buttons: ["South"] # "A" on an Xbox-layout pad
+    fire:
+      # Analog trigger, viewed digitally. The trigger bar below shows the
+      # analog reading for the same physical input.
+      gamepad_buttons: ["RightTrigger"]
+    aim_up:
+      # Y is up-positive, so "Up" == "RightStickY+".
+      gamepad_axes: ["RightStickUp"]
+    pause:
+      keys: ["Escape"]
+      gamepad_buttons: ["Start"]
+    cycle_pad:
+      keys: ["Tab"]
+      gamepad_buttons: ["Select"]
+
+debug:
+  vdp:
+    enabled: true
+    # 9229 = flappy-bird / tetris / mari0, 9230 = ui-demo, 9231 reserved,
+    # 9232 = aoi-demo.
+    port: 9233

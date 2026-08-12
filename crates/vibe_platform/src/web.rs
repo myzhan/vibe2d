@@ -23,6 +23,9 @@ struct App<C: PlatformCallbacks> {
     input: InputState,
     last_frame: Option<Instant>,
     initialized: bool,
+    /// gilrs works on wasm32 too, reading `navigator.getGamepads()`.
+    #[cfg(feature = "gamepad")]
+    gamepad: Option<crate::gamepad::GamepadBackend>,
 }
 
 impl<C: PlatformCallbacks + 'static> ApplicationHandler for App<C> {
@@ -252,6 +255,20 @@ impl<C: PlatformCallbacks + 'static> ApplicationHandler for App<C> {
                 };
                 self.last_frame = Some(now);
 
+                // Poll gamepads before `on_update`, for the same reason as on
+                // desktop: `begin_frame()` runs at the end of the previous frame
+                // (below), so events drained here are visible to `game.update`
+                // this frame with correct edges. The suppression flag is passed
+                // in rather than guarding the call, so the queue still drains
+                // while a VDP client is driving input.
+                #[cfg(feature = "gamepad")]
+                {
+                    let suppressed = self.callbacks.should_suppress_input();
+                    if let Some(gamepad) = &mut self.gamepad {
+                        gamepad.pump(&mut self.input, suppressed);
+                    }
+                }
+
                 // Update
                 self.callbacks.on_update(dt, &mut self.input);
 
@@ -266,6 +283,16 @@ impl<C: PlatformCallbacks + 'static> ApplicationHandler for App<C> {
                         tracing::error!("Render error: {}", e);
                     }
                 }
+
+                // Drain the game's rumble queue and discard it.
+                //
+                // Rumble is a documented desktop-only capability: gilrs-core's
+                // wasm `FfDevice::set_ff_state` is an empty stub and the
+                // force-feedback server thread is `cfg`-ed out on wasm, so
+                // `EffectBuilder::finish` would send into a dead channel. We
+                // still take the requests so the game-side queue stays bounded
+                // to one frame instead of growing forever.
+                let _ = self.callbacks.take_rumble_requests();
 
                 // Clear per-frame input after update
                 self.input.begin_frame();
@@ -287,9 +314,15 @@ impl<C: PlatformCallbacks + 'static> ApplicationHandler for App<C> {
 pub fn run_web<C: PlatformCallbacks + 'static>(
     config: PlatformConfig,
     callbacks: C,
-    input: InputState,
+    #[allow(unused_mut)] mut input: InputState,
 ) -> Result<()> {
     let event_loop = EventLoop::new()?;
+
+    // Seeds pads the browser already knows about. (In practice browsers hide
+    // gamepads until the first button press for fingerprinting reasons, so on
+    // web most pads arrive later as `Connected` events instead.)
+    #[cfg(feature = "gamepad")]
+    let gamepad = crate::gamepad::GamepadBackend::new(&mut input);
 
     let app = App {
         config,
@@ -299,6 +332,8 @@ pub fn run_web<C: PlatformCallbacks + 'static>(
         input,
         last_frame: None,
         initialized: false,
+        #[cfg(feature = "gamepad")]
+        gamepad,
     };
 
     // On web, spawn() integrates with the browser event loop (rAF).

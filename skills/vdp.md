@@ -48,6 +48,10 @@ vibe rpc engine.simulateInput '{"device": "keyboard", "action": "tap", "key": "S
 vibe rpc engine.simulateInput '{"device": "mouse", "action": "move", "x": 256, "y": 144}'
 vibe rpc engine.simulateInput '{"device": "mouse", "action": "click", "button": "Left"}'
 
+# Simulate gamepad input (buttons are positional: South = Xbox "A")
+vibe rpc engine.simulateInput '{"device": "gamepad", "action": "tap", "button": "South"}'
+vibe rpc engine.simulateInput '{"device": "gamepad", "action": "axis", "axis": "LeftStickX", "value": -1.0}'
+
 # Get game state
 vibe rpc game.inspect
 
@@ -95,7 +99,7 @@ VDP uses WebSocket + JSON-RPC 2.0 on `ws://127.0.0.1:9229`.
 | `engine.resume` | — | Resume game loop |
 | `engine.step` | `{"frames": N}` | Execute N frames while paused (default 1) |
 | `engine.getTime` | — | Get frame count + elapsed time |
-| `engine.simulateInput` | see below | Inject keyboard/mouse input |
+| `engine.simulateInput` | see below | Inject keyboard/mouse/gamepad input |
 | `engine.screenshot` | `{"path": "..."}` | Save screenshot to file |
 | `game.inspect` | — | Full game state JSON |
 
@@ -112,8 +116,29 @@ Mouse:
 {"device": "mouse", "action": "press|release|click", "button": "Left"}
 ```
 
+Gamepad (`pad` defaults to 0):
+```json
+{"device": "gamepad", "action": "press|release|tap", "button": "South"}
+{"device": "gamepad", "action": "value", "button": "RightTrigger", "value": 0.75}
+{"device": "gamepad", "action": "axis", "axis": "LeftStickX", "value": -1.0}
+{"device": "gamepad", "action": "connect", "pad": 0, "name": "Test Pad"}
+{"device": "gamepad", "action": "disconnect", "pad": 0}
+```
+
 - `tap` = press this frame, auto-release next frame
 - `click` = press this frame, auto-release next frame (mouse equivalent of tap)
+- Gamepad buttons are named by **position**, not by printed label: `South`/`East`/
+  `West`/`North` (Xbox aliases `A`/`B`/`X`/`Y` also accepted), plus
+  `LeftShoulder`/`RightShoulder`, `LeftTrigger`/`RightTrigger`, `Select`/`Start`/`Mode`,
+  `LeftThumb`/`RightThumb`, `DPadUp`/`DPadDown`/`DPadLeft`/`DPadRight`
+- Axes are `LeftStickX`/`LeftStickY`/`RightStickX`/`RightStickY`, range −1..1.
+  **Y is up-positive** (SDL convention), the opposite of y-down screen space
+- No `connect` needed first — `press`/`axis`/`value` auto-create the pad. Use
+  `connect` only to set a display name
+- `value` records the analog reading only; it does **not** synthesize a digital
+  press (that would double-fire `just_pressed` on real hardware)
+- Gamepad simulation works **without** the `gamepad` feature: it writes directly
+  into `InputState` and never touches gilrs
 
 ### Game-specific Methods (Flappy Bird)
 

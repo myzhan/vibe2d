@@ -54,7 +54,9 @@ pub mod prelude {
     pub use crate::run_web;
     pub use crate::screen::Screen;
     pub use glam::Vec2;
-    pub use vibe_input::InputState;
+    pub use vibe_input::{
+        AxisDir, AxisSpec, GamepadAxis, GamepadButton, GamepadId, InputState, RumbleRequest,
+    };
     pub use vibe_render::{Renderer, TextureId};
     pub use vibe_ui::{
         Anchor, ButtonStyle, LayoutDirection, PanelStyle, ScrollListStyle, Style, TextInputStyle,
@@ -127,7 +129,19 @@ enum SimulatedInput {
     MouseButtonPress(vibe_input::MouseButton),
     MouseButtonRelease(vibe_input::MouseButton),
     MouseButtonClick(vibe_input::MouseButton),
+    // Gamepad
+    GamepadConnect(vibe_input::GamepadId, String),
+    GamepadDisconnect(vibe_input::GamepadId),
+    GamepadButtonPress(vibe_input::GamepadId, vibe_input::GamepadButton),
+    GamepadButtonRelease(vibe_input::GamepadId, vibe_input::GamepadButton),
+    GamepadButtonTap(vibe_input::GamepadId, vibe_input::GamepadButton),
+    GamepadButtonValue(vibe_input::GamepadId, vibe_input::GamepadButton, f32),
+    GamepadAxisValue(vibe_input::GamepadId, vibe_input::GamepadAxis, f32),
 }
+
+/// Pad targeted by `engine.simulateInput` when no `pad` field is given.
+#[cfg(feature = "vdp")]
+const VDP_DEFAULT_PAD: vibe_input::GamepadId = vibe_input::GamepadId::new(0);
 
 #[cfg(feature = "vdp")]
 struct PendingStepInspect {
@@ -181,6 +195,9 @@ pub fn run<G: Game + 'static>(config_path: &str) {
     let mut input_state = vibe_input::InputState::new();
     if let Some(ref input_cfg) = config.input {
         input_state.load_actions(&input_cfg.actions);
+        if let Some(ref gamepad_cfg) = input_cfg.gamepad {
+            input_state.configure_gamepad(gamepad_cfg);
+        }
     }
 
     // Start VDP server if configured
@@ -224,6 +241,7 @@ pub fn run<G: Game + 'static>(config_path: &str) {
         virtual_height,
         pending_screenshot: None,
         pending_text_prep: Vec::new(),
+        pending_rumble: Vec::new(),
         #[cfg(feature = "vdp")]
         vdp: vdp_channel,
         #[cfg(feature = "vdp")]
@@ -244,6 +262,8 @@ pub fn run<G: Game + 'static>(config_path: &str) {
         pending_key_auto_releases: Vec::new(),
         #[cfg(feature = "vdp")]
         pending_mouse_auto_releases: Vec::new(),
+        #[cfg(feature = "vdp")]
+        pending_gamepad_auto_releases: Vec::new(),
         #[cfg(feature = "vdp")]
         pending_step_inspect: None,
         #[cfg(feature = "vdp")]
@@ -292,6 +312,9 @@ pub async fn run_web<G: Game + 'static>(config_yaml_url: &str) {
     let mut input_state = vibe_input::InputState::new();
     if let Some(ref input_cfg) = config.input {
         input_state.load_actions(&input_cfg.actions);
+        if let Some(ref gamepad_cfg) = input_cfg.gamepad {
+            input_state.configure_gamepad(gamepad_cfg);
+        }
     }
 
     let platform_config = vibe_platform::PlatformConfig {
@@ -329,6 +352,7 @@ pub async fn run_web<G: Game + 'static>(config_yaml_url: &str) {
         virtual_width,
         virtual_height,
         pending_text_prep: Vec::new(),
+        pending_rumble: Vec::new(),
         asset_bundle: Some(bundle),
         #[cfg(feature = "vdp")]
         vdp: vdp_channel,
@@ -350,6 +374,8 @@ pub async fn run_web<G: Game + 'static>(config_yaml_url: &str) {
         pending_key_auto_releases: Vec::new(),
         #[cfg(feature = "vdp")]
         pending_mouse_auto_releases: Vec::new(),
+        #[cfg(feature = "vdp")]
+        pending_gamepad_auto_releases: Vec::new(),
         #[cfg(feature = "vdp")]
         pending_step_inspect: None,
         #[cfg(feature = "vdp")]
@@ -443,6 +469,11 @@ struct GameBridge<G: Game> {
     /// [`Context::prepare_text`] and [`flush_text_prep`].
     pending_text_prep: Vec<(String, String)>,
 
+    /// Carries rumble requests from `update` out to the platform's gamepad
+    /// backend via `PlatformCallbacks::take_rumble_requests`. See
+    /// [`Context::rumble`].
+    pending_rumble: Vec<vibe_input::RumbleRequest>,
+
     // ── VDP fields ──
     #[cfg(feature = "vdp")]
     vdp: Option<vibe_debug::VdpChannel>,
@@ -464,6 +495,8 @@ struct GameBridge<G: Game> {
     pending_key_auto_releases: Vec<vibe_input::KeyCode>,
     #[cfg(feature = "vdp")]
     pending_mouse_auto_releases: Vec<vibe_input::MouseButton>,
+    #[cfg(feature = "vdp")]
+    pending_gamepad_auto_releases: Vec<(vibe_input::GamepadId, vibe_input::GamepadButton)>,
     #[cfg(feature = "vdp")]
     pending_step_inspect: Option<PendingStepInspect>,
     #[cfg(feature = "vdp")]
@@ -591,6 +624,7 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             virtual_width: self.virtual_width,
             virtual_height: self.virtual_height,
             pending_text_prep: Vec::new(),
+            pending_rumble: Vec::new(),
         };
 
         // Hand the renderer to `Game::new` so it can build its own
@@ -607,9 +641,14 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
         self.assets = ctx.assets;
         self.audio = ctx.audio;
         self.ui_state = ctx.ui_state;
+        self.pending_rumble = ctx.pending_rumble;
     }
 
     fn on_input_event(&mut self, _input: &mut vibe_input::InputState) {}
+
+    fn take_rumble_requests(&mut self) -> Vec<vibe_input::RumbleRequest> {
+        std::mem::take(&mut self.pending_rumble)
+    }
 
     #[cfg(feature = "vdp")]
     fn should_suppress_input(&self) -> bool {
@@ -628,6 +667,9 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             }
             for btn in self.pending_mouse_auto_releases.drain(..) {
                 input.on_mouse_button_released(btn);
+            }
+            for (pad, btn) in self.pending_gamepad_auto_releases.drain(..) {
+                input.on_gamepad_button_released(pad, btn);
             }
 
             // 2. Process VDP requests (may queue simulated inputs, modify paused/step_frames)
@@ -648,6 +690,9 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
                         for btn in self.pending_mouse_auto_releases.drain(..) {
                             input.on_mouse_button_released(btn);
                         }
+                        for (pad, btn) in self.pending_gamepad_auto_releases.drain(..) {
+                            input.on_gamepad_button_released(pad, btn);
+                        }
                         input.begin_frame();
                     }
 
@@ -659,11 +704,13 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
                             virtual_width: self.virtual_width,
                             virtual_height: self.virtual_height,
                             pending_text_prep: std::mem::take(&mut self.pending_text_prep),
+                            pending_rumble: std::mem::take(&mut self.pending_rumble),
                         };
                         game.update(&mut ctx, dt_step, input);
                         // Carry queued text prep over to the render phase
                         // (we don't have a Renderer here in `on_update`).
                         self.pending_text_prep = ctx.pending_text_prep;
+                        self.pending_rumble = ctx.pending_rumble;
                         self.assets = ctx.assets;
                         self.audio = ctx.audio;
                         self.ui_state = ctx.ui_state;
@@ -690,27 +737,13 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
                 // 3. Determine if game.update will run this frame
                 let will_update = !self.paused || self.step_frames > 0;
 
-                // 4. If updating, inject simulated inputs
+                // 4. If updating, inject simulated inputs.
+                //
+                // Same code path as the stepAndInspect fast-forward branch
+                // above: a new `SimulatedInput` variant must only ever need
+                // handling in `inject_simulated_inputs`.
                 if will_update {
-                    for sim in self.pending_simulated.drain(..) {
-                        match sim {
-                            SimulatedInput::KeyPress(k) => input.on_key_pressed(k),
-                            SimulatedInput::KeyRelease(k) => input.on_key_released(k),
-                            SimulatedInput::KeyTap(k) => {
-                                input.on_key_pressed(k);
-                                self.pending_key_auto_releases.push(k);
-                            }
-                            SimulatedInput::MouseMove(x, y) => input.on_mouse_moved(x, y),
-                            SimulatedInput::MouseButtonPress(b) => input.on_mouse_button_pressed(b),
-                            SimulatedInput::MouseButtonRelease(b) => {
-                                input.on_mouse_button_released(b)
-                            }
-                            SimulatedInput::MouseButtonClick(b) => {
-                                input.on_mouse_button_pressed(b);
-                                self.pending_mouse_auto_releases.push(b);
-                            }
-                        }
-                    }
+                    self.inject_simulated_inputs(input);
                 }
 
                 // 5. Compute effective dt
@@ -748,11 +781,13 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
                     virtual_width: self.virtual_width,
                     virtual_height: self.virtual_height,
                     pending_text_prep: std::mem::take(&mut self.pending_text_prep),
+                    pending_rumble: std::mem::take(&mut self.pending_rumble),
                 };
                 game.update(&mut ctx, effective_dt, input);
                 game.update_ui(&mut ctx, input);
                 // Carry queued text prep over to the render phase.
                 self.pending_text_prep = ctx.pending_text_prep;
+                self.pending_rumble = ctx.pending_rumble;
                 self.assets = ctx.assets;
                 self.audio = ctx.audio;
                 self.ui_state = ctx.ui_state;
@@ -784,6 +819,7 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
                 virtual_width: self.virtual_width,
                 virtual_height: self.virtual_height,
                 pending_text_prep: std::mem::take(&mut self.pending_text_prep),
+                pending_rumble: std::mem::take(&mut self.pending_rumble),
             };
 
             // Flush any pending font glyph preparation **before** drawing,
@@ -804,6 +840,7 @@ impl<G: Game> vibe_platform::PlatformCallbacks for GameBridge<G> {
             self.assets = ctx.assets;
             self.audio = ctx.audio;
             self.ui_state = ctx.ui_state;
+            self.pending_rumble = ctx.pending_rumble;
         }
 
         // Web screenshot: start GPU capture after draw commands are queued,
@@ -1399,11 +1436,14 @@ impl<G: Game> GameBridge<G> {
                 ),
             },
 
-            "gamepad" => vibe_debug::VdpResponse::error(
-                req.id.clone(),
-                -32000,
-                "Gamepad simulation not yet supported",
-            ),
+            "gamepad" => match parse_gamepad_simulated_input(&req.params, action) {
+                Ok(sim) => {
+                    let echo = gamepad_echo(&req.params, action);
+                    self.pending_simulated.push(sim);
+                    vibe_debug::VdpResponse::success(req.id.clone(), echo)
+                }
+                Err(reason) => vibe_debug::VdpResponse::error(req.id.clone(), -32602, reason),
+            },
 
             _ => vibe_debug::VdpResponse::error(
                 req.id.clone(),
@@ -1429,6 +1469,24 @@ impl<G: Game> GameBridge<G> {
                 SimulatedInput::MouseButtonClick(b) => {
                     input.on_mouse_button_pressed(b);
                     self.pending_mouse_auto_releases.push(b);
+                }
+                SimulatedInput::GamepadConnect(pad, name) => input.on_gamepad_connected(pad, name),
+                SimulatedInput::GamepadDisconnect(pad) => input.on_gamepad_disconnected(pad),
+                SimulatedInput::GamepadButtonPress(pad, b) => {
+                    input.on_gamepad_button_pressed(pad, b)
+                }
+                SimulatedInput::GamepadButtonRelease(pad, b) => {
+                    input.on_gamepad_button_released(pad, b)
+                }
+                SimulatedInput::GamepadButtonTap(pad, b) => {
+                    input.on_gamepad_button_pressed(pad, b);
+                    self.pending_gamepad_auto_releases.push((pad, b));
+                }
+                SimulatedInput::GamepadButtonValue(pad, b, v) => {
+                    input.on_gamepad_button_value(pad, b, v)
+                }
+                SimulatedInput::GamepadAxisValue(pad, a, v) => {
+                    input.on_gamepad_axis_changed(pad, a, v)
                 }
             }
         }
@@ -1487,7 +1545,103 @@ impl<G: Game> GameBridge<G> {
                 }
                 _ => {}
             },
+            // Previously `device: "gamepad"` was silently dropped here, so it
+            // was ignored by `simulateInputBatch` and by `stepAndInspect`'s
+            // embedded `inputs` array even once single-shot support existed.
+            "gamepad" => {
+                if let Ok(sim) = parse_gamepad_simulated_input(val, action) {
+                    self.pending_simulated.push(sim);
+                }
+            }
             _ => {}
         }
     }
+}
+
+/// Parse a `device: "gamepad"` simulate-input payload.
+///
+/// Shared by the strict single-shot path (`engine.simulateInput`, which
+/// surfaces `Err` as a -32602 message) and the lenient batch path
+/// (`engine.simulateInputBatch` / `stepAndInspect`, which drops it) so the
+/// two can't drift apart.
+#[cfg(feature = "vdp")]
+fn parse_gamepad_simulated_input(
+    val: &serde_json::Value,
+    action: &str,
+) -> Result<SimulatedInput, String> {
+    let pad = match val.get("pad") {
+        None => VDP_DEFAULT_PAD,
+        Some(v) => match v.as_u64() {
+            Some(idx) => vibe_input::GamepadId::new(idx as usize),
+            None => return Err(format!("'pad' must be a non-negative integer, got {}", v)),
+        },
+    };
+
+    // Buttons and axes are named, so resolve the name once per branch group.
+    let button = || -> Result<vibe_input::GamepadButton, String> {
+        let name = val
+            .get("button")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| "Missing 'button' parameter".to_string())?;
+        vibe_input::string_to_gamepad_button(name)
+            .ok_or_else(|| format!("Unknown gamepad button: {}", name))
+    };
+
+    match action {
+        "press" => Ok(SimulatedInput::GamepadButtonPress(pad, button()?)),
+        "release" => Ok(SimulatedInput::GamepadButtonRelease(pad, button()?)),
+        "tap" => Ok(SimulatedInput::GamepadButtonTap(pad, button()?)),
+        "value" => {
+            let value = val
+                .get("value")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| "Missing 'value' parameter".to_string())?;
+            Ok(SimulatedInput::GamepadButtonValue(
+                pad,
+                button()?,
+                value as f32,
+            ))
+        }
+        "axis" => {
+            let name = val
+                .get("axis")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing 'axis' parameter".to_string())?;
+            let axis = vibe_input::string_to_gamepad_axis(name)
+                .ok_or_else(|| format!("Unknown gamepad axis: {}", name))?;
+            let value = val
+                .get("value")
+                .and_then(|v| v.as_f64())
+                .ok_or_else(|| "Missing 'value' parameter".to_string())?;
+            Ok(SimulatedInput::GamepadAxisValue(pad, axis, value as f32))
+        }
+        "connect" => {
+            let name = val
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Virtual Gamepad");
+            Ok(SimulatedInput::GamepadConnect(pad, name.to_string()))
+        }
+        "disconnect" => Ok(SimulatedInput::GamepadDisconnect(pad)),
+        _ => Err(format!("Unknown gamepad action: {}", action)),
+    }
+}
+
+/// Build the success echo for a queued gamepad input, mirroring the shape the
+/// keyboard/mouse branches return.
+#[cfg(feature = "vdp")]
+fn gamepad_echo(val: &serde_json::Value, action: &str) -> serde_json::Value {
+    let mut echo = serde_json::json!({
+        "device": "gamepad",
+        "action": action,
+        "pad": val.get("pad").and_then(|v| v.as_u64()).unwrap_or(0),
+        "queued": true,
+    });
+    let map = echo.as_object_mut().expect("json! built an object");
+    for key in ["button", "axis", "value", "name"] {
+        if let Some(v) = val.get(key) {
+            map.insert(key.to_string(), v.clone());
+        }
+    }
+    echo
 }

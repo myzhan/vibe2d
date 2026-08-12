@@ -43,6 +43,10 @@ struct App<C: PlatformCallbacks> {
     input: InputState,
     last_frame: Option<Instant>,
     initialized: bool,
+    /// `None` when gilrs couldn't initialize (no gamepad support on this
+    /// platform) — the rest of the loop degrades to "no pads ever connect".
+    #[cfg(feature = "gamepad")]
+    gamepad: Option<crate::gamepad::GamepadBackend>,
 }
 
 impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
@@ -240,6 +244,27 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                 };
                 self.last_frame = Some(now);
 
+                // Poll gamepads. Gamepads are polled rather than event-driven
+                // (winit emits no gamepad events at all), so this has to happen
+                // explicitly — and it has to happen HERE, before `on_update`:
+                // `begin_frame()` runs at the *end* of the previous frame
+                // (below), so at this point the `just_pressed` maps are already
+                // clear and `prev_axes_raw` is already snapshotted. Anything
+                // drained now is visible to `game.update` this frame and
+                // produces correct press/release edges.
+                //
+                // Unlike the keyboard/mouse arms this is not guarded by
+                // `should_suppress_input()`; the flag is passed in so the queue
+                // still drains while a VDP client is driving input.
+                #[cfg(feature = "gamepad")]
+                {
+                    zone!("gamepad_poll");
+                    let suppressed = self.callbacks.should_suppress_input();
+                    if let Some(gamepad) = &mut self.gamepad {
+                        gamepad.pump(&mut self.input, suppressed);
+                    }
+                }
+
                 // Update
                 {
                     zone!("update");
@@ -258,6 +283,22 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
                         tracing::error!("Render error: {}", e);
                     }
                 }
+
+                // Apply any rumble the game queued this frame. Taken
+                // unconditionally so the game-side queue is always bounded to
+                // one frame, even in builds with no gamepad backend to drain it.
+                let rumble = self.callbacks.take_rumble_requests();
+                #[cfg(feature = "gamepad")]
+                if let Some(gamepad) = &mut self.gamepad {
+                    if !rumble.is_empty() {
+                        gamepad.apply_rumble(&rumble);
+                    }
+                    // Every frame, not just when new requests arrived —
+                    // finished effects need reaping either way.
+                    gamepad.expire_rumble();
+                }
+                #[cfg(not(feature = "gamepad"))]
+                let _ = rumble;
 
                 // Clear per-frame input after update
                 self.input.begin_frame();
@@ -280,9 +321,15 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
 pub fn run_desktop<C: PlatformCallbacks + 'static>(
     config: PlatformConfig,
     callbacks: C,
-    input: InputState,
+    #[allow(unused_mut)] mut input: InputState,
 ) -> Result<()> {
     let event_loop = EventLoop::new()?;
+
+    // Built before the loop starts so pads already plugged in at launch are
+    // seeded into `input` and visible on frame 0 (gilrs emits no `Connected`
+    // events for them — see `GamepadBackend::new`).
+    #[cfg(feature = "gamepad")]
+    let gamepad = crate::gamepad::GamepadBackend::new(&mut input);
 
     let mut app = App {
         config,
@@ -292,6 +339,8 @@ pub fn run_desktop<C: PlatformCallbacks + 'static>(
         input,
         last_frame: None,
         initialized: false,
+        #[cfg(feature = "gamepad")]
+        gamepad,
     };
 
     event_loop.run_app(&mut app)?;

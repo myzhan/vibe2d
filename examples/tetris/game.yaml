@@ -29,21 +29,45 @@ assets:
     title: "assets/fonts/game.ttf:24"
 
 input:
+  gamepad:
+    deadzone: 0.15
+    # Higher than the 0.5 default on purpose. Hard drop is bound to stick-up,
+    # and an accidental hard drop is the most infuriating thing that can happen
+    # in Tetris — at 0.7 you have to genuinely mean it, and the Y component
+    # while shifting left/right stays well clear of the threshold.
+    axis_threshold: 0.7
+
   actions:
+    # Gamepad mapping follows the Tetris Guideline: A rotates clockwise,
+    # B rotates counter-clockwise, Up hard-drops, Down soft-drops.
+    # Button names are positional — `South` is the button an Xbox pad prints "A".
     move_left:
       keys: ["Left"]
+      gamepad_buttons: ["DPadLeft"]
+      gamepad_axes: ["LeftStickLeft"]
     move_right:
       keys: ["Right"]
+      gamepad_buttons: ["DPadRight"]
+      gamepad_axes: ["LeftStickRight"]
     rotate_cw:
       keys: ["Up", "X"]
+      gamepad_buttons: ["South", "RightShoulder"]
     rotate_ccw:
       keys: ["Z"]
+      gamepad_buttons: ["East", "LeftShoulder"]
     soft_drop:
       keys: ["Down"]
+      gamepad_buttons: ["DPadDown"]
+      gamepad_axes: ["LeftStickDown"]
     hard_drop:
+      # Also the "restart after game over" button, so it needs a gamepad binding
+      # or a pad-only player would be stuck on the game-over screen.
       keys: ["Space"]
+      gamepad_buttons: ["DPadUp", "North"]
+      gamepad_axes: ["LeftStickUp"]
     hold:
       keys: ["C"]
+      gamepad_buttons: ["LeftTrigger", "RightTrigger"]
 
 debug:
   vdp:

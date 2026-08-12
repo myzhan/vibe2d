@@ -240,6 +240,17 @@ vibe screenshot --output capture.png --addr ws://127.0.0.1:9229
 
 Web 端音频暂未实现（`vibe_audio` 在 wasm32 上为静默 no-op）。游戏中调 `ctx.audio.play()` 不会报错，只是没有声音。
 
+### 手柄
+
+手柄**输入**在 Web 端可用：gilrs 有 wasm 后端，读浏览器的 `navigator.getGamepads()`，
+所以按键、摇杆、扳机和连接/断开都能正常工作，游戏侧代码与桌面完全一致。
+
+**震动在 Web 端不可用**（`ctx.rumble()` 为 no-op）：gilrs-core 的 wasm
+`FfDevice::set_ff_state` 是空实现，力反馈的 worker 线程也被 `cfg` 掉了。
+
+另外注意浏览器为防指纹识别，通常会**在用户首次按键之前隐藏手柄** ——
+所以 Web 端多数手柄不是在启动时被发现，而是稍后以 `Connected` 事件到达。
+
 ### 性能
 
 - Debug 构建的 WASM 体积较大且运行慢。发布时务必用 `trunk build --release` 或 `data-wasm-opt="z"`。
