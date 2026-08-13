@@ -29,13 +29,15 @@ pub(crate) fn is_solid(tile_id: u32) -> bool {
     level::tiles::is_solid(tile_id as u16)
 }
 
-/// A portal sticks to any solid, portal-accepting face.
+/// Does this cell block movement *right now*?
 ///
-/// Also table-driven: all 132 SMB tiles accept portals, while 22 of the lab tiles
-/// refuse them (their marker pixel clears the flag).
-pub(crate) fn is_portal_surface(tile_id: u32) -> bool {
-    let p = level::tiles::props(tile_id as u16);
-    p.collision() && p.portalable()
+/// Differs from [`is_solid`] only where a portal has opened a hole. The original
+/// deletes the tile's collision object while leaving `map[x][y]` untouched
+/// (`modifyportaltiles`), which is why the wall keeps drawing and `getTile` keeps
+/// reporting solid — the aim line still stops on a wall you have already opened.
+/// Only movement sees the hole.
+pub(crate) fn blocks_movement(level: &Level, col: i32, row: i32) -> bool {
+    is_solid(get_tile(level, col, row)) && !level.portal_holes.contains(&(col, row))
 }
 
 pub(crate) fn get_tile(level: &Level, col: i32, row: i32) -> u32 {
@@ -79,7 +81,7 @@ pub(crate) fn move_and_collide_x(
 
     for row in top_row..=bottom_row {
         for col in left_col..=right_col {
-            if is_solid(get_tile(level, col, row)) {
+            if blocks_movement(level, col, row) {
                 let (tx, _ty, tw, _th) = tile_rect(col, row);
                 if aabb_overlap([*player_x, player_y, pw, ph], [tx, _ty, tw, _th]) {
                     if dx > 0.0 {
@@ -116,7 +118,7 @@ pub(crate) fn move_and_collide_y(
 
     for row in top_row..=bottom_row {
         for col in left_col..=right_col {
-            if is_solid(get_tile(level, col, row)) {
+            if blocks_movement(level, col, row) {
                 let (tx, ty, tw, th) = tile_rect(col, row);
                 if aabb_overlap([player_x, *player_y, pw, ph], [tx, ty, tw, th]) {
                     if dy > 0.0 {
@@ -133,37 +135,20 @@ pub(crate) fn move_and_collide_y(
     (vy, on_ground)
 }
 
-// ── Portal velocity transform ───────────────────────────────────────
-
-pub(crate) fn transform_velocity(
-    vx: f32,
-    vy: f32,
-    entry_orient: Orientation,
-    exit_orient: Orientation,
-) -> (f32, f32) {
-    // Speed entering along normal of entry portal
-    let speed = match entry_orient {
-        Orientation::Up => -vy,
-        Orientation::Down => vy,
-        Orientation::Left => -vx,
-        Orientation::Right => vx,
-    };
-    let speed = speed.abs().max(200.0); // minimum exit speed
-
-    // Exit along normal of exit portal
-    match exit_orient {
-        Orientation::Up => (0.0, -speed),
-        Orientation::Down => (0.0, speed),
-        Orientation::Left => (-speed, 0.0),
-        Orientation::Right => (speed, 0.0),
-    }
+// ── Portal aim-line ray-cast (matches mari0 traceline) ───────────────
+/// Where the aim line met a wall.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AimHit {
+    /// Which face of the tile was struck.
+    pub(crate) side: Orientation,
+    /// The struck tile.
+    pub(crate) cell: (i32, i32),
 }
 
-// ── Portal aim-line ray-cast (matches mari0 traceline) ───────────────
 /// Trace a line from (sx, sy) in world-pixel coords along `angle` (radians).
 /// Always returns (end_x, end_y) even without a wall hit (like original mari0),
 /// so dots can always be drawn along the ray.
-/// Returns (end_x, end_y, Option<(orientation, can_portal)>).
+/// Returns (end_x, end_y, Option<AimHit>).
 pub(crate) fn trace_aim_line(
     level: &Level,
     sx: f32,
@@ -171,7 +156,7 @@ pub(crate) fn trace_aim_line(
     angle: f32,
     cam_x: f32,
     view_w: f32,
-) -> (f32, f32, Option<(Orientation, bool)>) {
+) -> (f32, f32, Option<AimHit>) {
     let cos_a = angle.cos();
     let sin_a = angle.sin();
     let step = TILE_SIZE * 0.5;
@@ -218,8 +203,19 @@ pub(crate) fn trace_aim_line(
                 Orientation::Down => (px, (row + 1) as f32 * TILE_SIZE),
             };
 
-            let can_portal = is_portal_surface(tile);
-            return (hx, hy, Some((orient, can_portal)));
+            // Only the geometry is reported. Whether a portal can actually be
+            // *placed* needs the two-tile span test, which the caller runs — the
+            // original does the same, calling `getportalposition` from its UI code
+            // (`game.lua:1608`) so the crosshair can't promise a shot that will
+            // silently fail.
+            return (
+                hx,
+                hy,
+                Some(AimHit {
+                    side: orient,
+                    cell: (col, row),
+                }),
+            );
         }
         dist += step;
     }

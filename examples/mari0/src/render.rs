@@ -119,8 +119,9 @@ impl Mari0Game {
                 if !portal.active {
                     continue;
                 }
-                let px = portal.x - cam_x;
-                let py = portal.y;
+                let (mouth_x, mouth_y) = portal.centre();
+                let px = mouth_x - cam_x;
+                let py = mouth_y;
                 let color = portal_colors[i];
                 let scale = portal.open_scale;
                 if scale <= 0.0 {
@@ -130,7 +131,7 @@ impl Mari0Game {
                 // Animation frame (0..5 maps to original 1-indexed frames 1..6)
                 let frame_y = (self.portal_anim_frame + 1) as f32; // y offset in strip units
 
-                match portal.orientation {
+                match portal.orientation() {
                     Orientation::Left | Orientation::Right => {
                         // Vertical portal: use portal_v.png (32×64, pre-rotated)
                         // UV: x = (frame+1)*4/32, y = portal_idx*0.5, w = 4/32, h = 0.5
@@ -562,8 +563,37 @@ impl Mari0Game {
             let (end_x, end_y, hit_info) =
                 trace_aim_line(&self.level, source_x, source_y, angle, cam_x, self.vw);
 
-            // Portal possible? (original: cox ~= false and getportalposition ~= false)
-            let portal_possible = matches!(hit_info, Some((_, true)));
+            // Portal possible? The original asks the *placement* function, not just
+            // "is this tile portalable" (`game.lua:1608`), so the crosshair turns red
+            // on a wall where the two-tile span won't fit — otherwise it would
+            // promise a shot that fails silently.
+            let portal_possible = hit_info.is_some_and(|hit| {
+                let anchors = [
+                    self.portals[0]
+                        .as_ref()
+                        .filter(|p| p.active)
+                        .map(|p| p.anchor),
+                    self.portals[1]
+                        .as_ref()
+                        .filter(|p| p.active)
+                        .map(|p| p.anchor),
+                ];
+                let (hx, hy) = (
+                    hit.cell.0 as f32 * TILE_SIZE + TILE_SIZE / 2.0,
+                    hit.cell.1 as f32 * TILE_SIZE + TILE_SIZE / 2.0,
+                );
+                crate::portal_math::portal_position(
+                    &self.level,
+                    hit.cell,
+                    hit.side,
+                    crate::portal_math::tendency_for(hx, hy, hit.side),
+                    &anchors,
+                    // The crosshair isn't replacing a specific portal, so neither
+                    // slot is exempt from blocking placement.
+                    usize::MAX,
+                )
+                .is_some()
+            });
 
             // Dot color: green if portal can be placed, red otherwise (original: setColor)
             let dot_rgb = if portal_possible {
@@ -627,7 +657,8 @@ impl Mari0Game {
             }
 
             // Crosshair only drawn when a wall is hit (original: if cox ~= false)
-            if let Some((orient, _)) = hit_info {
+            if let Some(hit) = hit_info {
+                let orient = hit.side;
                 let ch_color = Color {
                     r: dot_rgb.0,
                     g: dot_rgb.1,

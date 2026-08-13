@@ -82,6 +82,13 @@ pub(crate) struct Level {
     /// Gate cells → gate number. Walking your centre through them in order is what
     /// solves a span.
     pub(crate) maze_gates: HashMap<(i32, i32), u32>,
+    /// Cells whose collision is suppressed because a portal has opened there.
+    ///
+    /// Populated only while **both** portals exist: a lone portal is not a hole
+    /// (`modifyportaltiles` requires the pair). Rendering and `getTile` ignore this
+    /// set — see `physics::blocks_movement`.
+    pub(crate) portal_holes: HashSet<(i32, i32)>,
+
     /// Columns holding a `mazeend`. Copying one marks the end of a repetition.
     ///
     /// A column set, not cells: the original's test is "does this column contain a
@@ -554,6 +561,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         maze_gate_counts,
         maze_gates,
         maze_end_cols,
+        portal_holes: HashSet::new(),
     }
 }
 

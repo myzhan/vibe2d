@@ -12,7 +12,7 @@ pub(crate) enum PlayerAnim {
     Fall,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[cfg_attr(feature = "vdp", derive(serde::Serialize))]
 #[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 pub(crate) enum Orientation {

@@ -256,6 +256,9 @@ impl Mari0Game {
         self.pipe = None;
         self.maze = MazeState::for_level(level.maze_starts.len());
         self.level = level;
+        // `self.portals` was just cleared, so there are no holes either. Explicit
+        // rather than relying on the freshly-loaded level starting empty.
+        self.refresh_portal_holes();
         // Respawning at a checkpoint has to bring the camera along, or the first
         // frame draws the level's opening while the player stands 99 columns away.
         let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);

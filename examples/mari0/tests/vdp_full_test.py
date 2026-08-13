@@ -927,12 +927,25 @@ async def test_vdp_portals(ws):
     assert "result" in r
 
     state = await inspect(ws)
-    assert state["portals"]["blue"] is not None
-    assert state["portals"]["blue"]["x"] == 100.0
-    assert state["portals"]["blue"]["orientation"] == "left"
-    assert state["portals"]["orange"] is not None
-    assert state["portals"]["orange"]["orientation"] == "up"
-    print(f"    OK setPortal: blue=left@(100,200), orange=up@(400,300)")
+    blue = state["portals"]["blue"]
+    orange = state["portals"]["orange"]
+    assert blue is not None
+    assert orange is not None
+    assert blue["orientation"] == "left"
+    assert orange["orientation"] == "up"
+
+    # Portals snap to the tile grid. The old assertion here was `x == 100.0`, which
+    # only held while a portal was a free-floating pixel position; in the original a
+    # portal is *anchored to a tile* (`getportalposition` returns tile coordinates)
+    # and spans two of them, so an arbitrary pixel position isn't representable.
+    # 100,200 with a left face lands on tile (3, 6), whose mouth centre is (96, 192).
+    assert blue["anchor"] == [3, 6], f"blue anchored to {blue['anchor']}"
+    assert blue["x"] % TILE_SIZE == 0 and blue["y"] % TILE_SIZE == 0, \
+        f"portal should be tile-aligned, got ({blue['x']}, {blue['y']})"
+    # And it covers exactly two cells, stacked for a vertical face.
+    assert blue["cells"] == [[3, 5], [3, 6]], f"blue covers {blue['cells']}"
+    assert orange["cells"][0][1] == orange["cells"][1][1], "an up face spans two columns"
+    print(f"    OK setPortal 吸附到 tile 网格: blue anchor={blue['anchor']} cells={blue['cells']}")
 
     # Clear portals
     r = await rpc(ws, "game.clearPortals")

@@ -87,8 +87,14 @@ pub(crate) struct PortalsView {
 #[cfg(feature = "vdp")]
 #[derive(serde::Serialize)]
 pub(crate) struct PortalView {
+    /// Centre of the mouth, in world pixels. The wire format the Python scripts
+    /// already assert on, so it stays even though the portal is stored as an anchor.
     pub(crate) x: f32,
     pub(crate) y: f32,
+    /// The anchor tile, normalised by face — see `PortalAnchor`.
+    pub(crate) anchor: [i32; 2],
+    /// The two cells the portal covers.
+    pub(crate) cells: [[i32; 2]; 2],
     pub(crate) orientation: Orientation,
     pub(crate) active: bool,
 }
@@ -98,12 +104,18 @@ impl PortalView {
     /// A portal slot only appears in `inspect` when it's present and active.
     pub(crate) fn from_slot(slot: &Option<Portal>) -> Option<PortalView> {
         match slot {
-            Some(p) if p.active => Some(PortalView {
-                x: p.x,
-                y: p.y,
-                orientation: p.orientation,
-                active: true,
-            }),
+            Some(p) if p.active => {
+                let (x, y) = p.centre();
+                let cells = p.anchor.cells();
+                Some(PortalView {
+                    x,
+                    y,
+                    anchor: [p.anchor.cell.0, p.anchor.cell.1],
+                    cells: [[cells[0].0, cells[0].1], [cells[1].0, cells[1].1]],
+                    orientation: p.anchor.facing,
+                    active: true,
+                })
+            }
             _ => None,
         }
     }
@@ -546,13 +558,13 @@ impl Mari0Game {
             _ => return Err(format!("Unknown orientation: {}", p.orientation)),
         };
         let active = p.active.unwrap_or(true);
+        // `x`/`y` are the mouth centre, which is what this method has always taken.
         self.portals[p.index] = Some(Portal {
-            x: p.x,
-            y: p.y,
-            orientation,
+            anchor: crate::portal_math::PortalAnchor::from_mouth_centre(p.x, p.y, orientation),
             active,
             open_scale: 1.0,
         });
+        self.refresh_portal_holes();
         Ok(serde_json::json!({"index": p.index, "x": p.x, "y": p.y,
             "orientation": p.orientation, "active": active}))
     }
@@ -560,6 +572,7 @@ impl Mari0Game {
     #[vdp("game.clearPortals")]
     pub(crate) fn vdp_clear_portals(&mut self) -> Result<serde_json::Value, String> {
         self.portals = [None, None];
+        self.refresh_portal_holes();
         Ok(serde_json::json!({"status": "ok"}))
     }
 

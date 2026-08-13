@@ -20,6 +20,7 @@ mod physics;
 mod pipe;
 mod player;
 mod portal;
+mod portal_math;
 mod render;
 mod world;
 
