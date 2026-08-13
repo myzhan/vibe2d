@@ -81,17 +81,20 @@ async def run(ws):
     await rpc(ws, "engine.pause")
 
     section("1. 九个实验室关卡的连线全部能解析")
+    total_links = 0
     for world, level in [(1, 1), (1, 2), (1, 3), (1, 4), (2, 1), (2, 2), (2, 3), (2, 4), (3, 1)]:
         s = await load_lab(ws, world, level)
         lab = s["lab"]
         linked = [e for e in lab if e["driver"] is not None]
-        # 有 link 的元件在 inspect 里就是 driver 不为 null 的；解析失败会是 null。
-        # 单元测试已经逐关断言过"没有悬空 link"，这里确认运行时确实建起了网络。
+        total_links += len(linked)
         check(
-            f"{world}-{level}: {len(lab)} 个元件，{len(linked)} 条连线已接上",
-            len(lab) == 0 or len(linked) > 0,
-            f"元件类型 {dict(Counter(e['kind'] for e in lab))}" if not lab else "",
+            f"{world}-{level}: 有 {len(lab)} 个元件（{len(linked)} 条连线）",
+            len(lab) > 0,
+            f"元件类型 {dict(Counter(e['kind'] for e in lab))}",
         )
+    # 单元测试已经逐关断言过"没有悬空 link"，这里确认运行时确实建起了网络。
+    # 2-1 一条线都没有：它只有 5 座没连线的光桥（所以永久开启），这是数据事实。
+    check("九关合计接上了几十条连线", total_links > 200, f"{total_links} 条")
 
     section("2. portal 1-1：一个按钮驱动门 + 一堆指示灯（fan-out 无限）")
     s = await load_lab(ws, 1, 1)
@@ -150,7 +153,103 @@ async def run(ws):
         except RuntimeError:
             check(f"{what}报错", True)
 
+    section("8. 激光真的点亮探测器：光束覆盖自己那格，并**探测终止格**")
+    # 每个出厂探测器都装在实心 tile 上（2-3 是 134/135/141/154），光束必然停在它前面
+    # 一格。原版靠 `updateoutputs` 多循环一格（laser.lua:240）才能点亮它 —— 不照抄
+    # 这一格，全游戏没有一个探测器会响。
+    # 1-2 的探测器装在 tile 134 里（实心），光束停在它前面一格 —— 靠探测终止格才点亮。
+    s = await load_lab(ws, 1, 2)
+    lab = s["lab"]
+    laser = next(e for e in lab if e["kind"] == "laser")
+    det_i = next(i for i, e in enumerate(lab) if e["kind"] == "laser_detector")
+    check("光束第一格就是发射器自己那格", laser["beam"][0]["cells"][0] == laser["cell"], str(laser["beam"][0]["cells"][:2]))
+    end = laser["beam"][-1]["end"]
+    check("光束终止格正是探测器那格（它嵌在墙里）", end == lab[det_i]["cell"], f"end={end} 探测器={lab[det_i]['cell']}")
+    check("探测器被点亮", lab[det_i]["on"])
+    driven = [i for i, e in enumerate(lab) if e["driver"] == det_i]
+    doors = [i for i in driven if lab[i]["kind"] == "door"]
+    check("并且驱动了下游的门", len(doors) > 0, str(driven))
+    await step(ws, 40)
+    s = await snap(ws)
+    check("门被激光开满了", all(s["lab"][i]["timer"] == 1.0 for i in doors),
+          str([s["lab"][i]["timer"] for i in doors]))
+
+    section("9. 光束经传送门折射（2-3 的激光谜题，整条链路）")
+    s = await load_lab(ws, 2, 3)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    lab = s["lab"]
+    det_i = next(i for i, e in enumerate(lab) if e["cell"] == [10, 11])
+    door_i = next(i for i, e in enumerate(lab) if e["kind"] == "door" and e["driver"] == det_i)
+    check("(10,11) 的探测器初始是灭的", not lab[det_i]["on"])
+    check("它驱动的门初始关着", not lab[door_i]["on"])
+    # 入口：(10,3) 那面墙的左面（正对 (7,3) 的激光）；出口：(3,10) 那面墙的右面。
+    # 两个都是原版规则下**真的能放**的位置：背板两格实心可开门、前面两格是空的。
+    await rpc(ws, "game.setPortal", {"index": 0, "x": 10 * T, "y": 3 * T, "orientation": "left"})
+    await rpc(ws, "game.setPortal", {"index": 1, "x": 4 * T, "y": 11 * T, "orientation": "right"})
+    await step(ws, 4)
+    s = await snap(ws)
+    beam = next(e for e in s["lab"] if e["kind"] == "laser" and e["cell"] == [7, 3])["beam"]
+    check("光束断成两段（进门 + 出门）", len(beam) == 2, f"{len(beam)} 段")
+    check("第一段向右、止于入口门那格", beam[0]["dir"] == "right" and beam[0]["end"] == [10, 3], str(beam[0]["end"]))
+    check("第二段从出口门那面射出、方向是出口的朝向", beam[1]["dir"] == "right" and beam[1]["cells"][0] == [4, 11], str(beam[1]["cells"][:1]))
+    check("并且打到了 (10,11) 的探测器", beam[1]["end"] == [10, 11], str(beam[1]["end"]))
+    check("探测器亮了", s["lab"][det_i]["on"])
+    await step(ws, 40)
+    s = await snap(ws)
+    check("门被这条折射光束打开了", s["lab"][door_i]["timer"] == 1.0, f"timer={s['lab'][door_i]['timer']:.2f}")
+
+    section("10. 光桥是薄板：能站上去，方向决定是地板还是墙")
+    await rpc(ws, "game.clearPortals")
+    s = await load_lab(ws, 2, 1)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    bridges = [e for e in s["lab"] if e["kind"] == "light_bridge"]
+    check("2-1 的五座光桥都是常亮的（没连线 → 永久开启）", len(bridges) == 5 and all(b["on"] for b in bridges), str(len(bridges)))
+    cells = sum(len(seg["cells"]) for b in bridges for seg in b["beam"])
+    check("每覆盖一格铺一块薄板", len(s["solid_rects"]) == cells, f"{len(s['solid_rects'])} 板 / {cells} 格")
+    thin = [r for r in s["solid_rects"] if min(r[2], r[3]) < T / 4]
+    check("每块都是薄的（1/8 格左右）", len(thin) == len(s["solid_rects"]))
+    # 横向光桥（(1,7) 往右 9 格）铺出来的板顶在 (7+7/16)*32
+    top = (7 + 7 / 16) * T
+    await rpc(ws, "game.setPlayerPos", {"x": 5 * T, "y": top - 52})
+    await step(ws, 20)
+    s = await snap(ws)
+    check("玩家落在光桥上而不是穿过去", s["player"]["on_ground"] and abs(s["player"]["y"] + s["player"]["height"] - top) < 0.01,
+          f"y={s['player']['y']:.1f} 板顶={top:.1f} on_ground={s['player']['on_ground']}")
+
+    section("11. 关掉光桥，板子就消失（连了线的光桥就是这么用的）")
+    # 关掉的必须是他脚下这一座 —— 别的桥关了他当然不会掉。
+    idx = next(
+        i
+        for i, e in enumerate(s["lab"])
+        if e["kind"] == "light_bridge"
+        and any([5, 7] in seg["cells"] for seg in e["beam"])
+    )
+    before = len(s["solid_rects"])
+    await rpc(ws, "game.labSignal", {"index": idx, "signal": "off"})
+    await step(ws, 2)
+    s = await snap(ws)
+    check("薄板数量减少", len(s["solid_rects"]) < before, f"{before} → {len(s['solid_rects'])}")
+    check("关掉的那座桥没有光束", not s["lab"][idx]["beam"])
+    await step(ws, 20)
+    s = await snap(ws)
+    check("站在被关掉的桥上的话会掉下去", not s["player"]["on_ground"] or s["player"]["y"] > top,
+          f"y={s['player']['y']:.1f}")
+
+    section("12. 激光会杀人，并且被身体挡住")
+    s = await load_lab(ws, 2, 4)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    laser = next(e for e in s["lab"] if e["kind"] == "laser")
+    row = laser["cell"][1]
+    await rpc(ws, "game.setPlayerPos", {"x": (laser["cell"][0] + 1) * T, "y": row * T})
+    await step(ws, 2)
+    s = await snap(ws)
+    check("站进光束里会死", s["state"] == "dead", s["state"])
+    beam = next(e for e in s["lab"] if e["kind"] == "laser")["beam"]
+    check("光束被身体截断，止于他之前", len(beam[0]["cells"]) == 1, str(beam[0]["cells"]))
+    check("截断之后不再有终止格可探测", beam[0]["end"] is None, str(beam[0]["end"]))
+
     await rpc(ws, "game.setLevel", {"world": 1, "level": 1})
+    await rpc(ws, "game.setScore", {"lives": 3})
     await rpc(ws, "engine.resume")
 
 

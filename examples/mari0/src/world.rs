@@ -85,6 +85,13 @@ pub(crate) struct Level {
     /// Cells that block movement *in addition* to the tile grid — currently shut
     /// doors. Rebuilt each frame from the lab network.
     pub(crate) solid_extras: HashSet<(i32, i32)>,
+    /// Solid boxes that aren't cells: the thin slabs a light bridge lays down, in
+    /// world pixels as `[x, y, w, h]`. Rebuilt each frame from the lab network.
+    ///
+    /// A separate list rather than more `solid_extras` because a bridge is 1/8 of a
+    /// block thick and sits *inside* its cell — rounding it up to the whole cell would
+    /// wall off the row a horizontal bridge is supposed to let you walk along.
+    pub(crate) solid_rects: Vec<[f32; 4]>,
 
     /// Cells whose collision is suppressed because a portal has opened there.
     ///
@@ -567,6 +574,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         maze_end_cols,
         portal_holes: HashSet::new(),
         solid_extras: HashSet::new(),
+        solid_rects: Vec::new(),
     }
 }
 

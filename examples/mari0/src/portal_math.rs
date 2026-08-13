@@ -49,6 +49,21 @@ impl PortalAnchor {
         }
     }
 
+    /// Offset from the anchor to the *other* cell the portal covers.
+    ///
+    /// The original's `portalNxplus` / `portalNyplus` (`game.lua:3269-3288`), and the
+    /// direct consequence of the per-face anchor normalisation: an up-facing portal
+    /// extends right, a down-facing one left, a right-facing one down and a
+    /// left-facing one up.
+    pub(crate) fn extra(self) -> (i32, i32) {
+        match self.facing {
+            Orientation::Up => (1, 0),
+            Orientation::Down => (-1, 0),
+            Orientation::Right => (0, 1),
+            Orientation::Left => (0, -1),
+        }
+    }
+
     /// Centre of the portal's mouth, in world pixels.
     ///
     /// Used for drawing and for the overlap test; the transform works from the
@@ -307,6 +322,60 @@ pub(crate) fn portal_transform(
         vy: sy * TILE_SIZE,
         rotation: rot,
     }
+}
+
+/// Where a *beam* entering the mouth at `cell` comes out: the cell it emerges
+/// from, the face it emerges through, and the face it went in by.
+///
+/// The port of `getPortal` (`game.lua:3265`), which exists for the things that
+/// travel by cell rather than by box — lasers and light bridges. Bodies go through
+/// [`portal_transform`] instead, which works in pixels and speeds.
+///
+/// Two mappings, and the difference is not obvious:
+///
+/// - **Same facing on both ends** → the offset within the footprint is preserved,
+///   so the first cell maps to the first and the second to the second.
+/// - **Different facings** → the anchor cell maps to the exit's *other* cell and the
+///   other cell maps to the exit's *anchor*. That crossover looks like a mistake and
+///   isn't: the anchor is normalised per face, so "the anchor" is a different corner
+///   of the mouth depending on which way it points.
+///
+/// The original also filters on a `facing` argument — but it reads a global that is
+/// never assigned, so the filter is always off (recorded in the plan as a bug to
+/// reproduce). There is no parameter here for the same reason: it would always be
+/// `None`.
+pub(crate) fn portal_route(
+    (a, b): (PortalAnchor, PortalAnchor),
+    cell: (i32, i32),
+) -> Option<((i32, i32), Orientation, Orientation)> {
+    for (entry, exit) in [(a, b), (b, a)] {
+        if !entry.cells().contains(&cell) {
+            continue;
+        }
+        if entry.facing == exit.facing {
+            return Some((
+                (
+                    exit.cell.0 + (cell.0 - entry.cell.0),
+                    exit.cell.1 + (cell.1 - entry.cell.1),
+                ),
+                exit.facing,
+                entry.facing,
+            ));
+        }
+        // On the anchor cell the exit shifts to its far cell; on the far cell it
+        // stays at its anchor.
+        let on_anchor = match entry.facing {
+            Orientation::Left | Orientation::Right => cell.1 == entry.cell.1,
+            Orientation::Up | Orientation::Down => cell.0 == entry.cell.0,
+        };
+        let (dx, dy) = if on_anchor { exit.extra() } else { (0, 0) };
+        return Some((
+            (exit.cell.0 + dx, exit.cell.1 + dy),
+            exit.facing,
+            entry.facing,
+        ));
+    }
+    None
 }
 
 /// Where a portal lands when a shot strikes `hit` on face `side`.
@@ -678,6 +747,63 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Beam routing, same facing on both ends: the offset within the footprint is
+    /// preserved, so the mouth maps onto the other mouth cell for cell.
+    #[test]
+    fn routing_a_beam_between_like_faces_preserves_the_offset() {
+        let a = anchor(8, 9, Orientation::Left); // covers (8,8) and (8,9)
+        let b = anchor(20, 5, Orientation::Left); // covers (20,4) and (20,5)
+        assert_eq!(
+            portal_route((a, b), (8, 9)),
+            Some(((20, 5), Orientation::Left, Orientation::Left))
+        );
+        assert_eq!(
+            portal_route((a, b), (8, 8)),
+            Some(((20, 4), Orientation::Left, Orientation::Left))
+        );
+    }
+
+    /// Different facings: the anchor cell crosses over to the exit's *far* cell, and
+    /// the far cell maps to the exit's anchor. It looks like an off-by-one and isn't —
+    /// "the anchor" is a different corner of the mouth per face.
+    #[test]
+    fn routing_a_beam_between_unlike_faces_crosses_over() {
+        let entry = anchor(8, 9, Orientation::Left); // anchor (8,9), far (8,8)
+        let exit = anchor(20, 5, Orientation::Up); // anchor (20,5), far (21,5)
+        assert_eq!(
+            portal_route((entry, exit), (8, 9)),
+            Some(((21, 5), Orientation::Up, Orientation::Left)),
+            "the anchor cell maps to the exit's far cell"
+        );
+        assert_eq!(
+            portal_route((entry, exit), (8, 8)),
+            Some(((20, 5), Orientation::Up, Orientation::Left)),
+            "the far cell maps to the exit's anchor"
+        );
+    }
+
+    /// Routing works both ways round, and reports which face was entered — that is
+    /// what the beam compares against its own direction to decide it may pass.
+    #[test]
+    fn routing_reports_the_face_that_was_entered() {
+        let a = anchor(8, 9, Orientation::Left);
+        let b = anchor(20, 5, Orientation::Up);
+        let (_, exit_facing, entry_facing) = portal_route((a, b), (20, 5)).expect("entered exit");
+        assert_eq!(entry_facing, Orientation::Up, "went in the up-facing mouth");
+        assert_eq!(
+            exit_facing,
+            Orientation::Left,
+            "came out the left-facing one"
+        );
+    }
+
+    #[test]
+    fn routing_a_cell_outside_both_mouths_goes_nowhere() {
+        let a = anchor(8, 9, Orientation::Left);
+        let b = anchor(20, 5, Orientation::Up);
+        assert_eq!(portal_route((a, b), (0, 0)), None);
     }
 
     #[test]

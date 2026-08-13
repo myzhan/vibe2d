@@ -128,6 +128,17 @@ pub(crate) fn move_and_collide_x(
             }
         }
     }
+    // Solid boxes that aren't cells — light-bridge slabs.
+    for rect in &level.solid_rects {
+        if aabb_overlap([*player_x, player_y, pw, ph], *rect) {
+            if dx > 0.0 {
+                *player_x = rect[0] - pw;
+            } else if dx < 0.0 {
+                *player_x = rect[0] + rect[2];
+            }
+            return 0.0;
+        }
+    }
     vx
 }
 
@@ -164,6 +175,19 @@ pub(crate) fn move_and_collide_y(
                     return (0.0, on_ground);
                 }
             }
+        }
+    }
+    // Light-bridge slabs. A horizontal bridge is a floor, so landing on one has to
+    // report ground contact or you'd slide off it.
+    for rect in &level.solid_rects {
+        if aabb_overlap([player_x, *player_y, pw, ph], *rect) {
+            if dy > 0.0 {
+                *player_y = rect[1] - ph;
+                on_ground = true;
+            } else if dy < 0.0 {
+                *player_y = rect[1] + rect[3];
+            }
+            return (0.0, on_ground);
         }
     }
     (vy, on_ground)

@@ -590,7 +590,7 @@ impl Mari0Game {
         self.check_checkpoint_passed();
         self.check_maze_gate();
         self.update_maze();
-        self.update_lab(dt, input.is_action_just_pressed("use"));
+        self.update_lab(ctx, dt, input.is_action_just_pressed("use"));
 
         // ── Timer and low-time music ──
         if self.tick_clock(ctx, dt) {

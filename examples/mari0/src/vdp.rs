@@ -55,6 +55,10 @@ pub(crate) struct Mari0Inspect {
     pub(crate) maze: Option<MazeView>,
     /// The lab signal network. Empty outside the lab mappack.
     pub(crate) lab: Vec<LabElementView>,
+    /// Solid boxes that aren't tiles: the light-bridge slabs, `[x, y, w, h]` in world
+    /// pixels. This is the list the collision resolver reads, so a test can check
+    /// "can he stand on it" against the same numbers the physics uses.
+    pub(crate) solid_rects: Vec<[f32; 4]>,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -166,6 +170,19 @@ pub(crate) struct LabElementView {
     /// True when the element is only in the graph so links resolve — its behaviour
     /// isn't implemented yet.
     pub(crate) inert: bool,
+    /// Emitters only: the runs this element's beam makes. More than one means it is
+    /// bending through a portal.
+    pub(crate) beam: Vec<BeamView>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct BeamView {
+    pub(crate) dir: Orientation,
+    pub(crate) cells: Vec<[i32; 2]>,
+    /// The cell that stopped this run — probed for detectors even though the beam
+    /// doesn't cover it. `null` when a body cut the beam short.
+    pub(crate) end: Option<[i32; 2]>,
 }
 
 #[cfg(feature = "vdp")]
@@ -450,8 +467,18 @@ impl Mari0Game {
                     on: e.on,
                     timer: e.timer,
                     inert: e.kind.is_inert(),
+                    beam: e
+                        .beam
+                        .iter()
+                        .map(|s| BeamView {
+                            dir: s.dir,
+                            cells: s.cells.iter().map(|c| [c.0, c.1]).collect(),
+                            end: s.end.map(|c| [c.0, c.1]),
+                        })
+                        .collect(),
                 })
                 .collect(),
+            solid_rects: self.level.solid_rects.clone(),
             maze: (!self.level.maze_starts.is_empty()).then(|| MazeView {
                 var: self.maze.var,
                 solved: self.maze.solved.clone(),

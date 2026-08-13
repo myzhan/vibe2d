@@ -22,6 +22,32 @@ pub(crate) enum Orientation {
     Right,
 }
 
+impl Orientation {
+    /// One cell step in this direction, as `(dcol, drow)`.
+    pub(crate) fn delta(self) -> (i32, i32) {
+        match self {
+            Orientation::Up => (0, -1),
+            Orientation::Down => (0, 1),
+            Orientation::Left => (-1, 0),
+            Orientation::Right => (1, 0),
+        }
+    }
+
+    pub(crate) fn opposite(self) -> Self {
+        match self {
+            Orientation::Up => Orientation::Down,
+            Orientation::Down => Orientation::Up,
+            Orientation::Left => Orientation::Right,
+            Orientation::Right => Orientation::Left,
+        }
+    }
+
+    /// Is this direction along the x axis?
+    pub(crate) fn is_horizontal(self) -> bool {
+        matches!(self, Orientation::Left | Orientation::Right)
+    }
+}
+
 pub(crate) struct Player {
     pub(crate) x: f32,
     pub(crate) y: f32,
