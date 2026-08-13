@@ -56,6 +56,17 @@ pub(crate) struct Level {
     pub(crate) pipe_spawns: HashMap<u32, (i32, i32)>,
     /// Warp pipes, keyed by tile cell → destination world.
     pub(crate) warp_pipes: HashMap<(i32, i32), u32>,
+    /// Checkpoints as `(column, row)`, ascending by column.
+    ///
+    /// The row matters: the original respawns you standing on the checkpoint's own
+    /// row, falling back to 13 (`game.lua:2147`).
+    pub(crate) checkpoints: Vec<(i32, i32)>,
+    /// A 24-wide stub the player runs straight through into sublevel 1.
+    ///
+    /// Load-bearing for respawns: taking a pipe out of an intermission sets the
+    /// sublevel to come back to on death, so dying in 1-2_1 doesn't dump you back
+    /// in the stub (`mario.lua:2891-2893`).
+    pub(crate) intermission: bool,
 }
 
 /// A pending enemy placement produced by the loader.
@@ -367,6 +378,13 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         .iter()
         .map(|(x, y, from)| (*from as u32, (*x as i32, *y as i32)))
         .collect();
+    // Already sorted by the parser; the pass-detection walks them in order.
+    let checkpoints = parsed
+        .markers
+        .checkpoints
+        .iter()
+        .map(|(x, y)| (*x as i32, *y as i32))
+        .collect();
 
     Level {
         tiles,
@@ -386,5 +404,127 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         pipes,
         pipe_spawns,
         warp_pipes,
+        checkpoints,
+        intermission: parsed.meta.intermission,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sublevel_changes_only_the_filename() {
+        let id = LevelId::new("smb", 1, 2);
+        assert_eq!(id.name(), "1-2");
+        assert_eq!(id.with_sublevel(1).name(), "1-2_1");
+        assert_eq!(id.with_sublevel(3).name(), "1-2_3");
+    }
+
+    /// Advancing past level 4 rolls the world over and drops any sublevel.
+    #[test]
+    fn advancing_rolls_worlds_and_clears_the_sublevel() {
+        let mut id = LevelId::new("smb", 1, 4).with_sublevel(2);
+        id.advance();
+        assert_eq!((id.world, id.level, id.sublevel), (2, 1, 0));
+    }
+
+    #[test]
+    fn a_warp_lands_on_the_first_level_of_the_target_world() {
+        let mut id = LevelId::new("smb", 1, 2).with_sublevel(1);
+        id.warp_to_world(4);
+        assert_eq!(id.name(), "4-1");
+    }
+
+    /// Every sublevel a pipe points at must exist, or the trip would strand the
+    /// player. Checks the whole shipped mappack, both directions.
+    #[test]
+    fn every_pipe_destination_exists() {
+        for (pack, name, _) in level::LEVELS {
+            let lv = load_level(pack, name);
+            // Level names are `W-L` or `W-L_N`; only the former can host pipes into
+            // sublevels, and `LevelId` is what resolves the target.
+            let Some((world, rest)) = name.split_once('-') else {
+                continue;
+            };
+            let (level_num, _) = rest.split_once('_').unwrap_or((rest, ""));
+            let (Ok(world), Ok(level_num)) = (world.parse::<u32>(), level_num.parse::<u32>())
+            else {
+                continue; // "M-1" and friends aren't numeric worlds
+            };
+            let id = LevelId::new(pack, world, level_num);
+            for dest in lv.pipes.values() {
+                let target = id.with_sublevel(*dest);
+                assert!(
+                    target.exists(),
+                    "{pack}/{name}: pipe leads to {} which doesn't exist",
+                    target.name()
+                );
+            }
+        }
+    }
+
+    /// Checkpoints arrive sorted by column, which the pass-detector relies on to
+    /// only ever look at the next one.
+    #[test]
+    fn checkpoints_are_sorted_by_column() {
+        for (pack, name, _) in level::LEVELS {
+            let lv = load_level(pack, name);
+            let cols: Vec<i32> = lv.checkpoints.iter().map(|(c, _)| *c).collect();
+            let mut sorted = cols.clone();
+            sorted.sort_unstable();
+            assert_eq!(cols, sorted, "{pack}/{name}: checkpoints out of order");
+        }
+    }
+
+    /// A checkpoint must sit inside the level and above the floor, or respawning
+    /// there would drop the player out of the world.
+    #[test]
+    fn checkpoints_are_inside_their_level() {
+        for (pack, name, _) in level::LEVELS {
+            let lv = load_level(pack, name);
+            for (col, row) in &lv.checkpoints {
+                assert!(
+                    *col >= 0 && (*col as usize) < lv.width,
+                    "{pack}/{name}: checkpoint column {col} outside width {}",
+                    lv.width
+                );
+                assert!(
+                    *row >= 0 && (*row as usize) <= lv.height,
+                    "{pack}/{name}: checkpoint row {row} outside height {}",
+                    lv.height
+                );
+            }
+        }
+    }
+
+    /// The 21 levels that have one, have exactly one. Worth pinning: the respawn
+    /// index logic is simple only because no shipped level has two.
+    #[test]
+    fn no_shipped_level_has_more_than_one_checkpoint() {
+        let mut with_checkpoints = 0;
+        for (pack, name, _) in level::LEVELS {
+            let lv = load_level(pack, name);
+            assert!(
+                lv.checkpoints.len() <= 1,
+                "{pack}/{name} has {} checkpoints",
+                lv.checkpoints.len()
+            );
+            if !lv.checkpoints.is_empty() {
+                with_checkpoints += 1;
+            }
+        }
+        assert_eq!(with_checkpoints, 21, "expected 21 levels with a checkpoint");
+    }
+
+    /// The intermission stubs are the levels whose pipe sets a respawn sublevel.
+    #[test]
+    fn the_intermission_stubs_are_the_narrow_ones() {
+        for name in ["1-2", "2-2", "4-2", "7-2"] {
+            let lv = load_level("smb", name);
+            assert!(lv.intermission, "{name} should be flagged intermission");
+            assert_eq!(lv.width, 24, "{name} should be the 24-wide stub");
+            assert!(!lv.pipes.is_empty(), "{name} should hold the pipe onward");
+        }
     }
 }

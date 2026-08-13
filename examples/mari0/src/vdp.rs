@@ -40,6 +40,16 @@ pub(crate) struct Mari0Inspect {
     pub(crate) music_phase: MusicPhase,
     /// Which way the player is moving through a pipe, or `null` when not in one.
     pub(crate) pipe: Option<PipeDir>,
+    /// The scissor window Mario is drawn through while in a pipe, in screen space
+    /// as `[x, y, w, h]`. `null` outside a pipe.
+    ///
+    /// Exposed because "is he actually hidden?" is otherwise only checkable by
+    /// eyeballing a screenshot, and the geometry is what makes it work.
+    pub(crate) pipe_clip: Option<[f32; 4]>,
+    /// The checkpoint the player would respawn at, as `[column, row]`.
+    pub(crate) checkpoint: Option<[i32; 2]>,
+    /// Sublevel a death would reload; 0 is the main level.
+    pub(crate) respawn_sublevel: u32,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -143,6 +153,9 @@ pub(crate) struct LevelView {
     pub(crate) music: u8,
     /// The environment palette, so a test can tell a castle from an overworld.
     pub(crate) spriteset: u8,
+    /// The level's checkpoint columns, so a test knows where to walk to.
+    pub(crate) checkpoints: Vec<[i32; 2]>,
+    pub(crate) intermission: bool,
     pub(crate) background: u8,
     pub(crate) time_limit: f32,
 }
@@ -352,6 +365,13 @@ impl Mari0Game {
                 flag_x: self.level.flag_x,
                 music: self.level.music,
                 spriteset: self.level.spriteset,
+                checkpoints: self
+                    .level
+                    .checkpoints
+                    .iter()
+                    .map(|(c, r)| [*c, *r])
+                    .collect(),
+                intermission: self.level.intermission,
                 background: self.level.background,
                 time_limit: self.level.time_limit,
             },
@@ -363,6 +383,9 @@ impl Mari0Game {
             time_remaining: self.time_remaining,
             music_phase: self.music_phase,
             pipe: self.pipe.as_ref().map(|p| p.dir),
+            pipe_clip: self.pipe_clip_rect(self.camera.x, self.vw, self.vh),
+            checkpoint: self.checkpoint.map(|(c, r)| [c, r]),
+            respawn_sublevel: self.respawn_sublevel,
             items: self
                 .items
                 .iter()
@@ -399,7 +422,7 @@ impl Mari0Game {
     #[vdp("game.reset")]
     pub(crate) fn vdp_reset(&mut self) -> Result<serde_json::Value, String> {
         self.state = GameState::Playing;
-        self.reset_level();
+        self.start_fresh();
         self.score = 0;
         self.coins = 0;
         self.lives = 3;
@@ -566,7 +589,7 @@ impl Mari0Game {
             return Err(format!("no such level {}/{}", p.pack, id.name()));
         }
         self.current = id;
-        self.reset_level();
+        self.start_fresh();
         self.state = GameState::Playing;
         Ok(serde_json::json!({
             "pack": self.current.pack,

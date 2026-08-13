@@ -119,7 +119,26 @@ async def run(ws):
     check("按下键后进入了管道（方向 down）", s["pipe"] == "down", str(s["pipe"]))
     check("进管瞬间还在 1-1", s["level"]["name"] == "1-1", s["level"]["name"])
 
-    section("2. 进管不是瞬移：0.7s 滑入 + 1s 停留才换关")
+    section("2. 进管期间 Mario 被裁剪到管口之外（否则会盖在管子上）")
+    # 这是用户实机看出来的问题：一开始没做裁剪，Mario 滑进管子时是画在管子上层的。
+    # 原版用 `customscissor`（`mario.lua:2901`）把他限制在管口外侧。
+    clip = s["pipe_clip"]
+    check("进管时有裁剪窗口", clip is not None, str(clip))
+    if clip:
+        # 向下进管：窗口是"管口上表面以上"，所以高度就是管口那一行的世界 y。
+        # 1-1 管口顶在第 9 行 → 288px。
+        check("裁剪窗口下沿 = 管口上表面 (288)", abs(clip[3] - 288.0) < 1.0, f"h={clip[3]:.1f}")
+        check("窗口横向是整屏", clip[2] == 512.0, f"w={clip[2]}")
+    # 滑到一半时，玩家的 y 已经越过窗口下沿 —— 也就是大半个身子被裁掉了。
+    await step(ws, 24)
+    s = await snap(ws)
+    check(
+        "滑到一半时玩家已沉到裁剪线以下",
+        s["player"]["y"] > 288.0 - 32.0,
+        f"y={s['player']['y']:.1f}",
+    )
+
+    section("3. 进管不是瞬移：0.7s 滑入 + 1s 停留才换关")
     # 0.7 + 1.0 = 1.7s ≈ 102 帧。先跑 60 帧，应该还没换关。
     await step(ws, 60)
     s = await snap(ws)
@@ -135,7 +154,7 @@ async def run(ws):
     check("1.7 秒后到了子关 1-1_1", s["level"]["name"] == "1-1_1", s["level"]["name"])
     check("sublevel 字段是 1", s["level"]["sublevel"] == 1, str(s["level"]["sublevel"]))
 
-    section("3. 进子关不重置时钟")
+    section("4. 进子关不重置时钟")
     check(
         "时钟延续，没有跳回 400",
         s["time_remaining"] < 400.0 and abs(s["time_remaining"] - clock_before) < 6.0,
@@ -143,7 +162,7 @@ async def run(ws):
     )
     check("子关也是有限时的地下关", s["level"]["music"] == 3, f"music={s['level']['music']}")
 
-    section("4. 子关的水管 (13,12) 通回主关，从 pipespawn (164,11) 出来")
+    section("5. 子关的水管 (13,12) 通回主关，从 pipespawn (164,11) 出来")
     # 1-1_1 宽 17，出口水管 1-based (14,13) → 0-based (13,12)。
     s = await snap(ws)
     check("子关宽度 17", s["level"]["width"] == 17, str(s["level"]["width"]))
@@ -177,7 +196,7 @@ async def run(ws):
     )
     check("正在从管里升起（方向 up）或已升完", s["pipe"] in ("up", None), str(s["pipe"]))
 
-    section("5. warp pipe 跳世界：1-2_1 的 (179,10) → 世界 4")
+    section("6. warp pipe 跳世界：1-2_1 的 (179,10) → 世界 4")
     # 1-2_1 有三根 warppipe，1-based (180,11)/(184,11)/(188,11) → 世界 4/3/2。
     s = await load(ws, 1, 2, sublevel=1)
     check("载入 1-2_1", s["level"]["name"] == "1-2_1", s["level"]["name"])
@@ -200,7 +219,7 @@ async def run(ws):
         f"time={s['time_remaining']:.1f}, limit={s['level']['time_limit']:.1f}",
     )
 
-    section("6. 回归：从水管顶上走过去不该掉进去")
+    section("7. 回归：从水管顶上走过去不该掉进去")
     # 这是实现过程中真实踩到的 bug：侧面进管的判定原本只看"有没有按右"，
     # 而 1-1 的 pipe 实体就在管口右上格 (58,9)，站在管顶的玩家中线正好齐平 ——
     # 于是走过管顶就被吞进去了。autopilot 帧数从 2259 掉到 2055 才暴露出来。

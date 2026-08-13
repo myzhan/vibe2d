@@ -372,6 +372,9 @@ impl Mari0Game {
         {
             let visible = self.player.invincible_timer <= 0.0
                 || ((self.player.invincible_timer * 10.0) as u32).is_multiple_of(2);
+            // Inside a pipe Mario is clipped to the mouth's outer side, so he
+            // disappears into it instead of sliding across the top of it.
+            let pipe_clip = self.pipe_clip_rect(cam_x, self.vw, self.vh);
             if visible {
                 // Gun-angle sprite row (mari0 getAngleFrame):
                 // Row 0 = gun up, 1 = diagonal up, 2 = horizontal, 3 = down
@@ -476,21 +479,27 @@ impl Mari0Game {
                 } else {
                     &self.tex_mario_layers
                 };
-                // Layers 1-3 with palette colors
-                for (i, color) in mario_colors.iter().enumerate() {
-                    let tex = layers[i + 1];
-                    if face_right {
-                        screen.draw_sprite_region_tinted(tex, src, dst, *color);
-                    } else {
-                        screen
-                            .draw_sprite_region_flipped_tinted(tex, src, dst, true, false, *color);
+                let draw_mario = |screen: &mut Screen| {
+                    for (i, color) in mario_colors.iter().enumerate() {
+                        let tex = layers[i + 1];
+                        if face_right {
+                            screen.draw_sprite_region_tinted(tex, src, dst, *color);
+                        } else {
+                            screen.draw_sprite_region_flipped_tinted(
+                                tex, src, dst, true, false, *color,
+                            );
+                        }
                     }
-                }
-                // Layer 0 (outline) drawn last, white tint (as-is)
-                if face_right {
-                    screen.draw_sprite_region(layers[0], src, dst);
-                } else {
-                    screen.draw_sprite_region_flipped(layers[0], src, dst, true, false);
+                    // Layer 0 (outline) drawn last, white tint (as-is)
+                    if face_right {
+                        screen.draw_sprite_region(layers[0], src, dst);
+                    } else {
+                        screen.draw_sprite_region_flipped(layers[0], src, dst, true, false);
+                    }
+                };
+                match pipe_clip {
+                    Some([cx, cy, cw, ch]) => screen.clipped(cx, cy, cw, ch, draw_mario),
+                    None => draw_mario(screen),
                 }
             }
         }

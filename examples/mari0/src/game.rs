@@ -71,6 +71,21 @@ pub(crate) struct Mari0Game {
     /// The pipe trip in progress, if any. While set, the player has no control.
     pub(crate) pipe: Option<PipeTransit>,
 
+    /// The highest checkpoint passed, as a tile cell.
+    ///
+    /// Survives death — that's the whole point — and is cleared when a new level
+    /// starts or the game ends (`levelscreen.lua:34`, `:49`).
+    pub(crate) checkpoint: Option<(i32, i32)>,
+    /// How many checkpoints have been passed, so the next one to watch for is a
+    /// single index rather than a scan.
+    pub(crate) checkpoints_passed: usize,
+    /// Sublevel to reload after a death; 0 is the main level.
+    ///
+    /// Only ever non-zero after taking a pipe out of an *intermission* stub
+    /// (`mario.lua:2891-2893`), which is what keeps a death in 1-2_1 from dumping
+    /// the player back into the 24-tile-wide 1-2.
+    pub(crate) respawn_sublevel: u32,
+
     /// Where the level music is in its low-time sequence.
     pub(crate) music_phase: MusicPhase,
     /// Clock reading when the low-time warning fired, so the switch to the fast
@@ -106,6 +121,9 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_flag: TextureId,
 
     pub(crate) vw: f32,
+    /// Virtual screen height. Needed alongside `vw` so the pipe scissor can span
+    /// the full screen on the axis it isn't clipping.
+    pub(crate) vh: f32,
 }
 
 impl Mari0Game {
@@ -125,7 +143,7 @@ impl Mari0Game {
         next.advance();
         if next.exists() {
             self.current = next;
-            self.reset_level();
+            self.start_fresh();
             self.score_carry_over();
             self.state = GameState::Playing;
         } else {
@@ -157,10 +175,59 @@ impl Mari0Game {
         level::tiles::used_block_tile(self.level.spriteset, false) as u32
     }
 
-    /// Reload the current level from scratch (death, or entering a new level).
+    /// Reload the current level from its own start position.
     pub(crate) fn reset_level(&mut self) {
+        self.load_current(false);
+    }
+
+    /// Start the current level as if arriving for the first time.
+    ///
+    /// Clears the run-scoped progress that a *death* is supposed to preserve —
+    /// the checkpoint and the sublevel to respawn into. Without this, jumping
+    /// between levels leaves stale progress behind: a `setLevel("1-1")` after a trip
+    /// through 1-2's pipe still respawned deaths into `1-1_1`, because
+    /// `respawn_sublevel` was never reset. The original clears both on its
+    /// next-level branch (`levelscreen.lua:33-34`).
+    pub(crate) fn start_fresh(&mut self) {
+        self.checkpoint = None;
+        self.checkpoints_passed = 0;
+        self.respawn_sublevel = 0;
+        self.reset_level();
+    }
+
+    /// Reload after a death: back into `respawn_sublevel`, at the checkpoint.
+    ///
+    /// The original splits these two the same way. `checkcheckpoint` is cleared at
+    /// the top of every level transition and set true *only* on the death branch
+    /// (`levelscreen.lua:11`, `:43`), so a checkpoint you passed never affects where
+    /// a fresh level starts you.
+    pub(crate) fn respawn_after_death(&mut self) {
+        self.current.sublevel = self.respawn_sublevel;
+        self.load_current(true);
+    }
+
+    fn load_current(&mut self, use_checkpoint: bool) {
         let level = load_level(&self.current.pack, &self.current.name());
-        self.player = Player::new(level.player_start.0, level.player_start.1);
+        let start = match self.checkpoint.filter(|_| use_checkpoint) {
+            // `starty = checkpointpoints[checkpointx] or 13` (`game.lua:2147`) — the
+            // checkpoint names the row to stand on, not the row to occupy.
+            Some((col, row)) => (
+                col as f32 * TILE_SIZE,
+                row as f32 * TILE_SIZE - PLAYER_SMALL_H,
+            ),
+            None => level.player_start,
+        };
+        self.player = Player::new(start.0, start.1);
+        // Restore how many checkpoints are behind us, so passing the *next* one
+        // still registers after a respawn (`game.lua:2161-2163`).
+        self.checkpoints_passed = match self.checkpoint.filter(|_| use_checkpoint) {
+            Some((col, _)) => level
+                .checkpoints
+                .iter()
+                .position(|(c, _)| *c == col)
+                .map_or(0, |i| i + 1),
+            None => 0,
+        };
         self.enemies.clear();
         self.spawned = vec![false; level.enemy_spawns.len()];
         // -1, not 0: the catch-up loop pre-increments, so column 0 still gets
@@ -182,15 +249,35 @@ impl Mari0Game {
         self.items.clear();
         self.fireballs.clear();
         self.star_timer = 0.0;
-        self.camera = Camera { x: 0.0 };
         self.pipe = None;
         self.level = level;
+        // Respawning at a checkpoint has to bring the camera along, or the first
+        // frame draws the level's opening while the player stands 99 columns away.
+        let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);
+        self.camera = Camera {
+            x: (self.player.x - self.vw / 3.0).clamp(0.0, max_camera),
+        };
         // Fill the opening screen now so the player doesn't watch the first
         // goombas pop into being after the level has already started.
         self.spawn_revealed_columns();
         self.music_phase = MusicPhase::Normal;
         self.warning_started_at = None;
         self.music_restart = true;
+    }
+
+    /// Note the highest checkpoint the player has walked past.
+    ///
+    /// The original tracks an index and only ever looks at the *next* checkpoint
+    /// (`mario.lua:998-1005`), which is why walking backwards can't un-pass one.
+    /// The comparison is `x > column`, so the trigger is the checkpoint's left edge.
+    fn check_checkpoint_passed(&mut self) {
+        while let Some((col, row)) = self.level.checkpoints.get(self.checkpoints_passed).copied() {
+            if self.player.x <= col as f32 * TILE_SIZE {
+                break;
+            }
+            self.checkpoints_passed += 1;
+            self.checkpoint = Some((col, row));
+        }
     }
 
     /// Purely cosmetic cycles: the portal frame animation and the aim-dot phase.
@@ -462,6 +549,7 @@ impl Mari0Game {
         // Newly revealed columns spawn their enemies before anything updates, so
         // a goomba that appears this frame still gets its first step.
         self.spawn_revealed_columns();
+        self.check_checkpoint_passed();
 
         // ── Timer and low-time music ──
         if self.tick_clock(ctx, dt) {
@@ -562,6 +650,7 @@ impl Game for Mari0Game {
         let t = |n: &str| Self::tex(ctx, n);
 
         let vw = ctx.virtual_width;
+        let vh = ctx.virtual_height;
 
         let current = LevelId::new(START_PACK, 1, 1);
         let level = load_level(&current.pack, &current.name());
@@ -598,6 +687,9 @@ impl Game for Mari0Game {
             star_timer: 0.0,
             level,
             pipe: None,
+            checkpoint: None,
+            checkpoints_passed: 0,
+            respawn_sublevel: 0,
             music_phase: MusicPhase::Normal,
             warning_started_at: None,
             // Starts on the first frame of play, not at construction: the menu is
@@ -631,6 +723,7 @@ impl Game for Mari0Game {
             tex_portal_dot: t("portal_dot"),
             tex_flag: t("flag"),
             vw,
+            vh,
         }
     }
 
@@ -657,8 +750,11 @@ impl Game for Mari0Game {
                 if input.is_action_just_pressed("jump") {
                     if self.lives > 0 {
                         self.state = GameState::Playing;
-                        self.reset_level();
+                        self.respawn_after_death();
                     } else {
+                        // Game over clears the checkpoint (`levelscreen.lua:49`).
+                        self.checkpoint = None;
+                        self.respawn_sublevel = 0;
                         self.state = GameState::Menu;
                     }
                 }

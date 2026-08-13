@@ -76,6 +76,14 @@ impl Mari0Game {
             return;
         }
         ctx.audio.play("pipe");
+        // Taking a pipe out of an intermission stub makes the destination the place
+        // to respawn (`mario.lua:2891-2893`). Without this, dying in 1-2_1 drops the
+        // player back into 1-2 — a 24-tile corridor whose only content is this pipe.
+        if self.level.intermission
+            && let PipeTarget::Sublevel(dest) = target
+        {
+            self.respawn_sublevel = dest;
+        }
         self.player.vx = 0.0;
         self.player.vy = 0.0;
         self.pipe = Some(PipeTransit {
@@ -134,6 +142,41 @@ impl Mari0Game {
                     self.enter_pipe(ctx, PipeDir::Right, target);
                     return;
                 }
+            }
+        }
+    }
+
+    /// The window Mario stays visible in while moving through a pipe.
+    ///
+    /// Without this he slides *over* the pipe instead of into it. The original
+    /// clips him to a small box outside the mouth (`customscissor`, set in
+    /// `mario:pipe` and cleared when `pipeup` finishes) — that's one of the 43
+    /// `setScissor` calls that are gameplay-visible rather than decoration.
+    ///
+    /// Expressed as "outside the mouth" rather than by porting the original's
+    /// literal rect: its numbers are relative to a body origin offset by `-6/16` of
+    /// a block, so copying them across coordinate systems would be guesswork. The
+    /// mouth edge comes from where Mario stood when the trip began, which is exact.
+    ///
+    /// Returned in screen space, matching the draw calls it wraps.
+    pub(crate) fn pipe_clip_rect(&self, cam_x: f32, vw: f32, vh: f32) -> Option<[f32; 4]> {
+        let transit = self.pipe.as_ref()?;
+        match transit.dir {
+            // Feet at the start of the trip == the mouth's top surface.
+            PipeDir::Down => {
+                let mouth_top = transit.from.1 + self.player.height;
+                Some([0.0, 0.0, vw, mouth_top.max(0.0)])
+            }
+            // The arrival starts sunk by the slide distance, so undo it to recover
+            // the rim.
+            PipeDir::Up => {
+                let mouth_top = transit.from.1 - SLIDE_DOWN_DIST + self.player.height;
+                Some([0.0, 0.0, vw, mouth_top.max(0.0)])
+            }
+            // Right edge at the start of the trip == the mouth's near face.
+            PipeDir::Right => {
+                let mouth_left = transit.from.0 + self.player.width - cam_x;
+                Some([0.0, 0.0, mouth_left.max(0.0), vh])
             }
         }
     }
