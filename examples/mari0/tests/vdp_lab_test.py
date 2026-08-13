@@ -110,7 +110,27 @@ async def run(ws):
     check("驱动的既有门也有指示灯", kinds["door"] >= 1 and kinds["ground_light"] >= 1, str(dict(kinds)))
     check("每个 input 只有一个 driver", all(isinstance(e["driver"], (int, type(None))) for e in lab))
 
+    section("2b. 地板按钮：站上去才按下，隔几格站着不算")
+    # 感应框是从 1 基 tile 坐标推出来的（`button.lua:8-24`：self.x = cox-15/16），
+    # 把 cox 当成 0 基就会整块偏一格 —— 连线全对、按钮却在别处，只有真的站上去才测得出。
+    await rpc(ws, "game.setState", {"state": "playing"})
+    for i in buttons:
+        col, row = lab[i]["cell"]
+        await rpc(ws, "game.setPlayerPos", {"x": (col + 0.5) * T, "y": row * T})
+        await step(ws, 3)
+        s2 = await snap(ws)
+        driven_doors = [j for j, e in enumerate(s2["lab"]) if e["driver"] == i and e["kind"] == "door"]
+        check(f"站在按钮 {i} ({col},{row}) 上按下了它", s2["lab"][i]["on"],
+              f"on_ground={s2['player']['on_ground']}")
+        check(f"它的门收到了 on", all(s2["lab"][j]["on"] for j in driven_doors), str(driven_doors))
+        await rpc(ws, "game.setPlayerPos", {"x": (col - 3) * T, "y": row * T})
+        await step(ws, 3)
+        s2 = await snap(ws)
+        check(f"离开三格后松开", not s2["lab"][i]["on"])
+
     section("3. 尚未实现行为的元件被标成 inert，不假装能用")
+    s = await load_lab(ws, 1, 1)
+    lab = s["lab"]
     inert = sorted({e["kind"] for e in lab if e["inert"]})
     check("box / box_tube 标为 inert", inert == ["box", "box_tube"], str(inert))
     check("门和按钮不是 inert", not any(e["inert"] for e in lab if e["kind"] in ("door", "button")))

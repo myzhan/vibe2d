@@ -922,26 +922,52 @@ pub(crate) enum Signal {
     Toggle,
 }
 
-/// The area a floor button senses, in world pixels: `[x, y, w, h]`.
+/// The plate of a floor button, in world pixels: `[x, y, w, h]`.
 ///
-/// The original probes a box inset from the button's own footprint
+/// `self.x = cox-15/16, self.y = coy-3/16, 30/16 × 3/16` (`button.lua:8-11`), so the
+/// plate is 30/16 blocks wide, **straddles the boundary** with the cell to its right,
+/// and lies flat on the floor of its own row.
+///
+/// ## The one-based trap
+///
+/// The original's `cox` is a 1-based tile index; the block coordinate it names is the
+/// *right* edge of that tile. Our cell index is 0-based, so `cox = c + 1` and every
+/// one of these offsets is relative to `c + 1`, not `c`. Getting that wrong puts the
+/// plate a whole block left and (via `self.y`) a block up — which is exactly the bug
+/// this replaced: standing on a button did nothing, and falling past a block away
+/// pressed it.
+pub(crate) fn button_plate_rect(cell: (i32, i32)) -> [f32; 4] {
+    let (c, r) = (cell.0 as f32 + 1.0, cell.1 as f32 + 1.0);
+    [
+        (c - 15.0 / 16.0) * TILE_SIZE,
+        (r - 3.0 / 16.0) * TILE_SIZE,
+        30.0 / 16.0 * TILE_SIZE,
+        3.0 / 16.0 * TILE_SIZE,
+    ]
+}
+
+/// The area a floor button senses, in world pixels.
+///
+/// The original probes a box inset from the plate
 /// (`checkrect(self.x+5/16, self.y-2/16, 20/16, 1)`, `button.lua:24`) — narrower than
 /// the plate and reaching a block upward, so brushing the very edge doesn't press it.
 pub(crate) fn button_sense_rect(cell: (i32, i32)) -> [f32; 4] {
-    let (c, r) = (cell.0 as f32, cell.1 as f32);
-    // The plate is centred on its cell and 30/16 blocks wide; the sensed strip is
-    // 20/16 wide, starting 5/16 in.
-    let x = (c - 15.0 / 16.0 + 5.0 / 16.0) * TILE_SIZE;
-    let y = (r - 3.0 / 16.0 - 2.0 / 16.0) * TILE_SIZE - TILE_SIZE;
-    [x, y, 20.0 / 16.0 * TILE_SIZE, TILE_SIZE]
+    let [x, y, _, _] = button_plate_rect(cell);
+    [
+        x + 5.0 / 16.0 * TILE_SIZE,
+        y - 2.0 / 16.0 * TILE_SIZE,
+        20.0 / 16.0 * TILE_SIZE,
+        TILE_SIZE,
+    ]
 }
 
 /// The rect a wall button can be pressed from, in world pixels.
 ///
 /// `adduserect(x-10/16, y-12/16, 4/16, 12/16)` (`pushbutton.lua:11`) — a narrow strip
 /// beside the panel, so you have to be standing at it rather than anywhere nearby.
+/// Same one-based caveat as [`button_plate_rect`].
 pub(crate) fn push_button_use_rect(cell: (i32, i32)) -> [f32; 4] {
-    let (c, r) = (cell.0 as f32, cell.1 as f32);
+    let (c, r) = (cell.0 as f32 + 1.0, cell.1 as f32 + 1.0);
     [
         (c - 10.0 / 16.0) * TILE_SIZE,
         (r - 12.0 / 16.0) * TILE_SIZE,
@@ -1369,6 +1395,32 @@ mod tests {
         lab.elements[0].on = false;
         lab.step_beams(&level, None);
         assert!(lab.bridge_rects().is_empty());
+    }
+
+    /// A floor button senses the body standing **on** it, and nothing a block away.
+    ///
+    /// The rect is built from 1-based tile arithmetic, so an off-by-one block is the
+    /// natural mistake and it is invisible from the wiring tests: the network is
+    /// perfect, the plate is just somewhere else. Pinned with a body resting on the
+    /// plate's own row.
+    #[test]
+    fn a_floor_button_senses_a_body_standing_on_it() {
+        // 0-based cell (9, 10): the plate lies on the floor of row 10, straddling the
+        // boundary into column 10.
+        let plate = button_plate_rect((9, 10));
+        assert_eq!(plate[0], (9.0 + 1.0 / 16.0) * TILE_SIZE, "plate left edge");
+        assert_eq!(plate[1], (10.0 + 13.0 / 16.0) * TILE_SIZE, "plate top");
+
+        let sense = button_sense_rect((9, 10));
+        // Small Mario, feet on the floor of row 10 — i.e. standing on the plate.
+        let standing = [9.5 * TILE_SIZE, 10.0 * TILE_SIZE, PLAYER_SMALL_W, TILE_SIZE];
+        assert!(aabb_overlap(standing, sense), "standing on it presses it");
+
+        // One column left, and one row up, must not.
+        let beside = [7.4 * TILE_SIZE, 10.0 * TILE_SIZE, PLAYER_SMALL_W, TILE_SIZE];
+        assert!(!aabb_overlap(beside, sense), "a body beside it does not");
+        let above = [9.5 * TILE_SIZE, 8.0 * TILE_SIZE, PLAYER_SMALL_W, TILE_SIZE];
+        assert!(!aabb_overlap(above, sense), "a body a row above does not");
     }
 
     /// The shipped levels, end to end: every laser that is aimed at a detector must
