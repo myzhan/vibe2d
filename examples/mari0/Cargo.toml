@@ -5,10 +5,16 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-default = ["vdp"]
+default = ["vdp", "gamepad"]
 vdp = ["vibe2d/vdp", "dep:serde_json", "dep:serde"]
+gamepad = ["vibe2d/gamepad"]
 profiling = ["vibe2d/profiling"]
 profiling-callstacks = ["vibe2d/profiling-callstacks"]
+
+[build-dependencies]
+# Decodes the tilesheets' marker pixels into the tile property table at build
+# time — see build.rs for why that table must not be hand-written.
+image.workspace = true
 
 [dependencies]
 vibe2d = { workspace = true }

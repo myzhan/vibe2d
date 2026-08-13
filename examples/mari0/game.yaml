@@ -26,6 +26,11 @@ assets:
     mario_big3: "assets/mari0/bigmarioanimations3.png"
     goomba: "assets/mari0/goomba.png"
     koopa: "assets/mari0/koopa.png"
+    koopa_red: "assets/mari0/koopared.png"
+    beetle: "assets/mari0/beetle.png"
+    plant: "assets/mari0/plant.png"
+    cheep_red: "assets/mari0/cheepcheep.png"
+    cheep_white: "assets/mari0/cheepcheep.png"
     coin_anim: "assets/mari0/coinanimation.png"
     portal: "assets/mari0/portal.png"
     portal_v: "assets/mari0/portal_v.png"
@@ -64,23 +69,41 @@ assets:
     shot: "assets/sounds/shot.ogg"
 
 input:
+  gamepad:
+    deadzone: 0.15
+    # Movement is bound to the left stick, so the threshold stays at the default
+    # 0.5 — unlike Tetris, nothing here is destructive enough to need a guard.
+    axis_threshold: 0.5
+
   actions:
     move_left:
       keys: ["Left", "A"]
+      gamepad_buttons: ["DPadLeft"]
+      gamepad_axes: ["LeftStickLeft"]
     move_right:
       keys: ["Right", "D"]
+      gamepad_buttons: ["DPadRight"]
+      gamepad_axes: ["LeftStickRight"]
     jump:
       keys: ["Space", "W"]
+      gamepad_buttons: ["South"]
     crouch:
       keys: ["Down", "S"]
+      gamepad_buttons: ["DPadDown"]
+      gamepad_axes: ["LeftStickDown"]
+    # The portal gun goes on the triggers: they're analogue, so they read as the
+    # two "weapons" a Portal player expects, and they leave the face buttons free.
     portal_blue:
       keys: []
       mouse_buttons: ["Left"]
+      gamepad_buttons: ["LeftTrigger"]
     portal_orange:
       keys: []
       mouse_buttons: ["Right"]
+      gamepad_buttons: ["RightTrigger"]
     fire:
       keys: ["F", "ShiftLeft"]
+      gamepad_buttons: ["West", "RightShoulder"]
 
 debug:
   vdp:
