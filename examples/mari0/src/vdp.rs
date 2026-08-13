@@ -8,6 +8,7 @@ use crate::constants::*;
 use crate::enemies::*;
 use crate::game::{GameState, Mari0Game};
 use crate::items::*;
+use crate::music::MusicPhase;
 use crate::player::*;
 use crate::portal::*;
 use crate::world::*;
@@ -34,6 +35,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) lives: u32,
     pub(crate) combo_index: usize,
     pub(crate) time_remaining: f32,
+    /// Which stage of the low-time music sequence is active.
+    pub(crate) music_phase: MusicPhase,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -126,6 +129,12 @@ pub(crate) struct LevelView {
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) flag_x: f32,
+    /// The level's `music` field verbatim (1 = silent … 7 = mappack-supplied).
+    pub(crate) music: u8,
+    /// The environment palette, so a test can tell a castle from an overworld.
+    pub(crate) spriteset: u8,
+    pub(crate) background: u8,
+    pub(crate) time_limit: f32,
 }
 
 #[cfg(feature = "vdp")]
@@ -204,6 +213,12 @@ pub(crate) struct SetScore {
     pub(crate) score: Option<u32>,
     pub(crate) coins: Option<u32>,
     pub(crate) lives: Option<u32>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+pub(crate) struct SetTime {
+    pub(crate) time: f32,
 }
 
 #[cfg(feature = "vdp")]
@@ -318,6 +333,10 @@ impl Mari0Game {
                 width: self.level.width,
                 height: self.level.height,
                 flag_x: self.level.flag_x,
+                music: self.level.music,
+                spriteset: self.level.spriteset,
+                background: self.level.background,
+                time_limit: self.level.time_limit,
             },
             camera_x: self.camera.x,
             score: self.score,
@@ -325,6 +344,7 @@ impl Mari0Game {
             lives: self.lives,
             combo_index: self.combo_index,
             time_remaining: self.time_remaining,
+            music_phase: self.music_phase,
             items: self
                 .items
                 .iter()
@@ -408,6 +428,28 @@ impl Mari0Game {
             _ => return Err(format!("Unknown state: {}", p.state)),
         }
         Ok(serde_json::json!({"state": p.state}))
+    }
+
+    /// Set the level clock directly.
+    ///
+    /// Exists so a test can reach the low-time music sequence without stepping
+    /// 7200 frames to burn 300 time units off a 400-unit level. Setting the clock
+    /// *above* the 99 threshold also rewinds the music phase, so a test can run
+    /// the warning → fast transition more than once.
+    #[vdp("game.setTime")]
+    pub(crate) fn vdp_set_time(&mut self, p: SetTime) -> Result<serde_json::Value, String> {
+        if p.time < 0.0 {
+            return Err(format!("time must not be negative, got {}", p.time));
+        }
+        self.time_remaining = p.time;
+        if p.time > crate::music::LOW_TIME {
+            self.music_phase = MusicPhase::Normal;
+            self.warning_started_at = None;
+        }
+        Ok(serde_json::json!({
+            "time_remaining": self.time_remaining,
+            "music_phase": self.music_phase,
+        }))
     }
 
     #[vdp("game.setScore")]

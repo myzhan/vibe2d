@@ -14,6 +14,7 @@ mod effects;
 mod enemies;
 mod game;
 mod items;
+mod music;
 mod physics;
 mod player;
 mod portal;

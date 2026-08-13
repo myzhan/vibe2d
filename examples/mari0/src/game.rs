@@ -11,6 +11,7 @@ use crate::effects::*;
 use crate::enemies::*;
 use crate::items::*;
 use crate::level;
+use crate::music::MusicPhase;
 use crate::physics::*;
 use crate::player::*;
 use crate::portal::*;
@@ -57,6 +58,17 @@ pub(crate) struct Mari0Game {
     pub(crate) items: Vec<Item>,
     pub(crate) fireballs: Vec<Fireball>,
     pub(crate) star_timer: f32, // player star invincibility timer
+
+    /// Where the level music is in its low-time sequence.
+    pub(crate) music_phase: MusicPhase,
+    /// Clock reading when the low-time warning fired, so the switch to the fast
+    /// variant can be timed off the game clock rather than a separate timer.
+    pub(crate) warning_started_at: Option<f32>,
+    /// Set when the level changes; `update` starts the track on the next frame.
+    ///
+    /// Deferred rather than started inline because `reset_level` is also reached
+    /// from VDP methods, which have no `Context` to play audio through.
+    pub(crate) music_restart: bool,
 
     // Sprite sheet textures
     pub(crate) tex_tiles: TextureId,
@@ -156,6 +168,9 @@ impl Mari0Game {
         self.star_timer = 0.0;
         self.camera = Camera { x: 0.0 };
         self.level = level;
+        self.music_phase = MusicPhase::Normal;
+        self.warning_started_at = None;
+        self.music_restart = true;
     }
 
     pub(crate) fn update_playing(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
@@ -385,10 +400,8 @@ impl Mari0Game {
         let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);
         self.camera.x = self.camera.x.clamp(0.0, max_camera);
 
-        // ── Timer ──
-        self.time_remaining -= dt;
-        if self.time_remaining <= 0.0 {
-            self.time_remaining = 0.0;
+        // ── Timer and low-time music ──
+        if self.tick_clock(ctx, dt) {
             self.die(ctx);
             return;
         }
@@ -531,6 +544,11 @@ impl Game for Mari0Game {
             fireballs: Vec::new(),
             star_timer: 0.0,
             level,
+            music_phase: MusicPhase::Normal,
+            warning_started_at: None,
+            // Starts on the first frame of play, not at construction: the menu is
+            // silent, and `Context` isn't usable for audio until then anyway.
+            music_restart: false,
 
             tex_tiles: t("tiles"),
             tex_mario_layers: [t("mario0"), t("mario1"), t("mario2"), t("mario3")],
@@ -563,6 +581,11 @@ impl Game for Mari0Game {
     }
 
     fn update(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
+        if self.music_restart {
+            self.music_restart = false;
+            self.start_music(ctx);
+        }
+
         match self.state {
             GameState::Menu => {
                 if input.is_action_just_pressed("jump") {

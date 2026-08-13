@@ -34,6 +34,8 @@ pub(crate) struct Level {
     /// tiles: 7, 49 and 122). What it *does* decide is the replacement tile a
     /// struck block turns into, which differs per environment.
     pub(crate) spriteset: u8,
+    /// Which theme to play, 1..=7. See `music::MusicPhase` for the encoding.
+    pub(crate) music: u8,
 }
 
 /// A pending enemy placement produced by the loader.
@@ -289,5 +291,6 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         time_limit: parsed.meta.timelimit as f32,
         background: parsed.meta.background,
         spriteset: parsed.meta.spriteset,
+        music: parsed.meta.music,
     }
 }

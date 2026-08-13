@@ -68,6 +68,23 @@ assets:
     scorering: "assets/sounds/scorering.ogg"
     shot: "assets/sounds/shot.ogg"
 
+    # Level music. Each theme has a `-fast` twin, played from zero once the clock
+    # drops below 99 — see `src/music.rs`. `starmusic` doubles as the bonus-stage
+    # theme (`music = 6`).
+    overworld: "assets/sounds/overworld.ogg"
+    overworld-fast: "assets/sounds/overworld-fast.ogg"
+    underground: "assets/sounds/underground.ogg"
+    underground-fast: "assets/sounds/underground-fast.ogg"
+    castle: "assets/sounds/castle.ogg"
+    castle-fast: "assets/sounds/castle-fast.ogg"
+    underwater: "assets/sounds/underwater.ogg"
+    underwater-fast: "assets/sounds/underwater-fast.ogg"
+    starmusic: "assets/sounds/starmusic.ogg"
+    starmusic-fast: "assets/sounds/starmusic-fast.ogg"
+    # Warning beep at 99. Not music: it plays over silence, because crossing 99
+    # stops every other source.
+    lowtime: "assets/sounds/lowtime.ogg"
+
 input:
   gamepad:
     deadzone: 0.15
