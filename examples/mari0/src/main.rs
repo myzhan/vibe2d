@@ -14,6 +14,7 @@ mod effects;
 mod enemies;
 mod game;
 mod items;
+mod maze;
 mod music;
 mod physics;
 mod pipe;

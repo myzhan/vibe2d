@@ -6,7 +6,7 @@
 //! parser be finished and tested against all 73 shipped levels independently of
 //! the game loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::constants::*;
 use crate::effects::CoinInstance;
@@ -67,6 +67,119 @@ pub(crate) struct Level {
     /// sublevel to come back to on death, so dying in 1-2_1 doesn't dump you back
     /// in the stub (`mario.lua:2891-2893`).
     pub(crate) intermission: bool,
+
+    // ── Maze spans (the looping castles) ────────────────────────────
+    /// First and last column of each maze span. **Mutable at runtime**: splicing a
+    /// repeat into the map shifts every column to its right, these included.
+    pub(crate) maze_starts: Vec<i32>,
+    pub(crate) maze_ends: Vec<i32>,
+    /// How many gates each span requires, i.e. the highest gate number inside it.
+    ///
+    /// Floors at 1 (`game.lua:2120`), which is why a span with **no** gates can
+    /// never be solved. That's not an oversight: 8-4's spans have no gates at all
+    /// and are meant to loop forever — you leave by pipe, not by walking.
+    pub(crate) maze_gate_counts: Vec<u32>,
+    /// Gate cells → gate number. Walking your centre through them in order is what
+    /// solves a span.
+    pub(crate) maze_gates: HashMap<(i32, i32), u32>,
+    /// Columns holding a `mazeend`. Copying one marks the end of a repetition.
+    ///
+    /// A column set, not cells: the original's test is "does this column contain a
+    /// mazeend in any row" (`game.lua:651-660`), and the parser only records the
+    /// column anyway.
+    pub(crate) maze_end_cols: HashSet<i32>,
+}
+
+impl Level {
+    /// Splice a copy of column `source` in at `at`, widening the level by one.
+    ///
+    /// This is the whole trick behind the looping castles. The original does
+    /// `table.insert(map, x, …)` at the camera frontier (`game.lua:606-627`), which
+    /// pushes the rest of the level — including everything past the maze — one
+    /// column right. The corridor never loops back on itself; the map simply grows,
+    /// so the player can walk forward forever.
+    ///
+    /// Everything keyed by column and at or past `at` shifts with it. The original
+    /// only shifts `flagx`/`axex`/`mazestarts`/`mazeends` by hand because those are
+    /// the only positions it hoists out of the tile grid — pipes, checkpoints and
+    /// enemies live *in* `map[x][y]` there and move for free. This port lifted them
+    /// into their own tables at load time, so shifting them here is what keeps them
+    /// equivalent, not an embellishment.
+    pub(crate) fn insert_column(&mut self, at: i32, source: i32) {
+        if at < 0 || source < 0 || (source as usize) >= self.width {
+            return;
+        }
+        let at_usize = (at as usize).min(self.width);
+
+        for row in &mut self.tiles {
+            let copied = row[source as usize];
+            row.insert(at_usize, copied);
+        }
+        self.width += 1;
+
+        let bump_col = |c: i32| if c >= at { c + 1 } else { c };
+        let bump_px = |x: f32| {
+            if x >= at as f32 * TILE_SIZE {
+                x + TILE_SIZE
+            } else {
+                x
+            }
+        };
+
+        for coin in &mut self.coins {
+            coin.x = bump_px(coin.x);
+        }
+        for spawn in &mut self.enemy_spawns {
+            spawn.x = bump_px(spawn.x);
+        }
+        self.spawns_by_cell = HashMap::new();
+        for (i, sp) in self.enemy_spawns.iter().enumerate() {
+            self.spawns_by_cell.entry(sp.cell()).or_default().push(i);
+        }
+
+        self.block_contents = self
+            .block_contents
+            .drain()
+            .map(|((row, col), v)| ((row, bump_col(col as i32) as usize), v))
+            .collect();
+        self.multi_coin_timers = self
+            .multi_coin_timers
+            .drain()
+            .map(|((row, col), v)| ((row, bump_col(col as i32) as usize), v))
+            .collect();
+
+        self.flag_x = bump_px(self.flag_x);
+        self.pipes = self
+            .pipes
+            .drain()
+            .map(|((c, r), v)| ((bump_col(c), r), v))
+            .collect();
+        self.warp_pipes = self
+            .warp_pipes
+            .drain()
+            .map(|((c, r), v)| ((bump_col(c), r), v))
+            .collect();
+        self.pipe_spawns = self
+            .pipe_spawns
+            .drain()
+            .map(|(k, (c, r))| (k, (bump_col(c), r)))
+            .collect();
+        for (c, _) in &mut self.checkpoints {
+            *c = bump_col(*c);
+        }
+        for c in &mut self.maze_starts {
+            *c = bump_col(*c);
+        }
+        for c in &mut self.maze_ends {
+            *c = bump_col(*c);
+        }
+        self.maze_gates = self
+            .maze_gates
+            .drain()
+            .map(|((c, r), v)| ((bump_col(c), r), v))
+            .collect();
+        self.maze_end_cols = self.maze_end_cols.drain().map(bump_col).collect();
+    }
 }
 
 /// A pending enemy placement produced by the loader.
@@ -378,6 +491,31 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         .iter()
         .map(|(x, y, from)| (*from as u32, (*x as i32, *y as i32)))
         .collect();
+    let maze_gates: HashMap<(i32, i32), u32> = parsed
+        .markers
+        .maze_gates
+        .iter()
+        .map(|(x, y, gate)| ((*x as i32, *y as i32), *gate as u32))
+        .collect();
+    let maze_end_cols: HashSet<i32> = parsed.markers.maze_ends.iter().map(|c| *c as i32).collect();
+    // Gate count per span: the highest gate number between its start and end,
+    // never below 1 (`game.lua:2118-2131`).
+    let maze_gate_counts: Vec<u32> = parsed
+        .markers
+        .maze_starts
+        .iter()
+        .zip(&parsed.markers.maze_ends)
+        .map(|(start, end)| {
+            maze_gates
+                .iter()
+                .filter(|((col, _), _)| *col >= *start as i32 && *col <= *end as i32)
+                .map(|(_, gate)| *gate)
+                .max()
+                .unwrap_or(1)
+                .max(1)
+        })
+        .collect();
+
     // Already sorted by the parser; the pass-detection walks them in order.
     let checkpoints = parsed
         .markers
@@ -406,6 +544,16 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         warp_pipes,
         checkpoints,
         intermission: parsed.meta.intermission,
+        maze_starts: parsed
+            .markers
+            .maze_starts
+            .iter()
+            .map(|c| *c as i32)
+            .collect(),
+        maze_ends: parsed.markers.maze_ends.iter().map(|c| *c as i32).collect(),
+        maze_gate_counts,
+        maze_gates,
+        maze_end_cols,
     }
 }
 

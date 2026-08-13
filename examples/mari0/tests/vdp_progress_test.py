@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-mari0 复活点（checkpoint）验证脚本
+mari0 关卡推进验证脚本：复活点 + 循环城堡迷宫
 
 原版规则（`mario.lua:998-1005`、`game.lua:2144-2164`、`levelscreen.lua:11/34/43/49`）：
 
@@ -176,13 +176,84 @@ async def run(ws):
         s["level"]["name"],
     )
 
+    section("8. 循环城堡 4-4：走过迷宫尽头而没解开 → 走廊被无限接长")
+    # 原版不是让地图循环，而是在镜头前沿**插入一列迷宫段的拷贝**（`game.lua:606-627`），
+    # 把关卡余下部分整体右推。玩家一直向前走，走廊永远走不完。
+    s = await load(ws, 4, 4)
+    m = s["maze"]
+    check("4-4 有两段迷宫", m and m["starts"] == [13, 81], str(m and m["starts"]))
+    check("每段只需 1 个门（4-4 的门全是 1 号）", m["gate_counts"] == [1, 1], str(m["gate_counts"]))
+    check("初始都没解开", m["solved"] == [False, False], str(m["solved"]))
+    width0 = s["level"]["width"]
+    check("初始宽度 193", width0 == 193, str(width0))
+
+    # 走无门的第 8 行（门在 3~5 行，即"正确的上层通道"）。
+    # 每步都强制回 playing：传送到半空会掉下去摔死，一死镜头就停住，
+    # 第一版探针就是这样什么都没测到的。
+    widths = []
+    sources = []
+    for col in range(20, 140, 4):
+        await rpc(ws, "game.setState", {"state": "playing"})
+        await rpc(ws, "game.setPlayerPos", {"x": col * TILE_SIZE, "y": 8 * TILE_SIZE})
+        await step(ws, 2)
+        s = await snap(ws)
+        widths.append(s["level"]["width"])
+        if s["maze"]["repeat_from"] is not None:
+            sources.append(s["maze"]["repeat_from"])
+    check("关卡确实被接长了", s["level"]["width"] > width0, f"{width0} → {s['level']['width']}")
+    check("正在接长中", s["maze"]["in_progress"], str(s["maze"]["in_progress"]))
+    check("仍然没解开（没碰到门）", s["maze"]["solved"][0] is False, str(s["maze"]["solved"]))
+    check("宽度是单调增长的", widths == sorted(widths), f"{widths[:4]}…{widths[-3:]}")
+    check(
+        "拷贝源始终落在第一段 [13..78] 之内（会回卷，不会跑出段外）",
+        all(13 <= src <= 78 for src in sources),
+        f"源范围 {min(sources)}..{max(sources)}",
+    )
+
+    section("9. 走正确的门 → 解开，走廊停止接长")
+    s = await load(ws, 4, 4)
+    width0 = s["level"]["width"]
+    # 门在 3~5 行、42~62 列。走过去把 var 顶到 1。
+    for col in range(42, 64, 2):
+        await rpc(ws, "game.setState", {"state": "playing"})
+        await rpc(ws, "game.setPlayerPos", {"x": col * TILE_SIZE, "y": 4 * TILE_SIZE})
+        await step(ws, 2)
+    s = await snap(ws)
+    check("走过门后 var 变成 1", s["maze"]["var"] == 1, str(s["maze"]["var"]))
+    # 继续走到段尾之外：此时才会判定 solved 并跳过接长。
+    for col in range(64, 130, 4):
+        await rpc(ws, "game.setState", {"state": "playing"})
+        await rpc(ws, "game.setPlayerPos", {"x": col * TILE_SIZE, "y": 4 * TILE_SIZE})
+        await step(ws, 2)
+    s = await snap(ws)
+    check("第一段已解开", s["maze"]["solved"][0] is True, str(s["maze"]["solved"]))
+    check(
+        "解开后关卡没有被接长",
+        s["level"]["width"] == width0,
+        f"{width0} → {s['level']['width']}",
+    )
+
+    section("10. 8-4 没有任何门：设计上就解不开，出口是水管")
+    s = await load(ws, 8, 4)
+    m = s["maze"]
+    check("8-4 有一段迷宫", m and len(m["starts"]) == 1, str(m and m["starts"]))
+    check("门数下限是 1（但场上没有门可走）", m["gate_counts"] == [1], str(m["gate_counts"]))
+    width0 = s["level"]["width"]
+    for col in range(35, 120, 4):
+        await rpc(ws, "game.setState", {"state": "playing"})
+        await rpc(ws, "game.setPlayerPos", {"x": col * TILE_SIZE, "y": 8 * TILE_SIZE})
+        await step(ws, 2)
+    s = await snap(ws)
+    check("走多久都解不开", s["maze"]["solved"] == [False], str(s["maze"]["solved"]))
+    check("走廊一直在接长", s["level"]["width"] > width0, f"{width0} → {s['level']['width']}")
+
     await load(ws, 1, 1)
     await rpc(ws, "engine.resume")
 
 
 async def main():
     print("=" * 60)
-    print("mari0 复活点验证")
+    print("mari0 关卡推进验证：复活点 + 迷宫")
     print("=" * 60)
     try:
         async with websockets.connect(WS_URL) as ws:
@@ -196,7 +267,7 @@ async def main():
     if FAILURES:
         print(f"失败 {len(FAILURES)} 项: {FAILURES}")
         return 1
-    print("复活点规则全部通过")
+    print("复活点与迷宫规则全部通过")
     return 0
 
 

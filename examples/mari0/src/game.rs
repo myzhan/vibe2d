@@ -11,6 +11,7 @@ use crate::effects::*;
 use crate::enemies::*;
 use crate::items::*;
 use crate::level;
+use crate::maze::MazeState;
 use crate::music::MusicPhase;
 use crate::physics::*;
 use crate::pipe::PipeTransit;
@@ -70,6 +71,9 @@ pub(crate) struct Mari0Game {
 
     /// The pipe trip in progress, if any. While set, the player has no control.
     pub(crate) pipe: Option<PipeTransit>,
+
+    /// Progress through this level's maze spans, if it has any.
+    pub(crate) maze: MazeState,
 
     /// The highest checkpoint passed, as a tile cell.
     ///
@@ -250,6 +254,7 @@ impl Mari0Game {
         self.fireballs.clear();
         self.star_timer = 0.0;
         self.pipe = None;
+        self.maze = MazeState::for_level(level.maze_starts.len());
         self.level = level;
         // Respawning at a checkpoint has to bring the camera along, or the first
         // frame draws the level's opening while the player stands 99 columns away.
@@ -550,6 +555,8 @@ impl Mari0Game {
         // a goomba that appears this frame still gets its first step.
         self.spawn_revealed_columns();
         self.check_checkpoint_passed();
+        self.check_maze_gate();
+        self.update_maze();
 
         // ── Timer and low-time music ──
         if self.tick_clock(ctx, dt) {
@@ -687,6 +694,7 @@ impl Game for Mari0Game {
             star_timer: 0.0,
             level,
             pipe: None,
+            maze: MazeState::default(),
             checkpoint: None,
             checkpoints_passed: 0,
             respawn_sublevel: 0,

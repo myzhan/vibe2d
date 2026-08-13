@@ -50,6 +50,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) checkpoint: Option<[i32; 2]>,
     /// Sublevel a death would reload; 0 is the main level.
     pub(crate) respawn_sublevel: u32,
+    /// Maze progress, for the looping castles. `null` in levels without spans.
+    pub(crate) maze: Option<MazeView>,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -134,6 +136,20 @@ pub(crate) struct CoinView {
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) collected: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct MazeView {
+    /// Gate sequence progress. Reaching a span's `gate_counts` solves it.
+    pub(crate) var: u32,
+    pub(crate) solved: Vec<bool>,
+    pub(crate) gate_counts: Vec<u32>,
+    pub(crate) starts: Vec<i32>,
+    pub(crate) ends: Vec<i32>,
+    pub(crate) repeat_from: Option<i32>,
+    pub(crate) in_progress: bool,
+    pub(crate) last_repeat: i32,
 }
 
 #[cfg(feature = "vdp")]
@@ -386,6 +402,16 @@ impl Mari0Game {
             pipe_clip: self.pipe_clip_rect(self.camera.x, self.vw, self.vh),
             checkpoint: self.checkpoint.map(|(c, r)| [c, r]),
             respawn_sublevel: self.respawn_sublevel,
+            maze: (!self.level.maze_starts.is_empty()).then(|| MazeView {
+                var: self.maze.var,
+                solved: self.maze.solved.clone(),
+                gate_counts: self.level.maze_gate_counts.clone(),
+                starts: self.level.maze_starts.clone(),
+                ends: self.level.maze_ends.clone(),
+                repeat_from: self.maze.repeat_from,
+                in_progress: self.maze.in_progress,
+                last_repeat: self.maze.last_repeat,
+            }),
             items: self
                 .items
                 .iter()
