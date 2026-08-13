@@ -19,7 +19,15 @@ pub(crate) struct Level {
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) coins: Vec<CoinInstance>,
+    /// Every enemy the level *can* produce. Nothing is instantiated at load — the
+    /// camera reveals them column by column. See `Mari0Game::spawn_revealed_columns`.
     pub(crate) enemy_spawns: Vec<EnemySpawnPoint>,
+    /// `enemy_spawns` indices bucketed by tile cell, so both the per-column sweep
+    /// and the `x±2` cluster cascade are lookups rather than scans.
+    ///
+    /// A `Vec` per cell because a firebar puts one spawn per segment on the same
+    /// pivot cell.
+    pub(crate) spawns_by_cell: HashMap<(i32, i32), Vec<usize>>,
     pub(crate) block_contents: HashMap<(usize, usize), BlockContent>,
     pub(crate) multi_coin_timers: HashMap<(usize, usize), f32>,
     pub(crate) player_start: (f32, f32),
@@ -50,6 +58,21 @@ pub(crate) struct EnemySpawnPoint {
     pub(crate) facing_right: bool,
     /// Index along a firebar; 0 for everything else.
     pub(crate) segment: u32,
+}
+
+impl EnemySpawnPoint {
+    /// The tile cell this spawn sits in.
+    ///
+    /// Exact rather than approximate: the loader builds `x`/`y` as
+    /// `tile * TILE_SIZE`, so the division recovers the original cell. The lazy
+    /// spawner works in cells because the original does — it walks columns as the
+    /// camera reveals them.
+    pub(crate) fn cell(&self) -> (i32, i32) {
+        (
+            (self.x / TILE_SIZE).floor() as i32,
+            (self.y / TILE_SIZE).floor() as i32,
+        )
+    }
 }
 
 pub(crate) struct Camera {
@@ -278,12 +301,18 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         .map(|(x, _)| x as f32 * TILE_SIZE)
         .unwrap_or(0.0);
 
+    let mut spawns_by_cell: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, sp) in enemy_spawns.iter().enumerate() {
+        spawns_by_cell.entry(sp.cell()).or_default().push(i);
+    }
+
     Level {
         tiles,
         width,
         height,
         coins,
         enemy_spawns,
+        spawns_by_cell,
         block_contents,
         multi_coin_timers: HashMap::new(),
         player_start,

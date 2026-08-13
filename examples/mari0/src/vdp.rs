@@ -519,7 +519,6 @@ impl Mari0Game {
             state: EnemyState::Walking,
             facing_right: p.facing_right,
             on_ground: false,
-            activated: true, // VDP-spawned enemies are always active
             anim_timer: 0.0,
             death_timer: 0.0,
             flipped_death: false,

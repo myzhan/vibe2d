@@ -3,12 +3,14 @@
 //! Scripted kinds (firebars, geysers, cheep-cheeps) ignore the walker logic
 //! entirely — see `EnemyType::is_scripted`.
 
+use std::collections::HashMap;
+
 use vibe2d::prelude::*;
 
 use crate::constants::*;
 use crate::game::Mari0Game;
 use crate::physics::*;
-use crate::world::Level;
+use crate::world::EnemySpawnPoint;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "vdp", derive(serde::Serialize))]
@@ -107,7 +109,6 @@ pub(crate) struct Enemy {
     pub(crate) state: EnemyState,
     pub(crate) facing_right: bool,
     pub(crate) on_ground: bool,
-    pub(crate) activated: bool,
     pub(crate) anim_timer: f32,
     pub(crate) death_timer: f32,
     pub(crate) flipped_death: bool, // true = star/fireball kill (flip + fly off)
@@ -136,56 +137,118 @@ pub(crate) fn enemy_height(enemy_type: EnemyType, state: EnemyState) -> f32 {
     }
 }
 
-pub(crate) fn spawn_enemies_from_level(level: &Level) -> Vec<Enemy> {
-    level
-        .enemy_spawns
-        .iter()
-        .map(|sp| {
-            let (et, x, y, face_right) = (&sp.enemy_type, &sp.x, &sp.y, &sp.facing_right);
-            let h = enemy_height(*et, EnemyState::Walking);
-            Enemy {
-                x: *x,
-                y: *y - h,
-                vx: if *face_right {
-                    ENEMY_SPEED
-                } else {
-                    -ENEMY_SPEED
-                },
-                vy: 0.0,
-                enemy_type: *et,
-                state: EnemyState::Walking,
-                facing_right: *face_right,
-                on_ground: false,
-                activated: false,
-                anim_timer: 0.0,
-                death_timer: 0.0,
-                flipped_death: false,
-                spawn_y: *y - h,
-                cycle_timer: 0.0,
-                spawn_x: *x,
-                // Each firebar segment starts at the same angle; its distance
-                // from the pivot is what differs.
-                angle_deg: 0.0,
-                segment: sp.segment,
-            }
-        })
-        .collect()
+impl Enemy {
+    /// Instantiate one spawn point.
+    fn from_spawn(sp: &EnemySpawnPoint) -> Self {
+        let h = enemy_height(sp.enemy_type, EnemyState::Walking);
+        Enemy {
+            x: sp.x,
+            // Spawn coordinates name the cell the enemy stands *on*, so a taller
+            // enemy has to be lifted by its own height to rest on that surface.
+            y: sp.y - h,
+            vx: if sp.facing_right {
+                ENEMY_SPEED
+            } else {
+                -ENEMY_SPEED
+            },
+            vy: 0.0,
+            enemy_type: sp.enemy_type,
+            state: EnemyState::Walking,
+            facing_right: sp.facing_right,
+            on_ground: false,
+            anim_timer: 0.0,
+            death_timer: 0.0,
+            flipped_death: false,
+            spawn_y: sp.y - h,
+            cycle_timer: 0.0,
+            spawn_x: sp.x,
+            // Each firebar segment starts at the same angle; its distance
+            // from the pivot is what differs.
+            angle_deg: 0.0,
+            segment: sp.segment,
+        }
+    }
+}
+
+/// Which spawns one tile column reveals, cluster rule included.
+///
+/// Split out from the game struct so the rule is testable without a window: it
+/// takes only the cell index and the "already spawned" flags, marks what it
+/// claims, and returns the indices to instantiate.
+///
+/// The original recurses into `x-2, x-1, x+1, x+2` at the *same* row whenever a
+/// cell actually yields an enemy, with the already-spawned list as the base case —
+/// its own comment reads "spawn enemies in 5x1 line so they spawn as a unit and
+/// not alone" (`game.lua:3795-3798`). So a horizontal run of goombas arrives
+/// together instead of trickling in one column at a time, and the chain can reach
+/// well past the five cells the comment suggests, because each newly spawned cell
+/// spreads in turn. Written as a work stack rather than recursion for that reason.
+///
+/// A cell that yields nothing does **not** spread: in the original the recursive
+/// calls sit inside the `if enemy then` branch.
+pub(crate) fn column_spawn_indices(
+    by_cell: &HashMap<(i32, i32), Vec<usize>>,
+    spawned: &mut [bool],
+    col: i32,
+) -> Vec<usize> {
+    let mut claimed = Vec::new();
+    let mut pending: Vec<(i32, i32)> = by_cell.keys().filter(|(c, _)| *c == col).copied().collect();
+    // Sorted so the order enemies enter the world is deterministic. Lua's `pairs`
+    // gives an arbitrary hash order here; anything stable is closer to the intent
+    // than "whatever the allocator did".
+    pending.sort_unstable();
+
+    while let Some(cell) = pending.pop() {
+        let Some(indices) = by_cell.get(&cell) else {
+            continue;
+        };
+        let fresh: Vec<usize> = indices.iter().copied().filter(|i| !spawned[*i]).collect();
+        if fresh.is_empty() {
+            continue;
+        }
+        for i in fresh {
+            spawned[i] = true;
+            claimed.push(i);
+        }
+        for d in [-2, -1, 1, 2] {
+            pending.push((cell.0 + d, cell.1));
+        }
+    }
+    claimed
 }
 
 impl Mari0Game {
+    /// Instantiate everything the camera has revealed since the last call.
+    ///
+    /// Mari0 does not create enemies at load; it walks the columns the camera has
+    /// uncovered and spawns what it finds (`game.lua:681-686`, `spawnenemy` at
+    /// `:3687`). This matters for more than memory: 8-1 is **400 tiles wide**, and
+    /// an enemy that existed from frame one would have walked off its ledge long
+    /// before the player arrived. Spawning on reveal is the original's feel, not
+    /// an optimisation.
+    ///
+    /// The frontier sits one screen-width plus one column ahead of the camera, so
+    /// enemies come into being just off the right edge.
+    pub(crate) fn spawn_revealed_columns(&mut self) {
+        let screen_cols = (self.vw / TILE_SIZE).ceil() as i32;
+        let target = (self.camera.x / TILE_SIZE).floor() as i32 + screen_cols + 1;
+        while self.spawn_frontier < target {
+            self.spawn_frontier += 1;
+            for i in column_spawn_indices(
+                &self.level.spawns_by_cell,
+                &mut self.spawned,
+                self.spawn_frontier,
+            ) {
+                self.enemies
+                    .push(Enemy::from_spawn(&self.level.enemy_spawns[i]));
+            }
+        }
+    }
+
     pub(crate) fn update_enemies(&mut self, dt: f32, ctx: &mut Context) {
         let cam_x = self.camera.x;
-        let view_w = self.vw;
 
         for enemy in &mut self.enemies {
-            // Activate enemies when they come within view + margin
-            if !enemy.activated {
-                if enemy.x < cam_x + view_w + 48.0 {
-                    enemy.activated = true;
-                }
-                continue;
-            }
-
             let ew = PLAYER_SMALL_W;
             let eh = enemy_height(enemy.enemy_type, enemy.state);
 
@@ -403,7 +466,7 @@ impl Mari0Game {
         // Player-enemy interaction
         let mut player_bounce = false;
         for enemy in &mut self.enemies {
-            if enemy.state == EnemyState::Dead || !enemy.activated {
+            if enemy.state == EnemyState::Dead {
                 continue;
             }
 
@@ -515,11 +578,161 @@ impl Mari0Game {
             if e.y > (self.level.height as f32) * TILE_SIZE + 100.0 {
                 return false;
             }
-            // Remove enemies far behind camera
-            if e.activated && e.x < cam_x - 200.0 {
+            // Scrolled well off the left edge. It does not come back: the
+            // spawn record is never cleared, exactly as `enemiesspawned` isn't.
+            if e.x < cam_x - 200.0 {
                 return false;
             }
             true
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::level;
+    use crate::world::load_level;
+
+    /// Build a cell → indices map from a list of `(col, row)` placements.
+    fn by_cell(cells: &[(i32, i32)]) -> HashMap<(i32, i32), Vec<usize>> {
+        let mut map: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (i, c) in cells.iter().enumerate() {
+            map.entry(*c).or_default().push(i);
+        }
+        map
+    }
+
+    #[test]
+    fn a_lone_enemy_spawns_with_its_own_column() {
+        let cells = [(10, 5)];
+        let map = by_cell(&cells);
+        let mut spawned = vec![false; cells.len()];
+        assert!(column_spawn_indices(&map, &mut spawned, 9).is_empty());
+        assert_eq!(column_spawn_indices(&map, &mut spawned, 10), vec![0]);
+    }
+
+    /// The cluster rule: reaching one of a group drags in the neighbours within
+    /// two columns, so a row of goombas arrives as a unit.
+    #[test]
+    fn reaching_one_of_a_group_pulls_in_neighbours_within_two_columns() {
+        // 10, 11, 12 on the same row; column 10 is revealed first.
+        let cells = [(10, 5), (11, 5), (12, 5)];
+        let map = by_cell(&cells);
+        let mut spawned = vec![false; cells.len()];
+        let mut got = column_spawn_indices(&map, &mut spawned, 10);
+        got.sort_unstable();
+        assert_eq!(got, vec![0, 1, 2], "all three should arrive together");
+        assert!(spawned.iter().all(|s| *s));
+    }
+
+    /// The chain keeps going: each newly spawned cell spreads in turn, so a long
+    /// unbroken run comes in all at once even though each hop is only two columns.
+    #[test]
+    fn the_cluster_chains_along_a_long_run() {
+        let cells: Vec<(i32, i32)> = (10..30).map(|c| (c, 5)).collect();
+        let map = by_cell(&cells);
+        let mut spawned = vec![false; cells.len()];
+        let got = column_spawn_indices(&map, &mut spawned, 10);
+        assert_eq!(got.len(), 20, "the whole run should arrive at once");
+    }
+
+    /// A gap wider than two columns stops the chain — that's what makes the rule
+    /// "this group" rather than "the whole level".
+    #[test]
+    fn a_gap_of_three_columns_breaks_the_chain() {
+        // 10, 11 … then nothing until 15.
+        let cells = [(10, 5), (11, 5), (15, 5)];
+        let map = by_cell(&cells);
+        let mut spawned = vec![false; cells.len()];
+        let mut got = column_spawn_indices(&map, &mut spawned, 10);
+        got.sort_unstable();
+        assert_eq!(got, vec![0, 1], "15 is four columns past 11, out of reach");
+        assert!(!spawned[2]);
+    }
+
+    /// Different rows are independent: the recursion only walks sideways.
+    #[test]
+    fn the_cluster_does_not_spread_vertically() {
+        let cells = [(10, 5), (11, 9)];
+        let map = by_cell(&cells);
+        let mut spawned = vec![false; cells.len()];
+        assert_eq!(column_spawn_indices(&map, &mut spawned, 10), vec![0]);
+        assert!(!spawned[1], "a different row is a different group");
+    }
+
+    /// Nothing spawns twice. This is what stops a killed enemy from returning
+    /// when the camera revisits its column.
+    #[test]
+    fn a_column_never_spawns_the_same_enemy_twice() {
+        let cells = [(10, 5)];
+        let map = by_cell(&cells);
+        let mut spawned = vec![false; cells.len()];
+        assert_eq!(column_spawn_indices(&map, &mut spawned, 10), vec![0]);
+        assert!(
+            column_spawn_indices(&map, &mut spawned, 10).is_empty(),
+            "second sweep of the same column yields nothing"
+        );
+    }
+
+    /// A firebar puts one spawn per segment on the same pivot cell, so a cell can
+    /// legitimately hold several.
+    #[test]
+    fn one_cell_can_hold_several_spawns() {
+        let cells = [(10, 5), (10, 5), (10, 5)];
+        let map = by_cell(&cells);
+        let mut spawned = vec![false; cells.len()];
+        let mut got = column_spawn_indices(&map, &mut spawned, 10);
+        got.sort_unstable();
+        assert_eq!(got, vec![0, 1, 2]);
+    }
+
+    /// Sweeping every column of a real level must claim every spawn exactly once.
+    ///
+    /// The invariant that matters for play: lazy spawning must not *lose* enemies.
+    #[test]
+    fn sweeping_all_columns_claims_every_spawn_exactly_once() {
+        for (pack, name, _) in level::LEVELS {
+            let level = load_level(pack, name);
+            let mut spawned = vec![false; level.enemy_spawns.len()];
+            let mut total = 0;
+            // Well past both ends, since the cluster rule can reach outside the
+            // level's own column range.
+            for col in -4..(level.width as i32 + 4) {
+                total += column_spawn_indices(&level.spawns_by_cell, &mut spawned, col).len();
+            }
+            assert_eq!(
+                total,
+                level.enemy_spawns.len(),
+                "{pack}/{name}: swept {total} of {} spawns",
+                level.enemy_spawns.len()
+            );
+            assert!(
+                spawned.iter().all(|s| *s),
+                "{pack}/{name}: some spawns were never claimed"
+            );
+        }
+    }
+
+    /// 8-1 is the width stress case the lazy spawner exists for.
+    #[test]
+    fn the_widest_level_holds_its_enemies_back_until_revealed() {
+        let level = load_level("smb", "8-1");
+        assert!(
+            level.width >= 400,
+            "8-1 should be ~400 tiles wide, got {}",
+            level.width
+        );
+        let mut spawned = vec![false; level.enemy_spawns.len()];
+        // One screen plus a column, exactly what `spawn_revealed_columns` opens with.
+        let mut opening = 0;
+        for col in 0..=17 {
+            opening += column_spawn_indices(&level.spawns_by_cell, &mut spawned, col).len();
+        }
+        assert!(
+            opening < level.enemy_spawns.len(),
+            "the opening screen claimed all {} spawns; nothing was left to reveal",
+            level.enemy_spawns.len()
+        );
     }
 }

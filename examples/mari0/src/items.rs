@@ -586,7 +586,7 @@ impl Mari0Game {
                 continue;
             }
             for (ei, enemy) in self.enemies.iter().enumerate() {
-                if enemy.state == EnemyState::Dead || !enemy.activated {
+                if enemy.state == EnemyState::Dead {
                     continue;
                 }
                 let eh = match enemy.enemy_type {

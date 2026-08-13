@@ -41,6 +41,14 @@ pub(crate) struct Mari0Game {
     pub(crate) portal_anim_timer: f32, // global portal animation timer
     pub(crate) portal_anim_frame: u32, // current frame 0..5 (maps to original frames 1..6)
     pub(crate) enemies: Vec<Enemy>,
+    /// Which of `level.enemy_spawns` have already been instantiated.
+    ///
+    /// Never cleared during a life, which is what stops a killed enemy from
+    /// returning when the camera passes its column again — the original's
+    /// `enemiesspawned` list has the same lifetime.
+    pub(crate) spawned: Vec<bool>,
+    /// Rightmost tile column whose spawns have been processed.
+    pub(crate) spawn_frontier: i32,
     pub(crate) level: Level,
     pub(crate) camera: Camera,
     pub(crate) score: u32,
@@ -149,7 +157,11 @@ impl Mari0Game {
     pub(crate) fn reset_level(&mut self) {
         let level = load_level(&self.current.pack, &self.current.name());
         self.player = Player::new(level.player_start.0, level.player_start.1);
-        self.enemies = spawn_enemies_from_level(&level);
+        self.enemies.clear();
+        self.spawned = vec![false; level.enemy_spawns.len()];
+        // -1, not 0: the catch-up loop pre-increments, so column 0 still gets
+        // processed on the first sweep.
+        self.spawn_frontier = -1;
         self.portals = [None, None];
         self.projectiles.clear();
         self.crosshair_angle = 0.0;
@@ -168,6 +180,9 @@ impl Mari0Game {
         self.star_timer = 0.0;
         self.camera = Camera { x: 0.0 };
         self.level = level;
+        // Fill the opening screen now so the player doesn't watch the first
+        // goombas pop into being after the level has already started.
+        self.spawn_revealed_columns();
         self.music_phase = MusicPhase::Normal;
         self.warning_started_at = None;
         self.music_restart = true;
@@ -400,6 +415,10 @@ impl Mari0Game {
         let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);
         self.camera.x = self.camera.x.clamp(0.0, max_camera);
 
+        // Newly revealed columns spawn their enemies before anything updates, so
+        // a goomba that appears this frame still gets its first step.
+        self.spawn_revealed_columns();
+
         // ── Timer and low-time music ──
         if self.tick_clock(ctx, dt) {
             self.die(ctx);
@@ -515,7 +534,7 @@ impl Game for Mari0Game {
         let current = LevelId::new(START_PACK, 1, 1);
         let level = load_level(&current.pack, &current.name());
         let player_start = level.player_start;
-        let enemies = spawn_enemies_from_level(&level);
+        let spawned = vec![false; level.enemy_spawns.len()];
         let time_limit = level.time_limit;
 
         Self {
@@ -528,7 +547,9 @@ impl Game for Mari0Game {
             aim_dot_timer: 0.0,
             portal_anim_timer: 0.0,
             portal_anim_frame: 0,
-            enemies,
+            enemies: Vec::new(),
+            spawned,
+            spawn_frontier: -1,
             camera: Camera { x: 0.0 },
             score: 0,
             coins: 0,
