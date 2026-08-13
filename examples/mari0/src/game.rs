@@ -128,6 +128,20 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_portal_dot: TextureId,
     pub(crate) tex_flag: TextureId,
 
+    // ── The lab ──────────────────────────────────────────────────────
+    pub(crate) tex_portal_tiles: TextureId,
+    pub(crate) tex_laser: TextureId,
+    pub(crate) tex_laser_side: TextureId,
+    pub(crate) tex_laser_detector: TextureId,
+    pub(crate) tex_light_bridge: TextureId,
+    pub(crate) tex_light_bridge_side: TextureId,
+    pub(crate) tex_button_base: TextureId,
+    pub(crate) tex_button_cap: TextureId,
+    pub(crate) tex_push_button: TextureId,
+    pub(crate) tex_door_piece: TextureId,
+    pub(crate) tex_door_centre: TextureId,
+    pub(crate) tex_wall_indicator: TextureId,
+
     pub(crate) vw: f32,
     /// Virtual screen height. Needed alongside `vw` so the pipe scissor can span
     /// the full screen on the axis it isn't clipping.
@@ -765,6 +779,18 @@ impl Game for Mari0Game {
             tex_portal_projectile: t("portal_projectile"),
             tex_portal_dot: t("portal_dot"),
             tex_flag: t("flag"),
+            tex_portal_tiles: t("portal_tiles"),
+            tex_laser: t("laser"),
+            tex_laser_side: t("laser_side"),
+            tex_laser_detector: t("laser_detector"),
+            tex_light_bridge: t("light_bridge"),
+            tex_light_bridge_side: t("light_bridge_side"),
+            tex_button_base: t("button_base"),
+            tex_button_cap: t("button_cap"),
+            tex_push_button: t("push_button"),
+            tex_door_piece: t("door_piece"),
+            tex_door_centre: t("door_centre"),
+            tex_wall_indicator: t("wall_indicator"),
             vw,
             vh,
         }

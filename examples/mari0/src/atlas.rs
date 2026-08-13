@@ -27,6 +27,28 @@ pub(crate) fn smb_tile_uv(tile_id: u32) -> [f32; 4] {
     ]
 }
 
+/// UV rect for a tile in `portaltiles.png` (374×68, 22-col grid, 17×17 cells).
+///
+/// Tile ids continue straight on from the SMB sheet: 133 is this sheet's first cell
+/// (`main.lua:218-245` walks one sheet then the other into a single list), which is
+/// why a lab level's tiles come out as garbage if you feed them to [`smb_tile_uv`] —
+/// id 133 lands one row *past* the bottom of a six-row sheet.
+pub(crate) fn portal_tile_uv(tile_id: u32) -> [f32; 4] {
+    let index = tile_id - FIRST_PORTAL_TILE;
+    let col = (index % 22) as f32;
+    let row = (index / 22) as f32;
+    [
+        col * 17.0 / 374.0,
+        row * 17.0 / 68.0,
+        16.0 / 374.0,
+        16.0 / 68.0,
+    ]
+}
+
+/// The first tile id that lives on `portaltiles.png`. `smbtiles.png` is 22×6 = 132
+/// cells, so the lab sheet starts at 133.
+pub(crate) const FIRST_PORTAL_TILE: u32 = 133;
+
 /// Get UV rect for a mario animation frame (512×128, 20×20 cells)
 pub(crate) fn mario_uv(col: u32, row: u32) -> [f32; 4] {
     [

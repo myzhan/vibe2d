@@ -15,6 +15,7 @@ mod enemies;
 mod game;
 mod items;
 mod lab;
+mod lab_render;
 mod maze;
 mod music;
 mod physics;

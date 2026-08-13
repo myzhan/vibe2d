@@ -52,6 +52,9 @@ const DOOR_SPEED: f32 = 2.0;
 /// Cooldown between wall-button presses (`pushbuttontime = 1`).
 const PUSH_BUTTON_COOLDOWN: f32 = 1.0;
 
+/// How long a ground light stays lit after a `toggle` (`groundlightdelay = 1`).
+const GROUND_LIGHT_PULSE: f32 = 1.0;
+
 /// How far a beam is allowed to travel, in cells.
 ///
 /// The original has no such bound; this stops a beam pointing along an open corridor
@@ -160,6 +163,13 @@ impl LabKind {
 #[derive(Debug, Clone)]
 pub(crate) struct LabElement {
     pub(crate) kind: LabKind,
+    /// The entity id this was placed as.
+    ///
+    /// [`LabKind`] deliberately collapses variants that behave alike — six ground
+    /// lights, four lasers — but the renderer needs the one it was: a ground light's
+    /// six variants are six different bits of pipework art, and only the entity id
+    /// says which (`groundlight.lua:41` indexes `entityquads[42+dir]`).
+    pub(crate) entity: EntityKind,
     /// Anchor cell, 0-based.
     pub(crate) cell: (i32, i32),
     /// Which way a door lies. `None` for everything else.
@@ -172,8 +182,8 @@ pub(crate) struct LabElement {
     pub(crate) on: bool,
     /// Door open fraction, 0..1. A door only stops blocking at 1.
     ///
-    /// Doubles as a wall button's cooldown, counting *down* from
-    /// `PUSH_BUTTON_COOLDOWN`, since no element needs both.
+    /// Doubles as a countdown for the two elements that need one instead: a wall
+    /// button's cooldown and a ground light's one-second pulse. No element needs both.
     pub(crate) timer: f32,
     /// Detector only: may `clear()` succeed this frame? See `Lab::step_lasers`.
     pub(crate) allow_clear: bool,
@@ -378,6 +388,9 @@ impl Lab {
             let axis = match p.kind {
                 EntityKind::DoorHor => Some(Orientation::Right),
                 EntityKind::DoorVer => Some(Orientation::Up),
+                // A wall button's facing decides which way its art is mirrored.
+                EntityKind::PushButtonLeft => Some(Orientation::Left),
+                EntityKind::PushButtonRight => Some(Orientation::Right),
                 EntityKind::LaserRight
                 | EntityKind::LaserDetectorRight
                 | EntityKind::LightBridgeRight => Some(Orientation::Right),
@@ -394,6 +407,7 @@ impl Lab {
             };
             elements.push(LabElement {
                 kind,
+                entity: p.kind,
                 cell: (p.x as i32, p.y as i32),
                 axis,
                 // The parser hands back the raw link coordinates, which are the
@@ -476,12 +490,7 @@ impl Lab {
             }
             seen[index] = true;
             for &consumer in &self.consumers[index].clone() {
-                let element = &mut self.elements[consumer];
-                match signal {
-                    Signal::On => element.on = true,
-                    Signal::Off => element.on = false,
-                    Signal::Toggle => element.on = !element.on,
-                }
+                apply_signal(&mut self.elements[consumer], signal);
                 // Indicators and doors are leaves in the shipped data; nothing
                 // downstream of them exists to forward to. Kept as a queue anyway so
                 // adding NOT gates later needs no restructuring.
@@ -500,12 +509,7 @@ impl Lab {
         if index >= self.elements.len() {
             return;
         }
-        let element = &mut self.elements[index];
-        match signal {
-            Signal::On => element.on = true,
-            Signal::Off => element.on = false,
-            Signal::Toggle => element.on = !element.on,
-        }
+        apply_signal(&mut self.elements[index], signal);
         self.emit(index, signal);
     }
 
@@ -676,6 +680,16 @@ impl Lab {
         for e in &mut self.elements {
             if e.kind == LabKind::PushButton {
                 e.timer = (e.timer - dt).max(0.0);
+                continue;
+            }
+            // A pulsing ground light switches itself off when its second is up.
+            if e.kind == LabKind::GroundLight {
+                if e.timer > 0.0 {
+                    e.timer = (e.timer - dt).max(0.0);
+                    if e.timer == 0.0 {
+                        e.on = false;
+                    }
+                }
                 continue;
             }
             if e.kind != LabKind::Door {
@@ -920,6 +934,29 @@ pub(crate) enum Signal {
     On,
     Off,
     Toggle,
+}
+
+/// Apply one signal to one element.
+///
+/// `toggle` is where the element kinds disagree, and it is not a cosmetic difference:
+/// a **ground light** treats it as a one-second monostable pulse — it lights, then
+/// resets itself by calling its own `input("off")` when `groundlightdelay` elapses
+/// (`groundlight.lua:25-32`) — while a **wall indicator** latches
+/// (`wallindicator.lua:38-46`).
+///
+/// The shipped levels do exercise this: a wall button is the only thing that ever
+/// sends `toggle`, and the ones in 1-4 and 2-3 are wired to ground lights. So pressing
+/// a wall button flashes its lights for a second rather than switching them.
+fn apply_signal(element: &mut LabElement, signal: Signal) {
+    match signal {
+        Signal::On => element.on = true,
+        Signal::Off => element.on = false,
+        Signal::Toggle if element.kind == LabKind::GroundLight => {
+            element.on = true;
+            element.timer = GROUND_LIGHT_PULSE;
+        }
+        Signal::Toggle => element.on = !element.on,
+    }
 }
 
 /// The plate of a floor button, in world pixels: `[x, y, w, h]`.
@@ -1395,6 +1432,33 @@ mod tests {
         lab.elements[0].on = false;
         lab.step_beams(&level, None);
         assert!(lab.bridge_rects().is_empty());
+    }
+
+    /// `toggle` means two different things depending on who receives it: a one-second
+    /// flash for a ground light, a latch for a wall indicator.
+    ///
+    /// Observable in the shipped levels — the wall buttons in 1-4 and 2-3 drive ground
+    /// lights, and a wall button is the only source of `toggle`.
+    #[test]
+    fn toggle_pulses_a_ground_light_but_latches_an_indicator() {
+        let mut lab = Lab::build(&[
+            // A wall button at 0-based (5, 9) → file 1-based (6, 10).
+            place(EntityKind::PushButtonLeft, 5, 9, None),
+            place(EntityKind::GroundLightHor, 6, 9, Some((6, 10))),
+            place(EntityKind::WallIndicator, 7, 9, Some((6, 10))),
+        ]);
+        assert!(lab.push(0), "the button fires");
+        assert!(lab.elements[1].on, "the light comes on");
+        assert!(lab.elements[2].on, "so does the indicator");
+
+        for _ in 0..70 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert!(
+            !lab.elements[1].on,
+            "a second later the light has switched itself off"
+        );
+        assert!(lab.elements[2].on, "the indicator stays latched");
     }
 
     /// A floor button senses the body standing **on** it, and nothing a block away.

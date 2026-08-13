@@ -42,6 +42,21 @@ assets:
     star: "assets/mari0/star.png"
     flower: "assets/mari0/flower.png"
     fireball: "assets/mari0/fireball.png"
+
+    # The lab. Tile ids 133..220 live on their own sheet — without it every
+    # portal-mappack level samples off the bottom of smbtiles.png.
+    portal_tiles: "assets/mari0/portaltiles.png"
+    laser: "assets/mari0/laser.png"
+    laser_side: "assets/mari0/laserside.png"
+    laser_detector: "assets/mari0/laserdetector.png"
+    light_bridge: "assets/mari0/lightbridge.png"
+    light_bridge_side: "assets/mari0/lightbridgeside.png"
+    button_base: "assets/mari0/buttonbase.png"
+    button_cap: "assets/mari0/buttonbutton.png"
+    push_button: "assets/mari0/pushbutton.png"
+    door_piece: "assets/mari0/doorpiece.png"
+    door_centre: "assets/mari0/doorcenter.png"
+    wall_indicator: "assets/mari0/wallindicator.png"
   fonts:
     ui: "assets/fonts/game.ttf:16"
     title: "assets/fonts/game.ttf:24"

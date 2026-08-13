@@ -11,12 +11,18 @@ use crate::physics::*;
 use crate::player::*;
 
 impl Mari0Game {
+    /// Draw one tile, from whichever of the two sheets owns its id.
+    ///
+    /// The lab tiles are ids 133..220 on a second sheet. Sending those to the SMB
+    /// sheet's UV maths samples off the bottom edge, which is what made every lab
+    /// level render as garbage.
     pub(crate) fn draw_smb_tile(&self, screen: &mut Screen, tile_id: u32, x: f32, y: f32) {
-        screen.draw_sprite_region(
-            self.tex_tiles,
-            smb_tile_uv(tile_id),
-            [x, y, TILE_SIZE, TILE_SIZE],
-        );
+        let dst = [x, y, TILE_SIZE, TILE_SIZE];
+        if tile_id >= FIRST_PORTAL_TILE {
+            screen.draw_sprite_region(self.tex_portal_tiles, portal_tile_uv(tile_id), dst);
+        } else {
+            screen.draw_sprite_region(self.tex_tiles, smb_tile_uv(tile_id), dst);
+        }
     }
 
     /// Draw the whole frame: level, actors, effects, then HUD.
@@ -88,6 +94,11 @@ impl Mari0Game {
                 }
             }
         }
+
+        // ── The lab: buttons, doors, indicators, beams and bridges ──
+        // After the tiles, since every one of them is mounted on a wall, and before the
+        // actors so Mario walks in front of a beam rather than behind it.
+        self.draw_lab(screen);
 
         // ── Flag sprite (drawn beside the flagpole pole) ──
         if self.level.flag_x > 0.0 {

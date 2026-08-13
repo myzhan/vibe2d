@@ -441,10 +441,15 @@ impl Renderer {
                         self.virtual_width,
                         self.virtual_height,
                     );
-                    // wgpu rejects a zero-extent scissor, so a fully-offscreen
-                    // clip is floored to 1px rather than dropped — the sprites
-                    // land outside the visible area anyway.
-                    render_pass.set_scissor_rect(x, y, w.max(1), h.max(1));
+                    // wgpu rejects a zero-extent scissor *and* one that reaches past
+                    // the attachment, so a clip that clamps to nothing is skipped
+                    // outright — padding it to 1px puts the origin on the far edge and
+                    // fails validation, which crashed the whole frame the first time a
+                    // clipped sprite scrolled off the right of the screen.
+                    if w == 0 || h == 0 {
+                        continue;
+                    }
+                    render_pass.set_scissor_rect(x, y, w, h);
                 }
                 None => render_pass.set_scissor_rect(0, 0, target_width, target_height),
             }
@@ -1186,6 +1191,22 @@ mod batching_tests {
         // Naive subtraction here would underflow u32 into a huge rect.
         let (_, _, w, h) = scissor_rect([5000.0, 5000.0, 10.0, 10.0], 800, 600, 400.0, 300.0);
         assert_eq!((w, h), (0, 0));
+    }
+
+    /// A clip straddling the right edge must stay inside the attachment.
+    ///
+    /// wgpu validates `x + w <= width`, so the dangerous case is not the fully
+    /// offscreen one (extent 0, skipped) but the *partly* offscreen one: the origin is
+    /// still on screen and the far edge must be pulled back to it, not left hanging
+    /// over.
+    #[test]
+    fn a_clip_crossing_the_right_edge_stays_inside_the_attachment() {
+        let (x, y, w, h) = scissor_rect([390.0, 290.0, 100.0, 100.0], 800, 600, 400.0, 300.0);
+        assert!(
+            x + w <= 800 && y + h <= 600,
+            "scissor {x},{y} {w}×{h} reaches past 800×600"
+        );
+        assert!(w > 0 && h > 0, "the on-screen part must survive");
     }
 
     #[test]

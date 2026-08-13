@@ -268,6 +268,22 @@ async def run(ws):
     check("光束被身体截断，止于他之前", len(beam[0]["cells"]) == 1, str(beam[0]["cells"]))
     check("截断之后不再有终止格可探测", beam[0]["end"] is None, str(beam[0]["end"]))
 
+    section("13. 把镜头横扫过全部九关：clip 出屏不能把画面搞崩")
+    # 门是用 scissor 裁到自己那两格的，门滚出屏幕右侧时裁剪框会伸到画面外 ——
+    # wgpu 要求 x+w <= 宽度，越界会直接 panic 整帧。这一条扫描就是那次崩溃的复现。
+    swept = 0
+    for world, level in [(1, 1), (1, 2), (1, 3), (1, 4), (2, 1), (2, 2), (2, 3), (2, 4), (3, 1)]:
+        await rpc(ws, "game.setLevel", {"pack": "portal", "world": world, "level": level})
+        await step(ws, 2)
+        await rpc(ws, "game.setState", {"state": "playing"})
+        s = await snap(ws)
+        for col in range(0, s["level"]["width"], 3):
+            await rpc(ws, "game.setPlayerPos", {"x": col * T, "y": T})
+            await step(ws)
+        swept += 1
+    # 活着走到这里就是结论：崩了的话 rpc 会直接抛连接错误。
+    check("九关全部扫完，进程还活着", swept == 9, f"{swept}/9")
+
     await rpc(ws, "game.setLevel", {"world": 1, "level": 1})
     await rpc(ws, "game.setScore", {"lives": 3})
     await rpc(ws, "engine.resume")
