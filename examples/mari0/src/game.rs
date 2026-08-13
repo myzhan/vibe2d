@@ -10,6 +10,7 @@ use crate::constants::*;
 use crate::effects::*;
 use crate::enemies::*;
 use crate::items::*;
+use crate::lab::Lab;
 use crate::level;
 use crate::maze::MazeState;
 use crate::music::MusicPhase;
@@ -74,6 +75,9 @@ pub(crate) struct Mari0Game {
 
     /// Progress through this level's maze spans, if it has any.
     pub(crate) maze: MazeState,
+
+    /// The lab's signal network: buttons, doors, indicators and the wiring.
+    pub(crate) lab: Lab,
 
     /// The highest checkpoint passed, as a tile cell.
     ///
@@ -212,6 +216,13 @@ impl Mari0Game {
 
     fn load_current(&mut self, use_checkpoint: bool) {
         let level = load_level(&self.current.pack, &self.current.name());
+        // Re-parsed rather than threaded through `Level`: the lab network is a
+        // separate graph over the same placements, and `Level` is already the
+        // gameplay view of the tile data.
+        let lab_placements = level::load(&self.current.pack, &self.current.name())
+            .and_then(|r| r.ok())
+            .map(|p| p.markers.lab)
+            .unwrap_or_default();
         let start = match self.checkpoint.filter(|_| use_checkpoint) {
             // `starty = checkpointpoints[checkpointx] or 13` (`game.lua:2147`) — the
             // checkpoint names the row to stand on, not the row to occupy.
@@ -255,6 +266,7 @@ impl Mari0Game {
         self.star_timer = 0.0;
         self.pipe = None;
         self.maze = MazeState::for_level(level.maze_starts.len());
+        self.lab = Lab::build(&lab_placements);
         self.level = level;
         // `self.portals` was just cleared, so there are no holes either. Explicit
         // rather than relying on the freshly-loaded level starting empty.
@@ -578,6 +590,7 @@ impl Mari0Game {
         self.check_checkpoint_passed();
         self.check_maze_gate();
         self.update_maze();
+        self.update_lab(dt, input.is_action_just_pressed("use"));
 
         // ── Timer and low-time music ──
         if self.tick_clock(ctx, dt) {
@@ -716,6 +729,7 @@ impl Game for Mari0Game {
             level,
             pipe: None,
             maze: MazeState::default(),
+            lab: Lab::default(),
             checkpoint: None,
             checkpoints_passed: 0,
             respawn_sublevel: 0,

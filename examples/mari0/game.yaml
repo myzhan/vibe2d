@@ -121,6 +121,11 @@ input:
     fire:
       keys: ["F", "ShiftLeft"]
       gamepad_buttons: ["West", "RightShoulder"]
+    # Wall buttons in the lab are pressed with a "use" key, not walked into
+    # (`pushbutton:used`), so they need a binding of their own.
+    use:
+      keys: ["E", "Up"]
+      gamepad_buttons: ["North"]
 
 debug:
   vdp:

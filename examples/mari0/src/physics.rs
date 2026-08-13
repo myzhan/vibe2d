@@ -37,6 +37,11 @@ pub(crate) fn is_solid(tile_id: u32) -> bool {
 /// reporting solid — the aim line still stops on a wall you have already opened.
 /// Only movement sees the hole.
 pub(crate) fn blocks_movement(level: &Level, col: i32, row: i32) -> bool {
+    // A shut door blocks a cell the tile grid says is empty, so it is checked first
+    // and independently. A portal can't be placed on a door, so the two never fight.
+    if level.solid_extras.contains(&(col, row)) {
+        return true;
+    }
     is_solid(get_tile(level, col, row)) && !level.portal_holes.contains(&(col, row))
 }
 

@@ -82,6 +82,10 @@ pub(crate) struct Level {
     /// Gate cells → gate number. Walking your centre through them in order is what
     /// solves a span.
     pub(crate) maze_gates: HashMap<(i32, i32), u32>,
+    /// Cells that block movement *in addition* to the tile grid — currently shut
+    /// doors. Rebuilt each frame from the lab network.
+    pub(crate) solid_extras: HashSet<(i32, i32)>,
+
     /// Cells whose collision is suppressed because a portal has opened there.
     ///
     /// Populated only while **both** portals exist: a lone portal is not a hole
@@ -562,6 +566,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         maze_gates,
         maze_end_cols,
         portal_holes: HashSet::new(),
+        solid_extras: HashSet::new(),
     }
 }
 

@@ -8,6 +8,7 @@ use crate::constants::*;
 use crate::enemies::*;
 use crate::game::{GameState, Mari0Game};
 use crate::items::*;
+use crate::lab::{LabKind, Signal};
 use crate::music::MusicPhase;
 use crate::pipe::PipeDir;
 use crate::player::*;
@@ -52,6 +53,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) respawn_sublevel: u32,
     /// Maze progress, for the looping castles. `null` in levels without spans.
     pub(crate) maze: Option<MazeView>,
+    /// The lab signal network. Empty outside the lab mappack.
+    pub(crate) lab: Vec<LabElementView>,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -148,6 +151,21 @@ pub(crate) struct CoinView {
     pub(crate) x: f32,
     pub(crate) y: f32,
     pub(crate) collected: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct LabElementView {
+    pub(crate) kind: LabKind,
+    pub(crate) cell: [i32; 2],
+    /// Index of the element driving this one, or `null` if unwired.
+    pub(crate) driver: Option<usize>,
+    pub(crate) on: bool,
+    /// Door open fraction, 0..1.
+    pub(crate) timer: f32,
+    /// True when the element is only in the graph so links resolve — its behaviour
+    /// isn't implemented yet.
+    pub(crate) inert: bool,
 }
 
 #[cfg(feature = "vdp")]
@@ -264,6 +282,13 @@ pub(crate) struct SetScore {
     pub(crate) score: Option<u32>,
     pub(crate) coins: Option<u32>,
     pub(crate) lives: Option<u32>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
+pub(crate) struct LabSignal {
+    pub(crate) index: usize,
+    pub(crate) signal: String,
 }
 
 #[cfg(feature = "vdp")]
@@ -414,6 +439,19 @@ impl Mari0Game {
             pipe_clip: self.pipe_clip_rect(self.camera.x, self.vw, self.vh),
             checkpoint: self.checkpoint.map(|(c, r)| [c, r]),
             respawn_sublevel: self.respawn_sublevel,
+            lab: self
+                .lab
+                .elements
+                .iter()
+                .map(|e| LabElementView {
+                    kind: e.kind,
+                    cell: [e.cell.0, e.cell.1],
+                    driver: e.driver,
+                    on: e.on,
+                    timer: e.timer,
+                    inert: e.kind.is_inert(),
+                })
+                .collect(),
             maze: (!self.level.maze_starts.is_empty()).then(|| MazeView {
                 var: self.maze.var,
                 solved: self.maze.solved.clone(),
@@ -529,6 +567,26 @@ impl Mari0Game {
             "time_remaining": self.time_remaining,
             "music_phase": self.music_phase,
         }))
+    }
+
+    /// Send a signal into the lab network, as an upstream output would.
+    #[vdp("game.labSignal")]
+    pub(crate) fn vdp_lab_signal(&mut self, p: LabSignal) -> Result<serde_json::Value, String> {
+        if p.index >= self.lab.elements.len() {
+            return Err(format!(
+                "no lab element {} (level has {})",
+                p.index,
+                self.lab.elements.len()
+            ));
+        }
+        let signal = match p.signal.as_str() {
+            "on" => Signal::On,
+            "off" => Signal::Off,
+            "toggle" => Signal::Toggle,
+            other => return Err(format!("unknown signal: {other}")),
+        };
+        self.lab.signal(p.index, signal);
+        Ok(serde_json::json!({"index": p.index, "on": self.lab.elements[p.index].on}))
     }
 
     #[vdp("game.setScore")]
