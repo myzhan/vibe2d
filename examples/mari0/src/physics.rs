@@ -62,6 +62,35 @@ pub(crate) fn aabb_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
     ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by
 }
 
+/// Is this rect free of anything that blocks movement?
+///
+/// The original's clearance test before committing a teleport
+/// (`#checkrect(...) == 0`, `physics.lua:592`). A portal exit that would leave the
+/// body inside a wall is refused, and the caller bounces it instead.
+pub(crate) fn rect_is_clear(level: &Level, x: f32, y: f32, w: f32, h: f32) -> bool {
+    let left = (x / TILE_SIZE).floor() as i32;
+    let right = ((x + w - 0.01) / TILE_SIZE).floor() as i32;
+    let top = (y / TILE_SIZE).floor() as i32;
+    let bottom = ((y + h - 0.01) / TILE_SIZE).floor() as i32;
+    for row in top..=bottom {
+        for col in left..=right {
+            if blocks_movement(level, col, row) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Does `value` lie between `a` and `b`, in either order?
+///
+/// The original's `inrange`. Used for the swept crossing test: "did the body's
+/// centre pass through the portal's plane during this step?", which is what stops a
+/// fast body from skipping straight over a portal.
+pub(crate) fn in_range(value: f32, a: f32, b: f32) -> bool {
+    (a <= value && value <= b) || (b <= value && value <= a)
+}
+
 pub(crate) fn move_and_collide_x(
     player_x: &mut f32,
     player_y: f32,

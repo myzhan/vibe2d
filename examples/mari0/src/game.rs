@@ -400,28 +400,49 @@ impl Mari0Game {
         self.player.vy += grav * dt;
         self.player.vy = self.player.vy.min(MAX_Y_SPEED);
 
-        // ── Move & collide ──
-        self.player.vx = move_and_collide_x(
-            &mut self.player.x,
-            self.player.y,
-            self.player.width,
-            self.player.height,
-            self.player.vx,
-            &self.level,
-            dt,
+        // ── Portal entry (swept), before the move ──
+        // The two swept tests need where the player is *about* to be: a body moving
+        // fast enough crosses a portal's mouth entirely within one step, and an
+        // overlap test after the fact never sees it. Teleporting here also means the
+        // collision resolver below never gets the chance to stop the player on the
+        // wall the portal is mounted in.
+        let teleported = self.check_portal_entry(
+            ctx,
+            self.player.x + self.player.vx * dt,
+            self.player.y + self.player.vy * dt,
         );
 
-        let (new_vy, on_ground) = move_and_collide_y(
-            self.player.x,
-            &mut self.player.y,
-            self.player.width,
-            self.player.height,
-            self.player.vy,
-            &self.level,
-            dt,
-        );
-        self.player.vy = new_vy;
-        self.player.on_ground = on_ground;
+        // ── Move & collide ──
+        if !teleported {
+            self.player.vx = move_and_collide_x(
+                &mut self.player.x,
+                self.player.y,
+                self.player.width,
+                self.player.height,
+                self.player.vx,
+                &self.level,
+                dt,
+            );
+
+            let (new_vy, on_ground) = move_and_collide_y(
+                self.player.x,
+                &mut self.player.y,
+                self.player.width,
+                self.player.height,
+                self.player.vy,
+                &self.level,
+                dt,
+            );
+            self.player.vy = new_vy;
+            self.player.on_ground = on_ground;
+        } else {
+            // A teleport ends the frame's ground contact: you left the surface.
+            self.player.on_ground = false;
+        }
+
+        // Last resort: anything already sitting inside a mouth goes through, with no
+        // clearance check, exactly as `inportal` does.
+        self.check_in_portal(ctx);
 
         // Checked after the move, so `on_ground` and the resolved position are the
         // ones the probe reads. A pipe found here takes over from the next frame.
@@ -435,7 +456,7 @@ impl Mari0Game {
             return;
         }
 
-        if on_ground {
+        if self.player.on_ground {
             self.player.is_jumping = false;
             if self.combo_active {
                 self.combo_index = 0;
@@ -444,7 +465,7 @@ impl Mari0Game {
         }
 
         // ── Block hit from below ──
-        if self.player.vy == 0.0 && !on_ground {
+        if self.player.vy == 0.0 && !self.player.on_ground {
             let head_row = ((self.player.y - 1.0) / TILE_SIZE).floor() as i32;
             let left_col = ((self.player.x + 4.0) / TILE_SIZE).floor() as i32;
             let right_col = ((self.player.x + self.player.width - 4.0) / TILE_SIZE).floor() as i32;
@@ -507,9 +528,6 @@ impl Mari0Game {
 
         // ── Update projectiles ──
         self.update_projectiles(ctx, dt);
-
-        // ── Portal teleport ──
-        self.check_portal_teleport(ctx);
 
         // ── Enemies ──
         self.update_enemies(dt, ctx);
