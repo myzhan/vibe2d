@@ -49,6 +49,12 @@ const DOOR_SPEED: f32 = 2.0;
 /// Cooldown between wall-button presses (`pushbuttontime = 1`).
 const PUSH_BUTTON_COOLDOWN: f32 = 1.0;
 
+/// How far a beam is allowed to travel, in cells.
+///
+/// The original has no such bound; this stops a beam pointing along an open corridor
+/// in a hand-made level from walking off to infinity.
+const MAX_BEAM_CELLS: usize = 512;
+
 /// The kinds of element this module models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "vdp", derive(serde::Serialize))]
@@ -66,12 +72,16 @@ pub(crate) enum LabKind {
     /// Wall panel that latches on. Also an indicator.
     WallIndicator,
 
+    /// A laser emitter. Unlinked ones are permanently on, which is every one in the
+    /// shipped levels.
+    Laser,
+
     // ── Recognised, but with no behaviour yet ────────────────────────
     // These exist in the graph so links resolve and the network is complete. Their
     // *behaviour* is not implemented: a laser detector with no laser to detect never
     // fires, and a timer never elapses. That is deliberately inert rather than
     // half-guessed — but it does mean a door wired to a detector currently stays shut.
-    /// Fires while a laser is landing on it. Waiting on lasers.
+    /// Fires while a laser is landing on it.
     LaserDetector,
     /// Periodic pulse (`walltimer`). Waiting on its cycle rules.
     Timer,
@@ -104,10 +114,7 @@ impl LabKind {
     /// resolve? Reported through the VDP so a test can tell the two apart.
     #[cfg(feature = "vdp")]
     pub(crate) fn is_inert(self) -> bool {
-        matches!(
-            self,
-            LabKind::LaserDetector | LabKind::Timer | LabKind::BoxTube | LabKind::Box
-        )
+        matches!(self, LabKind::Timer | LabKind::BoxTube | LabKind::Box)
     }
 
     fn from_entity(kind: EntityKind) -> Option<Self> {
@@ -119,6 +126,7 @@ impl LabKind {
             GroundLightVer | GroundLightHor | GroundLightUpRight | GroundLightRightDown
             | GroundLightDownLeft | GroundLightLeftUp => LabKind::GroundLight,
             WallIndicator => LabKind::WallIndicator,
+            LaserRight | LaserDown | LaserLeft | LaserUp => LabKind::Laser,
             LaserDetectorRight | LaserDetectorDown | LaserDetectorLeft | LaserDetectorUp => {
                 LabKind::LaserDetector
             }
@@ -149,6 +157,12 @@ pub(crate) struct LabElement {
     /// Doubles as a wall button's cooldown, counting *down* from
     /// `PUSH_BUTTON_COOLDOWN`, since no element needs both.
     pub(crate) timer: f32,
+    /// Detector only: may `clear()` succeed this frame? See `Lab::step_lasers`.
+    pub(crate) allow_clear: bool,
+    /// Detector only: the value last pushed downstream, for the one-frame delay.
+    pub(crate) pushed: bool,
+    /// Laser only: detectors this beam has lit, which it must keep trying to clear.
+    pub(crate) lit: Vec<usize>,
 }
 
 impl LabElement {
@@ -183,9 +197,15 @@ impl Lab {
             let Some(kind) = LabKind::from_entity(p.kind) else {
                 continue;
             };
+            // For a door this is which way it lies; for a laser or detector, which
+            // way it points.
             let axis = match p.kind {
                 EntityKind::DoorHor => Some(Orientation::Right),
                 EntityKind::DoorVer => Some(Orientation::Up),
+                EntityKind::LaserRight | EntityKind::LaserDetectorRight => Some(Orientation::Right),
+                EntityKind::LaserLeft | EntityKind::LaserDetectorLeft => Some(Orientation::Left),
+                EntityKind::LaserUp | EntityKind::LaserDetectorUp => Some(Orientation::Up),
+                EntityKind::LaserDown | EntityKind::LaserDetectorDown => Some(Orientation::Down),
                 _ => None,
             };
             elements.push(LabElement {
@@ -196,8 +216,14 @@ impl Lab {
                 // level file's 1-based tile numbers; the grid is 0-based.
                 link_target: p.link.map(|(x, y)| (x as i32 - 1, y as i32 - 1)),
                 driver: None,
-                on: false,
+                // A laser is on unless something is wired to control it: `laser:link()`
+                // sets `enabled = false` only on a *successful* match
+                // (`laser.lua:18-27`). No shipped laser is linked, so they all start on.
+                on: kind == LabKind::Laser,
                 timer: 0.0,
+                allow_clear: true,
+                pushed: false,
+                lit: Vec::new(),
             });
         }
 
@@ -217,6 +243,10 @@ impl Lab {
             if let Some(&driver) = by_cell.get(&target) {
                 element.driver = Some(driver);
                 consumers[driver].push(i);
+                // The `link()` side effect: a laser that *is* controlled starts off.
+                if element.kind == LabKind::Laser {
+                    element.on = false;
+                }
             }
         }
 
@@ -304,6 +334,118 @@ impl Lab {
         }
         self.elements[index].on = on;
         self.emit(index, if on { Signal::On } else { Signal::Off });
+    }
+
+    /// Drive the laser detectors from the beams, reproducing the two-phase latch.
+    ///
+    /// The order inside a frame is what makes this work, and it is easy to get wrong
+    /// in a way that only shows up as a flickering laser:
+    ///
+    /// 1. Every detector sets `allowclear = true` and, if its value *changed since
+    ///    last frame*, pushes it downstream. That comparison against the previous
+    ///    frame is the detector's inherent **one-frame delay**
+    ///    (`laserdetector.lua:16-25`).
+    /// 2. Each live beam walks its cells; a detector under the beam gets
+    ///    `input("on")`, which sets its value **and clears `allowclear`**.
+    /// 3. Each beam then calls `clear()` on every detector it has ever hit. For the
+    ///    ones hit this frame that's a no-op — `allowclear` is already false. For the
+    ///    ones it *stopped* hitting, `allowclear` is still true from step 1, so they
+    ///    go off.
+    ///
+    /// A beam also **cannot clear the detector that controls it** (`laser.lua:265`:
+    /// the cell is skipped when it matches the laser's own link target). Without that
+    /// self-exclusion a laser wired to a detector it can see would oscillate.
+    fn step_lasers(&mut self, level: &crate::world::Level) {
+        // Phase 1.
+        for e in &mut self.elements {
+            if e.kind == LabKind::LaserDetector {
+                e.allow_clear = true;
+            }
+        }
+        let changed: Vec<(usize, bool)> = self
+            .elements
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.kind == LabKind::LaserDetector && e.on != e.pushed)
+            .map(|(i, e)| (i, e.on))
+            .collect();
+        for (index, on) in changed {
+            self.elements[index].pushed = on;
+            self.emit(index, if on { Signal::On } else { Signal::Off });
+        }
+
+        // Phase 2: march each live beam and light what it lands on.
+        let lasers: Vec<usize> = (0..self.elements.len())
+            .filter(|&i| self.elements[i].kind == LabKind::Laser && self.elements[i].on)
+            .collect();
+        for laser in lasers {
+            let cells = self.beam_cells(laser, level);
+            let own_target = self.elements[laser].link_target;
+            for cell in cells {
+                let hit: Vec<usize> = self
+                    .elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| {
+                        e.kind == LabKind::LaserDetector
+                            && e.cell == cell
+                            // Self-exclusion: not the detector wired to this laser.
+                            && Some(e.cell) != own_target
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
+                for i in hit {
+                    self.elements[i].on = true;
+                    self.elements[i].allow_clear = false;
+                    if !self.elements[laser].lit.contains(&i) {
+                        self.elements[laser].lit.push(i);
+                    }
+                }
+            }
+        }
+
+        // Phase 3: every detector a beam has ever lit gets a `clear()` attempt.
+        let attempts: Vec<usize> = self
+            .elements
+            .iter()
+            .filter(|e| e.kind == LabKind::Laser)
+            .flat_map(|e| e.lit.clone())
+            .collect();
+        for i in attempts {
+            if self.elements[i].allow_clear {
+                self.elements[i].allow_clear = false;
+                self.elements[i].on = false;
+            }
+        }
+    }
+
+    /// The cells one beam covers, stopping at the first thing that blocks it.
+    ///
+    /// A straight run for now: the original's beam is a list of segments so it can
+    /// bend through portals, which is not implemented here. Walls stop it, and so does
+    /// a shut door — `blocks_movement` already knows about both.
+    fn beam_cells(&self, laser: usize, level: &crate::world::Level) -> Vec<(i32, i32)> {
+        let Some(dir) = self.elements[laser].axis else {
+            return Vec::new();
+        };
+        let (dx, dy) = match dir {
+            Orientation::Right => (1, 0),
+            Orientation::Left => (-1, 0),
+            Orientation::Up => (0, -1),
+            Orientation::Down => (0, 1),
+        };
+        let (mut c, mut r) = self.elements[laser].cell;
+        let mut cells = Vec::new();
+        // Bounded so a beam pointing down an open corridor can't walk forever.
+        for _ in 0..MAX_BEAM_CELLS {
+            c += dx;
+            r += dy;
+            if crate::physics::blocks_movement(level, c, r) {
+                break;
+            }
+            cells.push((c, r));
+        }
+        cells
     }
 
     /// Press a wall button, if its cooldown has lapsed.
@@ -401,6 +543,10 @@ impl Mari0Game {
             }
         }
 
+        // Beams see the door state published at the end of the *previous* frame,
+        // which is the same one-frame lag the original has: a door refreshes laser
+        // ranges when it finishes opening, not while it moves.
+        self.lab.step_lasers(&self.level);
         self.lab.tick(dt);
 
         // Rebuilt wholesale each frame rather than diffed on transitions: there are a
@@ -588,6 +734,113 @@ mod tests {
         lab.set_output(0, true);
         // Reaching here at all is the assertion.
         assert!(lab.elements[0].on);
+    }
+
+    /// A bare level with nothing solid in it, for beam tests.
+    fn empty_level() -> crate::world::Level {
+        crate::world::load_level("portal", "2-1")
+    }
+
+    /// An unlinked laser is on from the start — `link()` only disables on a match, and
+    /// no shipped laser is linked.
+    #[test]
+    fn an_unlinked_laser_starts_on_and_a_linked_one_starts_off() {
+        let free = Lab::build(&[place(EntityKind::LaserRight, 5, 9, None)]);
+        assert!(free.elements[0].on, "unlinked laser should be on");
+
+        let wired = Lab::build(&[
+            place(EntityKind::Button, 3, 9, None),
+            place(EntityKind::LaserRight, 5, 9, Some((4, 10))),
+        ]);
+        assert!(!wired.elements[1].on, "a controlled laser starts off");
+    }
+
+    /// The latch, frame by frame. This is the sequence that flickers if the phases run
+    /// in the wrong order.
+    #[test]
+    fn the_detector_latches_on_while_lit_and_releases_a_frame_after() {
+        let level = empty_level();
+        // Laser at (5, 9) pointing right, detector three cells along.
+        let mut lab = Lab::build(&[
+            place(EntityKind::LaserRight, 5, 9, None),
+            place(EntityKind::LaserDetectorLeft, 8, 9, None),
+        ]);
+        let (laser, detector) = (0, 1);
+
+        lab.step_lasers(&level);
+        assert!(lab.elements[detector].on, "beam should light the detector");
+        assert!(
+            !lab.elements[detector].allow_clear,
+            "input() must clear the flag so the beam's own clear() no-ops"
+        );
+
+        // Still lit next frame: stays on.
+        lab.step_lasers(&level);
+        assert!(lab.elements[detector].on, "still lit, still on");
+
+        // Switch the laser off. The detector releases on the *next* sweep, because
+        // `clear()` only takes effect once `allowclear` has been re-armed.
+        lab.elements[laser].on = false;
+        lab.step_lasers(&level);
+        assert!(!lab.elements[detector].on, "unlit detector goes off");
+    }
+
+    /// The detector pushes downstream on a *change*, one frame behind — it compares
+    /// against the value it last pushed.
+    #[test]
+    fn the_detector_pushes_one_frame_after_it_changes() {
+        let level = empty_level();
+        let mut lab = Lab::build(&[
+            place(EntityKind::LaserRight, 5, 9, None),
+            place(EntityKind::LaserDetectorLeft, 8, 9, None),
+            // A door wired to the detector at 0-based (8,9) → file 1-based (9,10).
+            place(EntityKind::DoorVer, 12, 9, Some((9, 10))),
+        ]);
+        let door = 2;
+        assert_eq!(lab.elements[door].driver, Some(1), "door wired to detector");
+
+        lab.step_lasers(&level);
+        assert!(
+            !lab.elements[door].on,
+            "the push happens on the next sweep, not the one that lit the detector"
+        );
+        lab.step_lasers(&level);
+        assert!(lab.elements[door].on, "one frame later, the door opens");
+    }
+
+    /// A beam cannot clear the detector that controls its own laser, or the pair
+    /// oscillates.
+    #[test]
+    fn a_beam_excludes_the_detector_that_controls_it() {
+        let level = empty_level();
+        // Laser linked to the detector it is pointing at.
+        let mut lab = Lab::build(&[
+            place(EntityKind::LaserRight, 5, 9, Some((9, 10))),
+            place(EntityKind::LaserDetectorLeft, 8, 9, None),
+        ]);
+        lab.elements[0].on = true; // force it on despite being linked
+        lab.step_lasers(&level);
+        assert!(
+            !lab.elements[1].on,
+            "the beam must skip its own controlling detector"
+        );
+    }
+
+    /// A wall stops the beam, so a detector behind one never lights.
+    #[test]
+    fn a_wall_stops_the_beam() {
+        let mut level = empty_level();
+        // Make the cell right of the laser solid.
+        level.solid_extras.insert((6, 9));
+        let mut lab = Lab::build(&[
+            place(EntityKind::LaserRight, 5, 9, None),
+            place(EntityKind::LaserDetectorLeft, 8, 9, None),
+        ]);
+        lab.step_lasers(&level);
+        assert!(
+            !lab.elements[1].on,
+            "a detector behind a wall should stay dark"
+        );
     }
 
     /// Every link in every shipped lab level must resolve, or that level's wiring is
