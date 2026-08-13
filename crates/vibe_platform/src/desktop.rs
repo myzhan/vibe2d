@@ -13,6 +13,13 @@ use vibe_render::Renderer;
 
 use crate::common::{PlatformCallbacks, PlatformConfig};
 
+/// Upper bound on the per-frame delta handed to `Game::update`.
+///
+/// 1/30s: slow enough to be invisible in normal play, tight enough that a
+/// hitch can't advance a fast-moving object past a whole collider. Beyond this
+/// the game runs in slow motion rather than teleporting things through floors.
+const MAX_FRAME_DELTA: f32 = 1.0 / 30.0;
+
 // Tracy zone marker: expands to a scoped span guard when `profiling` is on,
 // otherwise to nothing. Keep each call in its own block so the guard drops at
 // the end of the region being measured. With `profiling-callstacks` each zone
@@ -238,7 +245,13 @@ impl<C: PlatformCallbacks> ApplicationHandler for App<C> {
             WindowEvent::RedrawRequested => {
                 let now = Instant::now();
                 let dt = if let Some(last) = self.last_frame {
-                    now.duration_since(last).as_secs_f32()
+                    // Clamped: an unbounded wall-clock dt (an alt-tab, a GC
+                    // pause, a debugger breakpoint) makes a single frame advance
+                    // physics further than a collider is thick, which tunnels
+                    // objects through walls. Mari0's own loop does exactly this
+                    // (`dt = math.min(0.01666667, dt)`); we allow a looser floor
+                    // so a genuinely slow machine still runs, just in slow motion.
+                    now.duration_since(last).as_secs_f32().min(MAX_FRAME_DELTA)
                 } else {
                     1.0 / 60.0
                 };

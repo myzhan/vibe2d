@@ -207,6 +207,7 @@ impl<'a> UiContext<'a> {
             color: color.to_array(),
             flip_x: false,
             flip_y: false,
+            ..Default::default()
         };
         if self.use_deferred {
             self.deferred_bg.push(cmd);
@@ -224,6 +225,7 @@ impl<'a> UiContext<'a> {
                 color: color.to_array(),
                 flip_x: false,
                 flip_y: false,
+                ..Default::default()
             };
             if self.use_deferred {
                 self.deferred_text.push(cmd);
@@ -1287,6 +1289,7 @@ fn clip_draw_command(cmd: &DrawCommand, clip_rect: [f32; 4]) -> Option<DrawComma
             color: cmd.color,
             flip_x: cmd.flip_x,
             flip_y: cmd.flip_y,
+            ..Default::default()
         });
     }
 
@@ -1321,5 +1324,6 @@ fn clip_draw_command(cmd: &DrawCommand, clip_rect: [f32; 4]) -> Option<DrawComma
         color: cmd.color,
         flip_x: cmd.flip_x,
         flip_y: cmd.flip_y,
+        ..Default::default()
     })
 }

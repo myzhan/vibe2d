@@ -10,7 +10,10 @@ pub struct Texture {
 }
 
 /// Opaque handle to a loaded texture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// `Default` is texture 0 — meaningful only so `DrawCommand` can derive
+/// `Default`; always set `texture_id` explicitly when building a draw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct TextureId(pub usize);
 
 impl Texture {

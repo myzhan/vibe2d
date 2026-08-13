@@ -45,7 +45,10 @@ struct SpriteVertex {
 }
 
 /// Draw command queued for the current frame.
-#[derive(Clone, Copy)]
+///
+/// Implements [`Default`] so call sites can use `..Default::default()` and stay
+/// source-compatible when fields are added.
+#[derive(Clone, Copy, Default)]
 pub struct DrawCommand {
     pub texture_id: crate::TextureId,
     pub src_rect: [f32; 4], // x, y, w, h in UV coordinates (0..1)
@@ -53,6 +56,27 @@ pub struct DrawCommand {
     pub color: [f32; 4],
     pub flip_x: bool,
     pub flip_y: bool,
+    /// Painter's-algorithm layer. Lower layers draw first (behind).
+    ///
+    /// Within a single layer, **submission order is preserved** — the sort is
+    /// stable and keys on `layer` alone. That is deliberate: sorting by texture
+    /// inside a layer would batch better but would silently reorder overlapping
+    /// sprites, making "which one is on top" depend on which texture they happen
+    /// to use. Group your draws by texture yourself if you want fewer batches.
+    pub layer: i32,
+    /// Optional scissor rectangle in **virtual** pixels (x, y, w, h).
+    ///
+    /// Draws are clipped to this rect. `None` means no clipping. A change of clip
+    /// forces a batch break, so use it for the handful of things that need it
+    /// (partially-grown sprites: vines, laser beams, rising platforms) rather
+    /// than per-sprite.
+    pub clip: Option<[f32; 4]>,
+    /// Rotation in radians, clockwise, about the destination rect's centre.
+    ///
+    /// Costs four extra multiply-adds per vertex, and only when non-zero — the
+    /// axis-aligned fast path is preserved for the overwhelming majority of
+    /// sprites. Rotation does **not** affect batching.
+    pub rotation: f32,
 }
 
 /// The 2D renderer. Batches sprite draws and submits to GPU each frame.
@@ -74,6 +98,8 @@ pub struct Renderer {
     index_buffer: wgpu::Buffer,
     pub virtual_width: f32,
     pub virtual_height: f32,
+    /// Latches so the per-frame overflow warning is emitted once, not 60×/second.
+    sprite_overflow_warned: bool,
     #[cfg(not(target_arch = "wasm32"))]
     pending_screenshot: Option<std::path::PathBuf>,
 }
@@ -239,6 +265,7 @@ impl Renderer {
             projection_bind_group,
             projection_buffer,
             draw_commands: Vec::with_capacity(256),
+            sprite_overflow_warned: false,
             vertex_buffer,
             index_buffer,
             virtual_width,
@@ -266,6 +293,16 @@ impl Renderer {
         self.draw_commands.push(cmd);
     }
 
+    /// Enforce the sprite cap and apply layer ordering.
+    ///
+    /// Must run before vertices are built and before `execute_draw_commands`, and
+    /// both must see the *same* list — the batch ranges computed there index into
+    /// the vertex buffer built here.
+    fn prepare_draw_commands(&mut self) {
+        enforce_sprite_cap(&mut self.draw_commands, &mut self.sprite_overflow_warned);
+        sort_by_layer(&mut self.draw_commands);
+    }
+
     /// Request a screenshot to be captured on the next render.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn request_screenshot(&mut self, path: impl Into<std::path::PathBuf>) {
@@ -286,11 +323,12 @@ impl Renderer {
                 label: Some("render_encoder"),
             });
 
+        self.prepare_draw_commands();
+
         // Build vertex data from draw commands
         let mut vertices: Vec<SpriteVertex> = Vec::with_capacity(self.draw_commands.len() * 4);
 
         for cmd in &self.draw_commands {
-            let [dx, dy, dw, dh] = cmd.dst_rect;
             let [su, sv, sw, sh] = cmd.src_rect;
 
             let (tu_left, tu_right) = if cmd.flip_x {
@@ -304,26 +342,20 @@ impl Renderer {
                 (sv, sv + sh)
             };
 
-            vertices.push(SpriteVertex {
-                position: [dx, dy],
-                tex_coords: [tu_left, tv_top],
-                color: cmd.color,
-            });
-            vertices.push(SpriteVertex {
-                position: [dx + dw, dy],
-                tex_coords: [tu_right, tv_top],
-                color: cmd.color,
-            });
-            vertices.push(SpriteVertex {
-                position: [dx + dw, dy + dh],
-                tex_coords: [tu_right, tv_bottom],
-                color: cmd.color,
-            });
-            vertices.push(SpriteVertex {
-                position: [dx, dy + dh],
-                tex_coords: [tu_left, tv_bottom],
-                color: cmd.color,
-            });
+            let corners = quad_corners(cmd.dst_rect, cmd.rotation);
+            let uvs = [
+                [tu_left, tv_top],
+                [tu_right, tv_top],
+                [tu_right, tv_bottom],
+                [tu_left, tv_bottom],
+            ];
+            for (position, tex_coords) in corners.into_iter().zip(uvs) {
+                vertices.push(SpriteVertex {
+                    position,
+                    tex_coords,
+                    color: cmd.color,
+                });
+            }
         }
 
         if !vertices.is_empty() {
@@ -352,7 +384,13 @@ impl Renderer {
                 ..Default::default()
             });
 
-            self.execute_draw_commands(&mut render_pass, textures);
+            // Main pass: the target is the swapchain surface.
+            self.execute_draw_commands(
+                &mut render_pass,
+                textures,
+                self.surface_config.width,
+                self.surface_config.height,
+            );
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -370,10 +408,19 @@ impl Renderer {
     }
 
     /// Execute batched draw commands on a render pass.
+    /// `target_width`/`target_height` are the dimensions of the attachment being
+    /// drawn into, in physical pixels.
+    ///
+    /// They are **not** always the surface size: the screenshot paths render into
+    /// an offscreen texture sized to the virtual resolution. wgpu validates
+    /// scissor rects against the attachment, so using the surface size there is a
+    /// hard validation error, not a cosmetic mismatch.
     fn execute_draw_commands<'a>(
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         textures: &'a [&'a Texture],
+        target_width: u32,
+        target_height: u32,
     ) {
         if self.draw_commands.is_empty() {
             return;
@@ -384,39 +431,28 @@ impl Renderer {
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-        let mut current_texture: Option<usize> = None;
-        let mut batch_start: u32 = 0;
-
-        for (i, cmd) in self.draw_commands.iter().enumerate() {
-            let tex_idx = cmd.texture_id.0;
-            if current_texture != Some(tex_idx) {
-                if let Some(_prev) = current_texture {
-                    let sprite_count = i as u32 - batch_start;
-                    if sprite_count > 0 {
-                        render_pass.draw_indexed(
-                            (batch_start * 6)..((batch_start + sprite_count) * 6),
-                            0,
-                            0..1,
-                        );
-                    }
+        for batch in compute_batches(&self.draw_commands) {
+            match batch.clip {
+                Some(clip) => {
+                    let (x, y, w, h) = scissor_rect(
+                        clip,
+                        target_width,
+                        target_height,
+                        self.virtual_width,
+                        self.virtual_height,
+                    );
+                    // wgpu rejects a zero-extent scissor, so a fully-offscreen
+                    // clip is floored to 1px rather than dropped — the sprites
+                    // land outside the visible area anyway.
+                    render_pass.set_scissor_rect(x, y, w.max(1), h.max(1));
                 }
-                if tex_idx < textures.len() {
-                    render_pass.set_bind_group(1, &textures[tex_idx].bind_group, &[]);
-                }
-                current_texture = Some(tex_idx);
-                batch_start = i as u32;
+                None => render_pass.set_scissor_rect(0, 0, target_width, target_height),
             }
-        }
-
-        if current_texture.is_some() {
-            let sprite_count = self.draw_commands.len() as u32 - batch_start;
-            if sprite_count > 0 {
-                render_pass.draw_indexed(
-                    (batch_start * 6)..((batch_start + sprite_count) * 6),
-                    0,
-                    0..1,
-                );
+            if batch.texture_index < textures.len() {
+                render_pass.set_bind_group(1, &textures[batch.texture_index].bind_group, &[]);
             }
+            let end = batch.start + batch.count;
+            render_pass.draw_indexed((batch.start as u32 * 6)..(end as u32 * 6), 0, 0..1);
         }
     }
 
@@ -486,7 +522,8 @@ impl Renderer {
                 ..Default::default()
             });
 
-            self.execute_draw_commands(&mut render_pass, textures);
+            // Screenshot pass: the target is a virtual-resolution texture.
+            self.execute_draw_commands(&mut render_pass, textures, vw, vh);
         }
 
         encoder.copy_texture_to_buffer(
@@ -623,7 +660,8 @@ impl Renderer {
                 ..Default::default()
             });
 
-            self.execute_draw_commands(&mut render_pass, textures);
+            // Screenshot pass: the target is a virtual-resolution texture.
+            self.execute_draw_commands(&mut render_pass, textures, vw, vh);
         }
 
         encoder.copy_texture_to_buffer(
@@ -835,3 +873,385 @@ impl Renderer {
 // `renderer.rs` focused on the GPU pipeline (init, batching, draw,
 // screenshot) and lets the rasterizers be unit-tested without spinning
 // up a `Renderer`.
+
+// ─────────────────────────────────────────────────────────────────────
+// Batching / ordering / clipping — extracted as free functions
+//
+// These carry all the frame-preparation logic that used to be inline in
+// `Renderer`. Pulling them out means they can be unit-tested without a GPU,
+// which matters because they're where the sprite-cap crash guard and the draw
+// ordering rules live.
+// ─────────────────────────────────────────────────────────────────────
+
+/// One run of draw commands that share a texture and a clip rect.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Batch {
+    /// Index of the first sprite, in sprite units (not vertices or indices).
+    pub start: usize,
+    pub count: usize,
+    pub texture_index: usize,
+    pub clip: Option<[f32; 4]>,
+}
+
+/// Drop draw commands beyond the fixed vertex-buffer capacity.
+///
+/// The vertex buffer is allocated once at init for `MAX_SPRITES`. Writing past it
+/// is a wgpu buffer overrun (an outright crash), so excess sprites are discarded
+/// instead. `warned` latches so the diagnostic is emitted once rather than every
+/// frame — silently losing sprites is bad, but a 60 Hz log flood is worse.
+fn enforce_sprite_cap(commands: &mut Vec<DrawCommand>, warned: &mut bool) {
+    if commands.len() <= MAX_SPRITES {
+        return;
+    }
+    let dropped = commands.len() - MAX_SPRITES;
+    if !*warned {
+        *warned = true;
+        tracing::warn!(
+            "Draw command count ({}) exceeds MAX_SPRITES ({}); dropping {} sprite(s) this \
+             frame. Further overflows will not be reported. Reduce sprites per frame or raise \
+             MAX_SPRITES.",
+            commands.len(),
+            MAX_SPRITES,
+            dropped
+        );
+    }
+    commands.truncate(MAX_SPRITES);
+}
+
+/// Order draw commands back-to-front by layer.
+///
+/// **Stable, and keyed on `layer` alone.** Texture is deliberately not part of the
+/// key: including it would batch better but would reorder overlapping sprites
+/// within a layer, making "which is on top" depend on which texture they happen
+/// to use. Callers who want fewer batches should group their own draws.
+///
+/// Skipped entirely when every command is on layer 0, so the common case pays
+/// nothing.
+fn sort_by_layer(commands: &mut [DrawCommand]) {
+    if commands.iter().any(|c| c.layer != 0) {
+        commands.sort_by_key(|c| c.layer);
+    }
+}
+
+/// Group consecutive commands into batches, breaking on texture or clip change.
+fn compute_batches(commands: &[DrawCommand]) -> Vec<Batch> {
+    let mut batches: Vec<Batch> = Vec::new();
+    for (i, cmd) in commands.iter().enumerate() {
+        let tex = cmd.texture_id.0;
+        match batches.last_mut() {
+            // Bit equality on the clip is the intended test: values are copied
+            // verbatim from the caller and never recomputed.
+            Some(last) if last.texture_index == tex && last.clip == cmd.clip => {
+                last.count += 1;
+            }
+            _ => batches.push(Batch {
+                start: i,
+                count: 1,
+                texture_index: tex,
+                clip: cmd.clip,
+            }),
+        }
+    }
+    batches
+}
+
+/// The four corners of a destination rect, in TL, TR, BR, BL order, rotated
+/// clockwise about the rect's centre.
+///
+/// `rotation == 0.0` takes an exact fast path (no trig, no float drift), which is
+/// what almost every sprite hits.
+fn quad_corners(dst_rect: [f32; 4], rotation: f32) -> [[f32; 2]; 4] {
+    let [x, y, w, h] = dst_rect;
+    if rotation == 0.0 {
+        return [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
+    }
+    // Screen space is y-down, so a positive angle reads as clockwise on screen.
+    let (sin, cos) = rotation.sin_cos();
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let rotate = |px: f32, py: f32| {
+        let ox = px - cx;
+        let oy = py - cy;
+        [cx + ox * cos - oy * sin, cy + ox * sin + oy * cos]
+    };
+    [
+        rotate(x, y),
+        rotate(x + w, y),
+        rotate(x + w, y + h),
+        rotate(x, y + h),
+    ]
+}
+
+/// Convert a virtual-pixel clip rect into a physical scissor rect, clamped to the
+/// surface. wgpu rejects a scissor rect that extends past the attachment.
+fn scissor_rect(
+    clip: [f32; 4],
+    surface_width: u32,
+    surface_height: u32,
+    virtual_width: f32,
+    virtual_height: f32,
+) -> (u32, u32, u32, u32) {
+    if virtual_width <= 0.0 || virtual_height <= 0.0 {
+        return (0, 0, surface_width, surface_height);
+    }
+    let scale_x = surface_width as f32 / virtual_width;
+    let scale_y = surface_height as f32 / virtual_height;
+
+    // Floor the origin and ceil the far edge so a clip never crops a pixel the
+    // caller meant to include.
+    let x0 = (clip[0] * scale_x).floor().max(0.0) as u32;
+    let y0 = (clip[1] * scale_y).floor().max(0.0) as u32;
+    let x1 = ((clip[0] + clip[2]) * scale_x).ceil().max(0.0) as u32;
+    let y1 = ((clip[1] + clip[3]) * scale_y).ceil().max(0.0) as u32;
+
+    let x0 = x0.min(surface_width);
+    let y0 = y0.min(surface_height);
+    // `saturating_sub` keeps a fully-offscreen clip at zero extent instead of
+    // wrapping into a huge rect.
+    let w = x1.min(surface_width).saturating_sub(x0);
+    let h = y1.min(surface_height).saturating_sub(y0);
+    (x0, y0, w, h)
+}
+
+#[cfg(test)]
+mod batching_tests {
+    use super::*;
+
+    fn cmd(texture: usize, layer: i32) -> DrawCommand {
+        DrawCommand {
+            texture_id: crate::TextureId(texture),
+            layer,
+            ..Default::default()
+        }
+    }
+
+    fn clipped(texture: usize, clip: Option<[f32; 4]>) -> DrawCommand {
+        DrawCommand {
+            texture_id: crate::TextureId(texture),
+            clip,
+            ..Default::default()
+        }
+    }
+
+    // ── Sprite cap (the crash guard) ────────────────────────────────
+
+    #[test]
+    fn sprite_cap_truncates_instead_of_overrunning_the_buffer() {
+        // The whole point: MAX_SPRITES+1 commands used to be written straight
+        // into a fixed-size vertex buffer with no check, which is a wgpu buffer
+        // overrun rather than a graceful degrade.
+        let mut commands: Vec<DrawCommand> = (0..MAX_SPRITES + 500).map(|_| cmd(0, 0)).collect();
+        let mut warned = false;
+        enforce_sprite_cap(&mut commands, &mut warned);
+        assert_eq!(commands.len(), MAX_SPRITES);
+        assert!(warned, "overflow should be reported at least once");
+    }
+
+    #[test]
+    fn sprite_cap_warns_only_once() {
+        let mut warned = false;
+        for _ in 0..3 {
+            let mut commands: Vec<DrawCommand> = (0..MAX_SPRITES + 1).map(|_| cmd(0, 0)).collect();
+            enforce_sprite_cap(&mut commands, &mut warned);
+        }
+        // Latched: a 60 Hz log flood would be worse than the dropped sprites.
+        assert!(warned);
+    }
+
+    #[test]
+    fn sprite_cap_leaves_normal_frames_untouched() {
+        let mut commands: Vec<DrawCommand> = (0..100).map(|_| cmd(0, 0)).collect();
+        let mut warned = false;
+        enforce_sprite_cap(&mut commands, &mut warned);
+        assert_eq!(commands.len(), 100);
+        assert!(!warned);
+    }
+
+    // ── Layer ordering ──────────────────────────────────────────────
+
+    #[test]
+    fn sort_orders_layers_back_to_front() {
+        let mut commands = vec![cmd(0, 5), cmd(1, -1), cmd(2, 0)];
+        sort_by_layer(&mut commands);
+        assert_eq!(
+            commands.iter().map(|c| c.layer).collect::<Vec<_>>(),
+            vec![-1, 0, 5]
+        );
+    }
+
+    #[test]
+    fn sort_is_stable_within_a_layer() {
+        // Submission order must survive inside one layer, or painter's-algorithm
+        // draws (e.g. a shadow then the sprite on top of it) would flip.
+        let mut commands = vec![cmd(7, 0), cmd(3, 0), cmd(9, 0), cmd(1, 0)];
+        sort_by_layer(&mut commands);
+        assert_eq!(
+            commands.iter().map(|c| c.texture_id.0).collect::<Vec<_>>(),
+            vec![7, 3, 9, 1],
+            "texture must NOT influence ordering within a layer"
+        );
+    }
+
+    #[test]
+    fn sort_preserves_submission_order_across_mixed_layers() {
+        let mut commands = vec![cmd(1, 1), cmd(2, 0), cmd(3, 1), cmd(4, 0)];
+        sort_by_layer(&mut commands);
+        // Layer 0 first (2 then 4), then layer 1 (1 then 3) — each in submission order.
+        assert_eq!(
+            commands.iter().map(|c| c.texture_id.0).collect::<Vec<_>>(),
+            vec![2, 4, 1, 3]
+        );
+    }
+
+    // ── Batching ────────────────────────────────────────────────────
+
+    #[test]
+    fn consecutive_same_texture_commands_form_one_batch() {
+        let commands = vec![cmd(0, 0), cmd(0, 0), cmd(0, 0)];
+        let batches = compute_batches(&commands);
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].start, 0);
+        assert_eq!(batches[0].count, 3);
+    }
+
+    #[test]
+    fn texture_change_breaks_the_batch() {
+        // A,B,A,B is the pathological interleave: 4 draw calls, not 2.
+        let commands = vec![cmd(0, 0), cmd(1, 0), cmd(0, 0), cmd(1, 0)];
+        let batches = compute_batches(&commands);
+        assert_eq!(batches.len(), 4);
+        assert_eq!(
+            batches.iter().map(|b| b.texture_index).collect::<Vec<_>>(),
+            vec![0, 1, 0, 1]
+        );
+    }
+
+    #[test]
+    fn clip_change_breaks_the_batch_even_with_one_texture() {
+        let commands = vec![
+            clipped(0, None),
+            clipped(0, Some([0.0, 0.0, 10.0, 10.0])),
+            clipped(0, Some([0.0, 0.0, 10.0, 10.0])),
+            clipped(0, None),
+        ];
+        let batches = compute_batches(&commands);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(batches[0].count, 1);
+        assert_eq!(batches[1].count, 2, "identical clips should coalesce");
+        assert_eq!(batches[2].count, 1);
+    }
+
+    #[test]
+    fn batch_ranges_cover_every_command_exactly_once() {
+        // The ranges index the vertex buffer, so a gap or overlap would render
+        // the wrong sprites.
+        let commands = vec![cmd(0, 0), cmd(0, 0), cmd(1, 0), cmd(2, 0), cmd(2, 0)];
+        let batches = compute_batches(&commands);
+        let mut covered = 0;
+        let mut expected_start = 0;
+        for b in &batches {
+            assert_eq!(b.start, expected_start);
+            expected_start += b.count;
+            covered += b.count;
+        }
+        assert_eq!(covered, commands.len());
+    }
+
+    #[test]
+    fn empty_command_list_produces_no_batches() {
+        assert!(compute_batches(&[]).is_empty());
+    }
+
+    // ── Scissor conversion ──────────────────────────────────────────
+
+    #[test]
+    fn scissor_scales_virtual_to_physical() {
+        // 512x480 virtual on a 1024x960 surface is exactly 2x.
+        let (x, y, w, h) = scissor_rect([10.0, 20.0, 100.0, 50.0], 1024, 960, 512.0, 480.0);
+        assert_eq!((x, y, w, h), (20, 40, 200, 100));
+    }
+
+    #[test]
+    fn scissor_is_clamped_to_the_surface() {
+        // wgpu rejects a rect that leaves the attachment, so an over-large clip
+        // must be trimmed rather than passed through.
+        let (x, y, w, h) = scissor_rect([0.0, 0.0, 10_000.0, 10_000.0], 800, 600, 400.0, 300.0);
+        assert_eq!((x, y), (0, 0));
+        assert!(x + w <= 800, "w={w} would exceed the surface");
+        assert!(y + h <= 600, "h={h} would exceed the surface");
+    }
+
+    #[test]
+    fn fully_offscreen_clip_yields_zero_extent_not_a_wrapped_rect() {
+        // Naive subtraction here would underflow u32 into a huge rect.
+        let (_, _, w, h) = scissor_rect([5000.0, 5000.0, 10.0, 10.0], 800, 600, 400.0, 300.0);
+        assert_eq!((w, h), (0, 0));
+    }
+
+    #[test]
+    fn negative_clip_origin_is_clamped_to_zero() {
+        let (x, y, _, _) = scissor_rect([-50.0, -50.0, 100.0, 100.0], 800, 600, 400.0, 300.0);
+        assert_eq!((x, y), (0, 0));
+    }
+
+    // ── Rotation ────────────────────────────────────────────────────
+
+    #[test]
+    fn unrotated_quad_uses_the_exact_fast_path() {
+        // Must be bit-exact, not merely close: every existing sprite goes through
+        // here and any float drift would soften pixel-art edges.
+        let c = quad_corners([10.0, 20.0, 30.0, 40.0], 0.0);
+        assert_eq!(c, [[10.0, 20.0], [40.0, 20.0], [40.0, 60.0], [10.0, 60.0]]);
+    }
+
+    #[test]
+    fn quarter_turn_rotates_about_the_centre() {
+        // A square rotated 90° maps onto itself, with corners cycled.
+        let c = quad_corners([0.0, 0.0, 10.0, 10.0], std::f32::consts::FRAC_PI_2);
+        let approx =
+            |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).abs() < 1e-4 && (a[1] - b[1]).abs() < 1e-4;
+        // TL -> TR position (clockwise in y-down screen space).
+        assert!(approx(c[0], [10.0, 0.0]), "got {:?}", c[0]);
+        assert!(approx(c[1], [10.0, 10.0]), "got {:?}", c[1]);
+        assert!(approx(c[2], [0.0, 10.0]), "got {:?}", c[2]);
+        assert!(approx(c[3], [0.0, 0.0]), "got {:?}", c[3]);
+    }
+
+    #[test]
+    fn rotation_preserves_the_centre_and_the_diagonal() {
+        let rect = [5.0, 7.0, 20.0, 12.0];
+        let (cx, cy) = (5.0 + 10.0, 7.0 + 6.0);
+        for angle in [0.3_f32, 1.1, -2.0, 3.5] {
+            let c = quad_corners(rect, angle);
+            let mx = c.iter().map(|p| p[0]).sum::<f32>() / 4.0;
+            let my = c.iter().map(|p| p[1]).sum::<f32>() / 4.0;
+            assert!((mx - cx).abs() < 1e-3, "centre moved at angle {angle}");
+            assert!((my - cy).abs() < 1e-3, "centre moved at angle {angle}");
+            // Rigid rotation: the diagonal length is invariant.
+            let d = ((c[2][0] - c[0][0]).powi(2) + (c[2][1] - c[0][1]).powi(2)).sqrt();
+            let expected = (20.0_f32.powi(2) + 12.0_f32.powi(2)).sqrt();
+            assert!(
+                (d - expected).abs() < 1e-3,
+                "diagonal changed at angle {angle}"
+            );
+        }
+    }
+
+    #[test]
+    fn full_turn_returns_to_the_start() {
+        let rect = [3.0, 4.0, 8.0, 6.0];
+        let a = quad_corners(rect, 0.0);
+        let b = quad_corners(rect, std::f32::consts::TAU);
+        for i in 0..4 {
+            assert!((a[i][0] - b[i][0]).abs() < 1e-3);
+            assert!((a[i][1] - b[i][1]).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn degenerate_virtual_size_falls_back_to_full_surface() {
+        // Guards against a divide-by-zero producing NaN scissor values.
+        let (x, y, w, h) = scissor_rect([1.0, 1.0, 2.0, 2.0], 800, 600, 0.0, 0.0);
+        assert_eq!((x, y, w, h), (0, 0, 800, 600));
+    }
+}

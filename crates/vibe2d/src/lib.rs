@@ -43,6 +43,8 @@ macro_rules! zone {
 #[cfg(all(feature = "profiling", not(target_arch = "wasm32")))]
 tracy_client::register_demangler!();
 
+pub mod storage;
+
 pub mod prelude {
     pub use crate::Color;
     pub use crate::config::GameConfig;
@@ -53,6 +55,7 @@ pub mod prelude {
     #[cfg(target_arch = "wasm32")]
     pub use crate::run_web;
     pub use crate::screen::Screen;
+    pub use crate::storage::Storage;
     pub use glam::Vec2;
     pub use vibe_input::{
         AxisDir, AxisSpec, GamepadAxis, GamepadButton, GamepadId, InputState, RumbleRequest,

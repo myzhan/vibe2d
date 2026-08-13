@@ -7,7 +7,7 @@ description = "AI-friendly 2D game engine"
 
 [features]
 default = ["vdp", "gamepad"]
-vdp = ["dep:vibe_debug", "dep:serde_json", "dep:vibe_vdp_macros"]
+vdp = ["dep:vibe_debug", "dep:vibe_vdp_macros"]
 # Physical gamepad polling via gilrs (desktop + web). Default-on but
 # strippable: on Linux/BSD gilrs hard-links libudev, which is a new *system*
 # dependency for downstream builders.
@@ -45,7 +45,9 @@ vibe_vdp_macros = { workspace = true, optional = true }
 glam.workspace = true
 serde.workspace = true
 serde_yaml.workspace = true
-serde_json = { workspace = true, optional = true }
+# Unconditional: `storage` (save data) needs JSON and must not depend
+# on the debug protocol being compiled in.
+serde_json.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -57,7 +59,7 @@ tracy-client = { workspace = true, optional = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook.workspace = true
 web-time.workspace = true
-web-sys = { workspace = true, features = ["WebSocket", "MessageEvent", "ErrorEvent", "BinaryType", "Location"] }
+web-sys = { workspace = true, features = ["WebSocket", "MessageEvent", "ErrorEvent", "BinaryType", "Location", "Storage"] }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true

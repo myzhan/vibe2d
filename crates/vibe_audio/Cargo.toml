@@ -16,6 +16,9 @@ rodio.workspace = true
 web-sys = { workspace = true, features = [
     "AudioContext", "AudioBuffer", "AudioBufferSourceNode",
     "AudioDestinationNode", "BaseAudioContext",
+    # Music channel needs a gain node it can retain, so volume and the
+    # pause-by-muting path can address it after playback has started.
+    "GainNode", "AudioNode", "AudioParam",
 ] }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
