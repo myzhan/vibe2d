@@ -13,6 +13,7 @@ use crate::items::*;
 use crate::level;
 use crate::music::MusicPhase;
 use crate::physics::*;
+use crate::pipe::PipeTransit;
 use crate::player::*;
 use crate::portal::*;
 use crate::world::*;
@@ -66,6 +67,9 @@ pub(crate) struct Mari0Game {
     pub(crate) items: Vec<Item>,
     pub(crate) fireballs: Vec<Fireball>,
     pub(crate) star_timer: f32, // player star invincibility timer
+
+    /// The pipe trip in progress, if any. While set, the player has no control.
+    pub(crate) pipe: Option<PipeTransit>,
 
     /// Where the level music is in its low-time sequence.
     pub(crate) music_phase: MusicPhase,
@@ -179,6 +183,7 @@ impl Mari0Game {
         self.fireballs.clear();
         self.star_timer = 0.0;
         self.camera = Camera { x: 0.0 };
+        self.pipe = None;
         self.level = level;
         // Fill the opening screen now so the player doesn't watch the first
         // goombas pop into being after the level has already started.
@@ -188,7 +193,34 @@ impl Mari0Game {
         self.music_restart = true;
     }
 
+    /// Purely cosmetic cycles: the portal frame animation and the aim-dot phase.
+    ///
+    /// Kept separate from the rest of the update so a pipe transition — which
+    /// suspends input, physics and the clock — can still let the portals shimmer.
+    fn update_visual_timers(&mut self, dt: f32) {
+        self.aim_dot_timer += dt;
+        const AIM_DOTS_CYCLE: f32 = 0.8;
+        if self.aim_dot_timer >= AIM_DOTS_CYCLE {
+            self.aim_dot_timer -= AIM_DOTS_CYCLE;
+        }
+
+        self.portal_anim_timer += dt;
+        while self.portal_anim_timer >= PORTAL_ANIM_DELAY {
+            self.portal_anim_timer -= PORTAL_ANIM_DELAY;
+            self.portal_anim_frame = (self.portal_anim_frame + 1) % PORTAL_ANIM_FRAMES;
+        }
+    }
+
     pub(crate) fn update_playing(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
+        // ── Pipe transition ──
+        // A trip through a pipe owns the player: input, physics and the clock are
+        // all suspended, and the level may swap out from under us partway through.
+        // Nothing below may run in that case, so this returns rather than branching.
+        if self.update_pipe(dt) {
+            self.update_visual_timers(dt);
+            return;
+        }
+
         // ── Input ──
         let move_left = input.is_action_pressed("move_left");
         let move_right = input.is_action_pressed("move_right");
@@ -295,6 +327,18 @@ impl Mari0Game {
         );
         self.player.vy = new_vy;
         self.player.on_ground = on_ground;
+
+        // Checked after the move, so `on_ground` and the resolved position are the
+        // ones the probe reads. A pipe found here takes over from the next frame.
+        //
+        // `blocked_right` rather than "holding right": the collision resolver zeroes
+        // `vx` when it stops the player, and a sideways pipe mouth is solid, so this
+        // is the "ran into it" signal the original's check sits behind.
+        let blocked_right = move_right && self.player.vx == 0.0;
+        self.check_pipe_entry(ctx, input.is_action_pressed("crouch"), blocked_right);
+        if self.in_pipe() {
+            return;
+        }
 
         if on_ground {
             self.player.is_jumping = false;
@@ -439,19 +483,7 @@ impl Mari0Game {
             self.player.anim_state = PlayerAnim::Idle;
         }
 
-        // ── Portal aim dots animation timer ──
-        self.aim_dot_timer += dt;
-        const AIM_DOTS_CYCLE: f32 = 0.8;
-        if self.aim_dot_timer >= AIM_DOTS_CYCLE {
-            self.aim_dot_timer -= AIM_DOTS_CYCLE;
-        }
-
-        // ── Portal animation (global frame cycle, matches original) ──
-        self.portal_anim_timer += dt;
-        while self.portal_anim_timer >= PORTAL_ANIM_DELAY {
-            self.portal_anim_timer -= PORTAL_ANIM_DELAY;
-            self.portal_anim_frame = (self.portal_anim_frame + 1) % PORTAL_ANIM_FRAMES;
-        }
+        self.update_visual_timers(dt);
 
         // ── Portal opening animation ──
         for portal_opt in &mut self.portals {
@@ -565,6 +597,7 @@ impl Game for Mari0Game {
             fireballs: Vec::new(),
             star_timer: 0.0,
             level,
+            pipe: None,
             music_phase: MusicPhase::Normal,
             warning_started_at: None,
             // Starts on the first frame of play, not at construction: the menu is

@@ -44,6 +44,18 @@ pub(crate) struct Level {
     pub(crate) spriteset: u8,
     /// Which theme to play, 1..=7. See `music::MusicPhase` for the encoding.
     pub(crate) music: u8,
+    /// Pipe entrances, keyed by tile cell → destination sublevel (0 = back to the
+    /// main level).
+    pub(crate) pipes: HashMap<(i32, i32), u32>,
+    /// Where the player emerges, keyed by the sublevel they came *from*.
+    ///
+    /// The original's `pipespawn` entity carries the sublevel number it pairs with,
+    /// and both directions of a trip consult it: going in matches
+    /// `mariosublevel == arg`, coming back matches `prevsublevel == arg`
+    /// (`game.lua:2306`).
+    pub(crate) pipe_spawns: HashMap<u32, (i32, i32)>,
+    /// Warp pipes, keyed by tile cell → destination world.
+    pub(crate) warp_pipes: HashMap<(i32, i32), u32>,
 }
 
 /// A pending enemy placement produced by the loader.
@@ -84,11 +96,19 @@ pub(crate) struct Camera {
 /// Mari0 has no explicit world count: `nextlevel()` increments the level, rolls
 /// over to the next world past 4, and the mappack simply *ends* when the next
 /// file doesn't exist (`game.lua:3448`, `levelscreen.lua:32`).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LevelId {
     pub(crate) pack: String,
     pub(crate) world: u32,
     pub(crate) level: u32,
+    /// Which sublevel is loaded; 0 is the main level.
+    ///
+    /// Sublevels are separate files named `W-L_N` — the underground coin rooms,
+    /// the bonus stages, the warp zones. `startlevel` takes a *number* for a
+    /// sublevel and a *string* for a fresh level, and the two branches differ in
+    /// more than the filename: only the fresh-level branch resets the clock
+    /// (`game.lua:1898-1918`, `:2111`).
+    pub(crate) sublevel: u32,
 }
 
 impl LevelId {
@@ -97,20 +117,41 @@ impl LevelId {
             pack: pack.to_string(),
             world,
             level,
+            sublevel: 0,
         }
     }
 
     pub(crate) fn name(&self) -> String {
-        format!("{}-{}", self.world, self.level)
+        if self.sublevel == 0 {
+            format!("{}-{}", self.world, self.level)
+        } else {
+            format!("{}-{}_{}", self.world, self.level, self.sublevel)
+        }
+    }
+
+    /// The same level with a different sublevel selected.
+    pub(crate) fn with_sublevel(&self, sublevel: u32) -> Self {
+        Self {
+            sublevel,
+            ..self.clone()
+        }
     }
 
     /// Advance to the next level, rolling worlds over past level 4.
     pub(crate) fn advance(&mut self) {
         self.level += 1;
+        self.sublevel = 0;
         if self.level > 4 {
             self.level = 1;
             self.world += 1;
         }
+    }
+
+    /// Jump to the first level of `world`, as a warp pipe does.
+    pub(crate) fn warp_to_world(&mut self, world: u32) {
+        self.world = world;
+        self.level = 1;
+        self.sublevel = 0;
     }
 
     /// Does this level exist in the shipped data?
@@ -306,6 +347,27 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         spawns_by_cell.entry(sp.cell()).or_default().push(i);
     }
 
+    let pipes = parsed
+        .markers
+        .pipes
+        .iter()
+        .map(|(x, y, dest)| ((*x as i32, *y as i32), *dest as u32))
+        .collect();
+    let warp_pipes = parsed
+        .markers
+        .warp_pipes
+        .iter()
+        .map(|(x, y, world)| ((*x as i32, *y as i32), *world as u32))
+        .collect();
+    // Keyed by sublevel, so a level with two exits from different sublevels keeps
+    // both. Later entries win on a duplicate, which no shipped level has.
+    let pipe_spawns = parsed
+        .markers
+        .pipe_spawns
+        .iter()
+        .map(|(x, y, from)| (*from as u32, (*x as i32, *y as i32)))
+        .collect();
+
     Level {
         tiles,
         width,
@@ -321,5 +383,8 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         background: parsed.meta.background,
         spriteset: parsed.meta.spriteset,
         music: parsed.meta.music,
+        pipes,
+        pipe_spawns,
+        warp_pipes,
     }
 }

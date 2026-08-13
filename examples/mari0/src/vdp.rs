@@ -9,6 +9,7 @@ use crate::enemies::*;
 use crate::game::{GameState, Mari0Game};
 use crate::items::*;
 use crate::music::MusicPhase;
+use crate::pipe::PipeDir;
 use crate::player::*;
 use crate::portal::*;
 use crate::world::*;
@@ -37,6 +38,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) time_remaining: f32,
     /// Which stage of the low-time music sequence is active.
     pub(crate) music_phase: MusicPhase,
+    /// Which way the player is moving through a pipe, or `null` when not in one.
+    pub(crate) pipe: Option<PipeDir>,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -126,6 +129,13 @@ pub(crate) struct CoinView {
 #[cfg(feature = "vdp")]
 #[derive(serde::Serialize)]
 pub(crate) struct LevelView {
+    /// The loaded file's name, e.g. `1-2` or `1-2_1`. Lets a test see which
+    /// sublevel a pipe led to.
+    pub(crate) name: String,
+    pub(crate) world: u32,
+    pub(crate) level: u32,
+    /// 0 for the main level.
+    pub(crate) sublevel: u32,
     pub(crate) width: usize,
     pub(crate) height: usize,
     pub(crate) flag_x: f32,
@@ -249,6 +259,9 @@ pub(crate) struct SetLevel {
     pub(crate) pack: String,
     pub(crate) world: u32,
     pub(crate) level: u32,
+    /// 0 (the default) is the main level.
+    #[serde(default)]
+    pub(crate) sublevel: u32,
 }
 
 #[cfg(feature = "vdp")]
@@ -330,6 +343,10 @@ impl Mari0Game {
                 })
                 .collect(),
             level: LevelView {
+                name: self.current.name(),
+                world: self.current.world,
+                level: self.current.level,
+                sublevel: self.current.sublevel,
                 width: self.level.width,
                 height: self.level.height,
                 flag_x: self.level.flag_x,
@@ -345,6 +362,7 @@ impl Mari0Game {
             combo_index: self.combo_index,
             time_remaining: self.time_remaining,
             music_phase: self.music_phase,
+            pipe: self.pipe.as_ref().map(|p| p.dir),
             items: self
                 .items
                 .iter()
@@ -543,7 +561,7 @@ impl Mari0Game {
     /// because the loader was compiled against 1-1.
     #[vdp("game.setLevel")]
     pub(crate) fn vdp_set_level(&mut self, p: SetLevel) -> Result<serde_json::Value, String> {
-        let id = LevelId::new(&p.pack, p.world, p.level);
+        let id = LevelId::new(&p.pack, p.world, p.level).with_sublevel(p.sublevel);
         if !id.exists() {
             return Err(format!("no such level {}/{}", p.pack, id.name()));
         }
@@ -553,6 +571,7 @@ impl Mari0Game {
         Ok(serde_json::json!({
             "pack": self.current.pack,
             "level": self.current.name(),
+            "sublevel": self.current.sublevel,
             "width": self.level.width,
             "enemies": self.enemies.len(),
         }))
@@ -565,6 +584,7 @@ impl Mari0Game {
         Ok(serde_json::json!({
             "pack": self.current.pack,
             "level": self.current.name(),
+            "sublevel": self.current.sublevel,
             "state": format!("{:?}", self.state),
         }))
     }

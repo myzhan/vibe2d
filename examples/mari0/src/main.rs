@@ -16,6 +16,7 @@ mod game;
 mod items;
 mod music;
 mod physics;
+mod pipe;
 mod player;
 mod portal;
 mod render;
