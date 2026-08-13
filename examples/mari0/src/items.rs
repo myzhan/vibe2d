@@ -7,6 +7,7 @@ use crate::effects::*;
 use crate::enemies::{EnemyState, EnemyType};
 use crate::game::Mari0Game;
 use crate::physics::*;
+use crate::portal::{PortalBody, portal_carry};
 
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum BlockContent {
@@ -359,6 +360,8 @@ impl Mari0Game {
     }
 
     pub(crate) fn update_items(&mut self, ctx: &Context, dt: f32) {
+        // Cloned up front: the loop holds `&mut self.items`.
+        let portals = self.portal_pair();
         // Update item physics
         let level = &self.level;
         for item in &mut self.items {
@@ -390,6 +393,34 @@ impl Mari0Game {
 
             let iw = TILE_SIZE;
             let ih = TILE_SIZE;
+
+            // A mushroom/1-up/star is `static = true` while it is still rising out of
+            // the block and becomes a mover once clear (`mushroom.lua:60`), so
+            // `emerging` is exactly the original's gate. The fire flower stays static
+            // for good and never travels.
+            if !item.emerging
+                && item.item_type != ItemType::FireFlower
+                && let Some((nx, ny, nvx, nvy)) = portal_carry(
+                    &self.level,
+                    portals.as_ref(),
+                    PortalBody {
+                        x: item.x,
+                        y: item.y,
+                        w: iw,
+                        h: ih,
+                        vx: item.vx,
+                        vy: item.vy,
+                    },
+                    dt,
+                    true,
+                )
+            {
+                item.x = nx;
+                item.y = ny;
+                item.vx = nvx;
+                item.vy = nvy;
+                continue;
+            }
 
             // Horizontal movement + wall collision
             item.x += item.vx * dt;
@@ -513,6 +544,7 @@ impl Mari0Game {
     }
 
     pub(crate) fn update_fireballs(&mut self, _ctx: &Context, dt: f32) {
+        let portals = self.portal_pair();
         // Physics update
         let level = &self.level;
         for fb in &mut self.fireballs {
@@ -531,6 +563,30 @@ impl Mari0Game {
 
             let fw = FIREBALL_SIZE;
             let fh = FIREBALL_SIZE;
+
+            // Fireballs go through portals, but `mask[2] = true` (`fireball.lua:20`)
+            // exempts them from the `inportal` fallback — hence `false` here. They
+            // must cross a mouth's plane to be taken, not merely be found inside one.
+            if let Some((nx, ny, nvx, nvy)) = portal_carry(
+                &self.level,
+                portals.as_ref(),
+                PortalBody {
+                    x: fb.x,
+                    y: fb.y,
+                    w: fw,
+                    h: fh,
+                    vx: fb.vx,
+                    vy: fb.vy,
+                },
+                dt,
+                false,
+            ) {
+                fb.x = nx;
+                fb.y = ny;
+                fb.vx = nvx;
+                fb.vy = nvy;
+                continue;
+            }
 
             // Horizontal movement + wall collision → explode
             fb.x += fb.vx * dt;

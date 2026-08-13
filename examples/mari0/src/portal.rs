@@ -7,7 +7,11 @@
 //! glue that fires shots, decides what they hit, and moves the player through.
 //!
 //! A single portal is not a hole: both must exist before anything routes through,
-//! which is why `check_portal_teleport` starts by requiring both slots.
+//! which is why every entry test starts by requiring both slots.
+//!
+//! The entry rules are shared by every mover via [`portal_sweep`] — Mario, enemies,
+//! items and fireballs all travel by one rule, as they do in the original, where each
+//! object calls `checkportal*` from its own movement code.
 
 use vibe2d::prelude::*;
 
@@ -16,6 +20,7 @@ use crate::game::Mari0Game;
 use crate::physics::*;
 use crate::player::Orientation;
 use crate::portal_math::{PortalAnchor, portal_position, portal_transform, tendency_for};
+use crate::world::Level;
 
 #[derive(Clone)]
 pub(crate) struct Portal {
@@ -217,145 +222,64 @@ impl Mari0Game {
         self.refresh_portal_holes();
     }
 
-    /// Run the three entry tests in the original's order.
+    /// Run the three entry tests for the player.
     ///
-    /// `next_x`/`next_y` are where the player is about to move to. Two swept tests
-    /// come first — they catch a body *crossing* a mouth's plane within one step,
-    /// which an overlap test misses entirely at speed — and `in_portal` mops up
-    /// afterwards for anything already sitting inside a mouth.
-    ///
-    /// Order matters and is the original's: `checkportalVER` before
-    /// `checkportalHOR`, so a corner that qualifies for both resolves as a wall
-    /// portal rather than a floor one.
+    /// `next_x`/`next_y` are where the player is about to move to. See
+    /// [`portal_sweep`] for why the swept form matters.
     pub(crate) fn check_portal_entry(&mut self, ctx: &Context, next_x: f32, next_y: f32) -> bool {
-        if self.player.teleport_cooldown > 0.0 || self.portal_pair().is_none() {
+        if self.player.teleport_cooldown > 0.0 {
             return false;
         }
-        self.check_portal_ver(ctx, next_x) || self.check_portal_hor(ctx, next_y)
+        let Some((p0, p1)) = self.portal_pair() else {
+            return false;
+        };
+        let body = PortalBody {
+            x: self.player.x,
+            y: self.player.y,
+            w: self.player.width,
+            h: self.player.height,
+            vx: self.player.vx,
+            vy: self.player.vy,
+        };
+        match portal_sweep(&self.level, (&p0, &p1), body, next_x, next_y) {
+            PortalOutcome::None => false,
+            PortalOutcome::Bounced { vx, vy } => {
+                self.player.vx = vx;
+                self.player.vy = vy;
+                self.player.is_jumping = false;
+                true
+            }
+            PortalOutcome::Through {
+                exit,
+                straight_through,
+            } => {
+                self.player.x = exit.x;
+                self.player.y = exit.y;
+                self.player.vx = exit.vx;
+                self.player.vy = exit.vy;
+                self.player.teleport_cooldown = PORTAL_TELEPORT_COOLDOWN;
+                self.player.on_ground = false;
+                if !straight_through {
+                    self.player.is_jumping = false;
+                }
+                ctx.audio.play("portalenter");
+                true
+            }
+        }
     }
 
     /// Both portals, in slot order, or `None` unless the pair is complete.
-    fn portal_pair(&self) -> Option<(Portal, Portal)> {
+    pub(crate) fn portal_pair(&self) -> Option<(Portal, Portal)> {
         match (&self.portals[0], &self.portals[1]) {
             (Some(a), Some(b)) if a.active && b.active => Some((a.clone(), b.clone())),
             _ => None,
         }
     }
 
-    /// Swept test for the vertical mouths (left/right faces).
+    /// Containment fallback for the player: teleport if the centre cell is inside a
+    /// mouth.
     ///
-    /// The row test uses the player's **top edge** cell, as the original does
-    /// (`math.floor(self.y+1)`).
-    fn check_portal_ver(&mut self, ctx: &Context, next_x: f32) -> bool {
-        let Some((p0, p1)) = self.portal_pair() else {
-            return false;
-        };
-        let row = (self.player.y / TILE_SIZE).floor() as i32;
-        let half_w = self.player.width / 2.0;
-
-        for (entry, exit) in [(&p0, &p1), (&p1, &p0)] {
-            if !matches!(entry.orientation(), Orientation::Left | Orientation::Right) {
-                continue;
-            }
-            if !entry.rows().contains(&row)
-                || !in_range(entry.plane(), self.player.x + half_w, next_x + half_w)
-            {
-                continue;
-            }
-            // Only a body moving *into* the face can use it.
-            let heading_in = match entry.orientation() {
-                Orientation::Right => self.player.vx <= 0.0,
-                Orientation::Left => self.player.vx >= 0.0,
-                _ => false,
-            };
-            if !heading_in {
-                continue;
-            }
-
-            let out = self.transform_player(entry, exit);
-            if rect_is_clear(
-                &self.level,
-                out.x,
-                out.y,
-                self.player.width,
-                self.player.height,
-            ) {
-                self.commit_teleport(ctx, out);
-            } else {
-                // Blocked exit on a wall portal: bounce, **no damping and no
-                // minimum**, unlike the floor case.
-                self.player.vx = -self.player.vx;
-            }
-            self.player.is_jumping = false;
-            return true;
-        }
-        false
-    }
-
-    /// Swept test for the horizontal mouths (up/down faces).
-    ///
-    /// The column test uses the player's **left edge** cell (`math.floor(self.x+1)`).
-    fn check_portal_hor(&mut self, ctx: &Context, next_y: f32) -> bool {
-        let Some((p0, p1)) = self.portal_pair() else {
-            return false;
-        };
-        let col = (self.player.x / TILE_SIZE).floor() as i32;
-        let half_h = self.player.height / 2.0;
-
-        for (entry, exit) in [(&p0, &p1), (&p1, &p0)] {
-            if !matches!(entry.orientation(), Orientation::Up | Orientation::Down) {
-                continue;
-            }
-            if !entry.cols().contains(&col)
-                || !in_range(entry.plane(), self.player.y + half_h, next_y + half_h)
-            {
-                continue;
-            }
-            let heading_in = match entry.orientation() {
-                Orientation::Up => self.player.vy >= 0.0,
-                Orientation::Down => self.player.vy <= 0.0,
-                _ => false,
-            };
-            if !heading_in {
-                continue;
-            }
-
-            let out = self.transform_player(entry, exit);
-            if rect_is_clear(
-                &self.level,
-                out.x,
-                out.y,
-                self.player.width,
-                self.player.height,
-            ) {
-                self.commit_teleport(ctx, out);
-            } else {
-                // Blocked exit on a floor/ceiling portal: bounce with a little loss
-                // and a minimum magnitude, so a body can't get stuck oscillating at
-                // nearly zero speed.
-                self.player.vy = -self.player.vy * 0.95;
-                const MIN_BOUNCE: f32 = 2.0 * TILE_SIZE;
-                if self.player.vy.abs() < MIN_BOUNCE {
-                    self.player.vy = MIN_BOUNCE * self.player.vy.signum().max(-1.0);
-                }
-            }
-            // An up↔down pair is a straight fall-through and keeps its jump state;
-            // everything else lands the player into a fall.
-            let straight_through = matches!(
-                (entry.orientation(), exit.orientation()),
-                (Orientation::Up, Orientation::Down) | (Orientation::Down, Orientation::Up)
-            );
-            if !straight_through {
-                self.player.is_jumping = false;
-            }
-            return true;
-        }
-        false
-    }
-
-    /// Containment fallback: teleport anything whose centre cell is inside a mouth.
-    ///
-    /// Run *after* movement, and deliberately **without** a clearance check — the
+    /// Run *after* movement and deliberately **without** a clearance check — the
     /// original's `inportal` teleports unconditionally. It exists to catch bodies the
     /// two swept tests missed, so refusing here would leave them stuck in a wall.
     pub(crate) fn check_in_portal(&mut self, ctx: &Context) -> bool {
@@ -365,51 +289,226 @@ impl Mari0Game {
         let Some((p0, p1)) = self.portal_pair() else {
             return false;
         };
-        let cell = (
-            (self.player.center_x() / TILE_SIZE).floor() as i32,
-            (self.player.center_y() / TILE_SIZE).floor() as i32,
-        );
-        for (entry, exit) in [(&p0, &p1), (&p1, &p0)] {
-            if !entry.anchor.cells().contains(&cell) {
-                continue;
-            }
-            let out = self.transform_player(entry, exit);
-            self.commit_teleport(ctx, out);
-            return true;
-        }
-        false
-    }
-
-    /// Transform the player through a portal pair.
-    ///
-    /// `live` is always true here. The original passes it on `inportal`'s *first*
-    /// branch and omits it on the second, so the minimum exit speed applied only
-    /// when entering through portal 1 — the two branches are otherwise identical, so
-    /// that is a copy-paste slip rather than a rule. **Corrected**: a player could
-    /// not predict or use an asymmetry between the two portals.
-    fn transform_player(&self, entry: &Portal, exit: &Portal) -> crate::portal_math::Exit {
-        portal_transform(
-            self.player.x,
-            self.player.y,
-            self.player.width,
-            self.player.height,
-            self.player.vx,
-            self.player.vy,
-            0.0,
-            entry.anchor,
-            exit.anchor,
-            GRAVITY,
-            true,
-        )
-    }
-
-    fn commit_teleport(&mut self, ctx: &Context, out: crate::portal_math::Exit) {
-        self.player.x = out.x;
-        self.player.y = out.y;
-        self.player.vx = out.vx;
-        self.player.vy = out.vy;
+        let body = PortalBody {
+            x: self.player.x,
+            y: self.player.y,
+            w: self.player.width,
+            h: self.player.height,
+            vx: self.player.vx,
+            vy: self.player.vy,
+        };
+        let Some(exit) = portal_containment((&p0, &p1), body) else {
+            return false;
+        };
+        self.player.x = exit.x;
+        self.player.y = exit.y;
+        self.player.vx = exit.vx;
+        self.player.vy = exit.vy;
         self.player.teleport_cooldown = PORTAL_TELEPORT_COOLDOWN;
         self.player.on_ground = false;
         ctx.audio.play("portalenter");
+        true
     }
+}
+
+/// Carry one non-player body through a portal, if it is entering one.
+///
+/// Returns the new `(x, y, vx, vy)` when something happened. `allow_containment` is
+/// the original's `mask[2]`: fireballs, bullet bills and thrown hammers take the
+/// swept tests but are exempt from the `inportal` fallback, so they can't be snapped
+/// through a mouth they were merely crossing.
+///
+/// A free function rather than a method so a caller can hold `&mut self.enemies`
+/// while passing `&self.level` — the two are disjoint fields, which a method on
+/// `&self` would hide from the borrow checker.
+pub(crate) fn portal_carry(
+    level: &Level,
+    pair: Option<&(Portal, Portal)>,
+    body: PortalBody,
+    dt: f32,
+    allow_containment: bool,
+) -> Option<(f32, f32, f32, f32)> {
+    let (p0, p1) = pair?;
+    let next_x = body.x + body.vx * dt;
+    let next_y = body.y + body.vy * dt;
+    match portal_sweep(level, (p0, p1), body, next_x, next_y) {
+        PortalOutcome::Through { exit, .. } => Some((exit.x, exit.y, exit.vx, exit.vy)),
+        PortalOutcome::Bounced { vx, vy } => Some((body.x, body.y, vx, vy)),
+        PortalOutcome::None if allow_containment => {
+            portal_containment((p0, p1), body).map(|e| (e.x, e.y, e.vx, e.vy))
+        }
+        PortalOutcome::None => None,
+    }
+}
+
+/// A body that can travel through a portal.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PortalBody {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) w: f32,
+    pub(crate) h: f32,
+    pub(crate) vx: f32,
+    pub(crate) vy: f32,
+}
+
+/// What a sweep decided.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum PortalOutcome {
+    /// Nothing to do.
+    None,
+    /// Went through. `straight_through` marks an up↔down pair, which keeps its jump
+    /// state because it is a plain fall-through rather than a change of direction.
+    Through {
+        exit: crate::portal_math::Exit,
+        straight_through: bool,
+    },
+    /// The exit was obstructed, so the body bounced off the mouth instead.
+    Bounced { vx: f32, vy: f32 },
+}
+
+/// The two swept entry tests, in the original's order, for any body.
+///
+/// `checkportalVER` then `checkportalHOR` (`physics.lua:524-714`). Each asks whether
+/// the body's centre **crossed the mouth's plane during this step**, which is what
+/// catches a body moving fast enough to clear the whole mouth within one frame — an
+/// overlap test can only ever notice a body that happens to be inside the mouth on
+/// the frame you look.
+///
+/// VER runs first so a corner qualifying for both resolves as a wall portal rather
+/// than a floor one.
+///
+/// Every mover shares this, which is the point: enemies, items, fireballs and Mario
+/// all travel by the same rule, as they do in the original, where each object calls
+/// these from its own movement code.
+pub(crate) fn portal_sweep(
+    level: &Level,
+    (p0, p1): (&Portal, &Portal),
+    body: PortalBody,
+    next_x: f32,
+    next_y: f32,
+) -> PortalOutcome {
+    // ── VER: the vertical mouths (left/right faces) ──
+    // Row test uses the body's **top edge** cell (`math.floor(self.y+1)`).
+    let row = (body.y / TILE_SIZE).floor() as i32;
+    let half_w = body.w / 2.0;
+    for (entry, exit) in [(p0, p1), (p1, p0)] {
+        if !matches!(entry.orientation(), Orientation::Left | Orientation::Right) {
+            continue;
+        }
+        if !entry.rows().contains(&row)
+            || !in_range(entry.plane(), body.x + half_w, next_x + half_w)
+        {
+            continue;
+        }
+        let heading_in = match entry.orientation() {
+            Orientation::Right => body.vx <= 0.0,
+            Orientation::Left => body.vx >= 0.0,
+            _ => false,
+        };
+        if !heading_in {
+            continue;
+        }
+        let out = transform_body(body, entry, exit);
+        return if rect_is_clear(level, out.x, out.y, body.w, body.h) {
+            PortalOutcome::Through {
+                exit: out,
+                straight_through: false,
+            }
+        } else {
+            // A blocked wall portal bounces with **no damping and no minimum**,
+            // unlike the floor case below.
+            PortalOutcome::Bounced {
+                vx: -body.vx,
+                vy: body.vy,
+            }
+        };
+    }
+
+    // ── HOR: the horizontal mouths (up/down faces) ──
+    // Column test uses the body's **left edge** cell (`math.floor(self.x+1)`).
+    let col = (body.x / TILE_SIZE).floor() as i32;
+    let half_h = body.h / 2.0;
+    for (entry, exit) in [(p0, p1), (p1, p0)] {
+        if !matches!(entry.orientation(), Orientation::Up | Orientation::Down) {
+            continue;
+        }
+        if !entry.cols().contains(&col)
+            || !in_range(entry.plane(), body.y + half_h, next_y + half_h)
+        {
+            continue;
+        }
+        let heading_in = match entry.orientation() {
+            Orientation::Up => body.vy >= 0.0,
+            Orientation::Down => body.vy <= 0.0,
+            _ => false,
+        };
+        if !heading_in {
+            continue;
+        }
+        let out = transform_body(body, entry, exit);
+        return if rect_is_clear(level, out.x, out.y, body.w, body.h) {
+            PortalOutcome::Through {
+                exit: out,
+                straight_through: matches!(
+                    (entry.orientation(), exit.orientation()),
+                    (Orientation::Up, Orientation::Down) | (Orientation::Down, Orientation::Up)
+                ),
+            }
+        } else {
+            // A blocked floor/ceiling portal loses a little speed and has a minimum
+            // magnitude, so a body can't settle into a zero-speed oscillation.
+            let mut vy = -body.vy * 0.95;
+            const MIN_BOUNCE: f32 = 2.0 * TILE_SIZE;
+            if vy.abs() < MIN_BOUNCE {
+                vy = MIN_BOUNCE * if vy < 0.0 { -1.0 } else { 1.0 };
+            }
+            PortalOutcome::Bounced { vx: body.vx, vy }
+        };
+    }
+
+    PortalOutcome::None
+}
+
+/// The containment fallback (`inportal`) for any body: is its centre cell inside a
+/// mouth?
+///
+/// No clearance check, by design — see [`Mari0Game::check_in_portal`].
+pub(crate) fn portal_containment(
+    (p0, p1): (&Portal, &Portal),
+    body: PortalBody,
+) -> Option<crate::portal_math::Exit> {
+    let cell = (
+        ((body.x + body.w / 2.0) / TILE_SIZE).floor() as i32,
+        ((body.y + body.h / 2.0) / TILE_SIZE).floor() as i32,
+    );
+    for (entry, exit) in [(p0, p1), (p1, p0)] {
+        if entry.anchor.cells().contains(&cell) {
+            return Some(transform_body(body, entry, exit));
+        }
+    }
+    None
+}
+
+/// Transform a body through a portal pair.
+///
+/// `live` is always true. The original passes it on `inportal`'s *first* branch and
+/// omits it on the second, so the minimum exit speed applied only when entering
+/// through portal 1 — the branches are otherwise identical, so that is a copy-paste
+/// slip rather than a rule. **Corrected**: an asymmetry between the two portals is
+/// something no player could predict or use.
+fn transform_body(body: PortalBody, entry: &Portal, exit: &Portal) -> crate::portal_math::Exit {
+    portal_transform(
+        body.x,
+        body.y,
+        body.w,
+        body.h,
+        body.vx,
+        body.vy,
+        0.0,
+        entry.anchor,
+        exit.anchor,
+        GRAVITY,
+        true,
+    )
 }

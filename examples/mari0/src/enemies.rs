@@ -10,6 +10,7 @@ use vibe2d::prelude::*;
 use crate::constants::*;
 use crate::game::Mari0Game;
 use crate::physics::*;
+use crate::portal::{PortalBody, portal_carry};
 use crate::world::EnemySpawnPoint;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -80,6 +81,27 @@ impl EnemyType {
                 | EnemyType::CheepRed
                 | EnemyType::CheepWhite
                 | EnemyType::KoopaFlying
+        )
+    }
+
+    /// Can this kind travel through a portal?
+    ///
+    /// Two separate reasons a kind can't, both from the original:
+    ///
+    /// - **`static = true`** — plants, firebars and lava geysers are fixtures. They
+    ///   have a position but never move, so the mover code that would carry them
+    ///   through a portal never runs (`plant.lua:15`, `castlefire.lua:84`,
+    ///   `upfire.lua:16`).
+    /// - **`portalable = false`** — cheep-cheeps opt out explicitly even though they
+    ///   do move (`cheepcheep.lua:33`). Lakito does the same, for when it exists.
+    pub(crate) fn portalable(self) -> bool {
+        !matches!(
+            self,
+            EnemyType::Plant
+                | EnemyType::Firebar
+                | EnemyType::UpFire
+                | EnemyType::CheepRed
+                | EnemyType::CheepWhite
         )
     }
 
@@ -247,6 +269,8 @@ impl Mari0Game {
 
     pub(crate) fn update_enemies(&mut self, dt: f32, ctx: &mut Context) {
         let cam_x = self.camera.x;
+        // Cloned up front: the loop below holds `&mut self.enemies`.
+        let portals = self.portal_pair();
 
         for enemy in &mut self.enemies {
             let ew = PLAYER_SMALL_W;
@@ -331,6 +355,33 @@ impl Mari0Game {
                 EnemyState::Walking | EnemyState::ShellMoving => {
                     enemy.anim_timer += dt;
 
+                    // Portals carry enemies too. `static = true` kinds are excluded
+                    // by `portalable()`, and a shell counts as a mover, so a kicked
+                    // shell can be routed through a portal like anything else.
+                    if enemy.enemy_type.portalable()
+                        && let Some((nx, ny, nvx, nvy)) = portal_carry(
+                            &self.level,
+                            portals.as_ref(),
+                            PortalBody {
+                                x: enemy.x,
+                                y: enemy.y,
+                                w: ew,
+                                h: eh,
+                                vx: enemy.vx,
+                                vy: enemy.vy,
+                            },
+                            dt,
+                            true,
+                        )
+                    {
+                        enemy.x = nx;
+                        enemy.y = ny;
+                        enemy.vx = nvx;
+                        enemy.vy = nvy;
+                        enemy.facing_right = nvx > 0.0;
+                        continue;
+                    }
+
                     // Gravity
                     enemy.vy += GRAVITY * dt;
                     if enemy.vy > MAX_Y_SPEED {
@@ -346,7 +397,7 @@ impl Mari0Game {
                     let bottom_row = ((enemy.y + eh - 0.01) / TILE_SIZE).floor() as i32;
                     for row in top_row..=bottom_row {
                         for col in left_col..=right_col {
-                            if is_solid(get_tile(&self.level, col, row)) {
+                            if blocks_movement(&self.level, col, row) {
                                 let (tx, _ty, tw, th) = tile_rect(col, row);
                                 if aabb_overlap([enemy.x, enemy.y, ew, eh], [tx, _ty, tw, th]) {
                                     if enemy.vx > 0.0 {
@@ -393,7 +444,7 @@ impl Mari0Game {
                     let bottom_row = ((enemy.y + eh - 0.01) / TILE_SIZE).floor() as i32;
                     for row in top_row..=bottom_row {
                         for col in left_col..=right_col {
-                            if is_solid(get_tile(&self.level, col, row)) {
+                            if blocks_movement(&self.level, col, row) {
                                 let (tx, ty, tw, th) = tile_rect(col, row);
                                 if aabb_overlap([enemy.x, enemy.y, ew, eh], [tx, ty, tw, th]) {
                                     if enemy.vy > 0.0 {
@@ -444,7 +495,7 @@ impl Mari0Game {
                     let bottom_row = ((enemy.y + PLAYER_SMALL_H - 0.01) / TILE_SIZE).floor() as i32;
                     for row in top_row..=bottom_row {
                         for col in left_col..=right_col {
-                            if is_solid(get_tile(&self.level, col, row)) {
+                            if blocks_movement(&self.level, col, row) {
                                 let (tx, ty, tw, th) = tile_rect(col, row);
                                 if aabb_overlap(
                                     [enemy.x, enemy.y, ew, PLAYER_SMALL_H],
@@ -685,6 +736,41 @@ mod tests {
         let mut got = column_spawn_indices(&map, &mut spawned, 10);
         got.sort_unstable();
         assert_eq!(got, vec![0, 1, 2]);
+    }
+
+    /// The portal exemption table, which has two independent reasons in it.
+    ///
+    /// Worth pinning because the two reasons look the same from the outside but
+    /// aren't: plants/firebars/geysers are `static = true` fixtures, while
+    /// cheep-cheeps move perfectly well and opt out with `portalable = false`. Anyone
+    /// "simplifying" this to `!is_scripted()` would quietly make flying koopas
+    /// non-portable, since they're scripted but do travel.
+    #[test]
+    fn the_portal_exemption_table_has_two_distinct_reasons() {
+        for kind in [
+            EnemyType::Goomba,
+            EnemyType::Koopa,
+            EnemyType::KoopaRed,
+            EnemyType::Beetle,
+            EnemyType::KoopaFlying,
+        ] {
+            assert!(kind.portalable(), "{kind:?} should travel through portals");
+        }
+        for kind in [
+            // `static = true`: fixtures that never move.
+            EnemyType::Plant,
+            EnemyType::Firebar,
+            EnemyType::UpFire,
+            // `portalable = false`: moves, but opts out.
+            EnemyType::CheepRed,
+            EnemyType::CheepWhite,
+        ] {
+            assert!(!kind.portalable(), "{kind:?} should not travel");
+        }
+        assert!(
+            EnemyType::KoopaFlying.is_scripted() && EnemyType::KoopaFlying.portalable(),
+            "scripted and portalable are independent; a flying koopa is both"
+        );
     }
 
     /// Sweeping every column of a real level must claim every spawn exactly once.

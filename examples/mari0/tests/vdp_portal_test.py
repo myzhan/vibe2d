@@ -227,6 +227,32 @@ async def run(ws):
         f"row={s['player']['y'] / T:.2f} on_ground={s['player']['on_ground']}",
     )
 
+    section("9. 敌人也走传送门（原版是每个 mover 自己调这三段判定）")
+    for kind in ("goomba", "koopa"):
+        await fresh(ws)
+        await set_portal(ws, 0, 10, 13, "up")
+        await set_portal(ws, 1, 20, 13, "up")
+        await rpc(ws, "game.clearEnemies")
+        # 生成在洞口正上方：它一边下落一边走，偏出洞口就会落在洞沿上 ——
+        # 探针第一版就是从第 9 列放的，飘到第 8 列踩住了洞沿，看着像"不会传送"。
+        # 另外**不要**把玩家挪到关卡中段：镜头一跟过去，惰性生成就会在他旁边
+        # 放出一只栗子怪，玩家立刻死亡，`update_playing` 停摆，整个场景冻住。
+        await rpc(ws, "game.spawnEnemy", {"type": kind, "x": 10 * T, "y": 11 * T})
+        moved = None
+        for i in range(60):
+            await step(ws)
+            s = await snap(ws)
+            if s["state"] != "playing" or not s["enemies"]:
+                break
+            if s["enemies"][0]["x"] / T > 15.0:
+                moved = (i, s["enemies"][0]["x"] / T)
+                break
+        check(
+            f"{kind} 掉进洞里被传送到另一个门",
+            moved is not None,
+            f"第 {moved[0]} 帧 → 第 {moved[1]:.1f} 列" if moved else "没有传送",
+        )
+
     await fresh(ws)
     await rpc(ws, "engine.resume")
 
