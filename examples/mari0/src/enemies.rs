@@ -49,9 +49,9 @@ pub(crate) enum EnemyType {
     /// A spiny still in its egg, arcing through the air after lakitu throws it.
     ///
     /// Its own kind rather than a flag because three things differ: it falls at
-    /// 30 blocks/s² instead of 80, it drifts with no horizontal speed, and for the
-    /// first two blocks of its descent it can strike the lakitu who threw it.
-    /// Landing turns it into a [`EnemyType::Spikey`].
+    /// 30 blocks/s² instead of 80, it drifts with no horizontal speed, and it ignores
+    /// the lakitu who threw it until it has dropped two blocks below the release
+    /// point. Landing turns it into a [`EnemyType::Spikey`].
     SpikeyFall,
     /// A bullet bill in flight: constant speed, no gravity, and **no terrain at all**.
     ///
@@ -110,12 +110,12 @@ impl EnemyType {
 
     /// Enemies that ignore gravity and terrain and follow their own path.
     ///
-    /// Lakitu is in here on a small liberty: he does carry tile collision in the
-    /// original (`lakito.lua:18`, mask index 2 is the tile category), but all three
-    /// levels that place one — 4-1, 6-1 and 8-2 — are empty of solid tiles for the
-    /// four rows he flies in, so a wall is something he can never reach. Letting him
-    /// ignore terrain costs nothing observable and keeps him out of the walker path,
-    /// which would otherwise reverse him at every wall he doesn't touch.
+    /// Lakitu belongs here on the original's own terms, not as a liberty: his
+    /// `mask[2] = true` (`lakito.lua:16`) and Mari0's mask is an **exclusion** table —
+    /// the physics collides when `mask[category] ~= true` (`physics.lua:113`) — so
+    /// setting the tile category means he passes through walls. Same for the bullet
+    /// bill. (It's also unobservable for lakitu either way: all four rows he flies in
+    /// are empty of solid tiles in all three of his levels.)
     pub(crate) fn is_scripted(self) -> bool {
         matches!(
             self,
@@ -1059,18 +1059,24 @@ impl Mari0Game {
         });
     }
 
-    /// Lakitu can be knocked out of the sky by his own egg — for about a third of
-    /// a second.
+    /// An egg can hit a lakitu, but only one it has already fallen well past.
     ///
-    /// Not a bug, though it reads like one. The egg leaves lakitu's hands able to
-    /// collide with him (`goomba.lua:54`, mask index 21 is lakitu's category) and
-    /// only loses that ability once it has fallen [`SPIKEY_HITS_LAKITO_WITHIN`]
-    /// blocks past where it was released (`goomba.lua:132`). Since it is thrown
-    /// *upward* and carries no sideways speed, it comes back down through his
-    /// altitude roughly two thirds of a second later — by which time he has almost
-    /// always moved out from under it, because his slowest speed is 2 blocks/s.
-    /// Almost always: catch him mid-turnaround, where his speed passes through zero,
-    /// and his own egg lands on his head and scores you 200.
+    /// `self.mask[21] = true` (`goomba.lua:54`) — and Mari0's `mask` is an
+    /// **exclusion** table, not an inclusion one: the physics collides when
+    /// `mask[category] ~= true` (`physics.lua:113`). So a fresh egg *ignores* lakitu,
+    /// and only starts colliding with him once it has dropped
+    /// [`SPIKEY_IGNORES_LAKITO_WITHIN`] blocks below where it was released
+    /// (`goomba.lua:132`).
+    ///
+    /// Read the mask the other way round — as "collides with lakitu until it has
+    /// fallen two blocks" — and you invert the rule into something that fires often:
+    /// the egg is thrown *upward* with no sideways speed, so it comes straight back
+    /// down through lakitu's altitude, and he only clears the spot because he is
+    /// moving. Catch him mid-turnaround and he'd shoot himself down. That is exactly
+    /// what the exclusion is there to prevent, which is why it exists at all. What
+    /// remains is a guard that essentially never fires, since lakitu holds one
+    /// altitude and the egg has to get two blocks *below* its release point to
+    /// qualify — but it is cheap and it is what the original does.
     fn egg_may_hit_its_thrower(&mut self) {
         let eggs: Vec<[f32; 4]> = self
             .enemies
@@ -1078,7 +1084,7 @@ impl Mari0Game {
             .filter(|e| {
                 e.enemy_type == EnemyType::SpikeyFall
                     && e.state == EnemyState::Walking
-                    && e.y <= e.spawn_y + SPIKEY_HITS_LAKITO_WITHIN
+                    && e.y > e.spawn_y + SPIKEY_IGNORES_LAKITO_WITHIN
             })
             .map(|e| [e.x, e.y, PLAYER_SMALL_W, PLAYER_SMALL_H])
             .collect();

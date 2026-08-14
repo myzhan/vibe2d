@@ -123,9 +123,9 @@ pub(crate) const SPIKEY_TOSS_SPEED: f32 = 10.0 * TILE_SIZE;
 /// A falling egg is lighter than everything else in the game: 30 blocks/s² rather
 /// than the usual 80 (`goomba.lua:56`), which is what makes the lob readable.
 pub(crate) const SPIKEY_FALL_GRAVITY: f32 = 30.0 * TILE_SIZE;
-/// How far an egg must fall past its release point before it stops being able to
-/// hit the lakitu who threw it (`goomba.lua:132`), in blocks.
-pub(crate) const SPIKEY_HITS_LAKITO_WITHIN: f32 = 2.0 * TILE_SIZE;
+/// How far an egg must fall past its release point before it can hit the lakitu who
+/// threw it (`goomba.lua:54`, `:132`), in blocks.
+pub(crate) const SPIKEY_IGNORES_LAKITO_WITHIN: f32 = 2.0 * TILE_SIZE;
 /// Frame flip interval shared by goombas and spinies (`goombaanimationspeed`).
 pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
 /// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
