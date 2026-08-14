@@ -30,9 +30,11 @@
 //!   `enabled = false` on a *successful* match, every one of them is permanently on.
 //!   That removes the whole "linked bridges start dark" case from the shipped data.
 //!
-//! This module covers the button → door path, the indicators, and the two things
-//! that travel by cell: laser beams and light bridges. Gels, faith plates and box
-//! dispensers are still to come.
+//! This module covers the wiring and everything hanging off it: buttons, doors,
+//! indicators, the timer, the two things that travel by cell (laser beams and light
+//! bridges) and the cube dispensers. The cubes themselves are bodies rather than
+//! elements — see `cube.rs`. Still to come: gels, faith plates and the emancipation
+//! grill.
 
 use std::collections::HashMap;
 
@@ -54,6 +56,13 @@ const PUSH_BUTTON_COOLDOWN: f32 = 1.0;
 
 /// How long a ground light stays lit after a `toggle` (`groundlightdelay = 1`).
 const GROUND_LIGHT_PULSE: f32 = 1.0;
+
+/// One cube dispenser cycle, in seconds (`cubedispensertime = 1`).
+///
+/// The phases inside it are all the dispenser is: it stops colliding from 0.1 to 0.4
+/// so the cube can fall out of the tube, and produces the cube at 0.6
+/// (`cubedispenser.lua:52-68`).
+pub(crate) const CUBE_DISPENSER_TIME: f32 = 1.0;
 
 /// How far a beam is allowed to travel, in cells.
 ///
@@ -91,16 +100,15 @@ pub(crate) enum LabKind {
     /// output. Passes `on` straight through, and sends `off` once its time is up.
     Timer,
 
-    // ── Recognised, but with no behaviour yet ────────────────────────
-    // These exist in the graph so links resolve and the network is complete. Their
-    // *behaviour* is not implemented. That is deliberately inert rather than
-    // half-guessed — but it does mean a level whose only exit needs a cube is still
-    // unfinishable.
-    /// Cube dispenser tube. An *input*: it carries the link.
+    /// Cube dispenser tube. An *input*: it carries the link, pointing at the cube it
+    /// is responsible for.
     BoxTube,
-    /// A placed cube. An *output* — the original lists `box` among the six
-    /// (`game.lua:52`), and a tube links to the cube it is responsible for so that a
-    /// cube lost off the map can push `toggle` back and be replaced.
+    /// A placed cube's slot in the graph. An *output* — the original lists `box` among
+    /// the six (`game.lua:52`) — and the only signal it ever sends is the `toggle` a
+    /// cube pushes as it dies, which is what makes its dispenser produce another.
+    ///
+    /// The cube itself is a body, not a lab element; see `cube.rs`. This is only the
+    /// wire it hangs off.
     Box,
 }
 
@@ -123,9 +131,13 @@ impl LabKind {
 
     /// Is this element's behaviour implemented, or is it only in the graph so links
     /// resolve? Reported through the VDP so a test can tell the two apart.
+    ///
+    /// Nothing is inert any more — every element kind the shipped levels place now
+    /// does something. Kept because it is part of the VDP's wire format and because the
+    /// honest answer to "is this real yet?" is worth keeping a slot for.
     #[cfg(feature = "vdp")]
     pub(crate) fn is_inert(self) -> bool {
-        matches!(self, LabKind::BoxTube | LabKind::Box)
+        false
     }
 
     /// Does this element project a beam — a laser or a light bridge?
@@ -198,6 +210,12 @@ pub(crate) struct LabElement {
     /// Timer only: how long it runs for, in seconds. The entity's third field, one of
     /// `{1, 2, 4, 8}` (`entity.lua:209-231`).
     pub(crate) duration: f32,
+    /// Cube dispenser only: is the cube it is responsible for currently alive?
+    ///
+    /// True at load when the level places a cube on the far end of the link, which is
+    /// how a dispenser starts idle instead of immediately making a second one
+    /// (`cubedispenser.lua:38-44`).
+    pub(crate) box_exists: bool,
 }
 
 /// One straight run of a beam, in cells.
@@ -378,6 +396,9 @@ pub(crate) struct Lab {
     pub(crate) elements: Vec<LabElement>,
     /// For each element, the indices it drives. Built once at load.
     pub(crate) consumers: Vec<Vec<usize>>,
+    /// Dispensers that reached the point in their cycle where a cube appears. Drained
+    /// by the game loop, which is the only thing that can create a body.
+    pub(crate) cube_spawns: Vec<usize>,
 }
 
 impl Lab {
@@ -440,6 +461,8 @@ impl Lab {
                 lit: Vec::new(),
                 beam: Vec::new(),
                 duration,
+                // Set below, once the links tell us whether a cube is on the other end.
+                box_exists: false,
             });
         }
 
@@ -463,12 +486,19 @@ impl Lab {
                 if element.kind.is_emitter() {
                     element.on = false;
                 }
+                // And a dispenser wired to a cube starts idle rather than dispensing:
+                // the cube is already there (`cubedispenser.lua:38-44`).
+                if element.kind == LabKind::BoxTube {
+                    element.box_exists = true;
+                    element.timer = CUBE_DISPENSER_TIME;
+                }
             }
         }
 
         Self {
             elements,
             consumers,
+            cube_spawns: Vec::new(),
         }
     }
 
@@ -527,10 +557,8 @@ impl Lab {
 
     /// Send a signal to one element directly, as an upstream output would.
     ///
-    /// Exists for the VDP: it is the only way to exercise a `toggle`, and to drive an
-    /// element whose upstream source isn't implemented yet — a door wired to a laser
-    /// detector, say.
-    #[cfg(feature = "vdp")]
+    /// Used by a dying cube to push `toggle` from the slot it filled, and by the VDP,
+    /// where it is the only way to exercise a `toggle` by hand.
     pub(crate) fn signal(&mut self, index: usize, signal: Signal) {
         if index >= self.elements.len() {
             return;
@@ -668,6 +696,36 @@ impl Lab {
         }
     }
 
+    /// The solid boxes the lab contributes that aren't cells: light-bridge slabs and
+    /// the dispensers.
+    ///
+    /// A dispenser is a solid 2×2 you can stand on — except from 0.1 to 0.4 of its
+    /// cycle, when it stops colliding so the cube it is making can drop out of the tube
+    /// (`cubedispenser.lua:55-58`). That gap is the whole animation.
+    pub(crate) fn solid_rects(&self) -> Vec<crate::world::SolidRect> {
+        let mut rects: Vec<crate::world::SolidRect> = self
+            .bridge_rects()
+            .into_iter()
+            .map(|rect| crate::world::SolidRect {
+                rect,
+                cubes_pass: false,
+            })
+            .collect();
+        for element in &self.elements {
+            if element.kind != LabKind::BoxTube {
+                continue;
+            }
+            let open = element.timer > 0.1 && element.timer <= 0.4;
+            if !open {
+                rects.push(crate::world::SolidRect {
+                    rect: dispenser_rect(element.cell),
+                    cubes_pass: true,
+                });
+            }
+        }
+        rects
+    }
+
     /// The thin slabs every lit light bridge lays down, in world pixels.
     pub(crate) fn bridge_rects(&self) -> Vec<[f32; 4]> {
         let mut rects = Vec::new();
@@ -718,6 +776,20 @@ impl Lab {
         }
         for index in expired {
             self.emit(index, Signal::Off);
+        }
+
+        // Cube dispensers run their one-second cycle. The cube itself is produced by
+        // the caller — this only says when.
+        for i in 0..self.elements.len() {
+            let e = &mut self.elements[i];
+            if e.kind != LabKind::BoxTube || e.timer >= CUBE_DISPENSER_TIME {
+                continue;
+            }
+            e.timer = (e.timer + dt).min(CUBE_DISPENSER_TIME);
+            if e.timer > 0.6 && !e.box_exists {
+                e.box_exists = true;
+                self.cube_spawns.push(i);
+            }
         }
 
         for e in &mut self.elements {
@@ -795,20 +867,20 @@ impl Mari0Game {
                 || self
                     .items
                     .iter()
-                    .any(|i| aabb_overlap([i.x, i.y, TILE_SIZE, TILE_SIZE], sense));
+                    .any(|i| aabb_overlap([i.x, i.y, TILE_SIZE, TILE_SIZE], sense))
+                // A cube on a plate is the lab's answer to "hold this down while you
+                // leave", and half the puzzles are that sentence.
+                || self
+                    .cubes
+                    .iter()
+                    .any(|c| !c.held && aabb_overlap(c.rect(), sense));
             self.lab.set_output(index, pressed);
         }
 
-        // Wall buttons: pressed with the use key while standing at them.
+        // The use key: picks up a cube, drops one, or presses a wall button — decided by
+        // where the player is *aiming*, in `cube.rs`.
         if use_pressed {
-            for index in 0..self.lab.elements.len() {
-                if self.lab.elements[index].kind != LabKind::PushButton {
-                    continue;
-                }
-                if aabb_overlap(player, push_button_use_rect(self.lab.elements[index].cell)) {
-                    self.lab.push(index);
-                }
-            }
+            self.use_pressed();
         }
 
         // Beam geometry first, then what is standing in it, then the latch. Beams route
@@ -829,14 +901,36 @@ impl Mari0Game {
 
         // Light-bridge slabs. A slab that wasn't there last frame shoves whatever is
         // standing in it out of the way, which is the original's `pushstuff` —
-        // otherwise a bridge switching on around Mario would leave him inside it.
+        // otherwise a bridge switching on around Mario would leave him inside it. Only
+        // bridges do this: a dispenser closing its tube again just becomes solid, and
+        // the collision resolver deals with whoever is inside it.
         let bridges = self.lab.bridge_rects();
         for rect in &bridges {
-            if !self.level.solid_rects.contains(rect) {
+            if !self.bridge_rects.contains(rect) {
                 self.push_out_of(*rect);
             }
         }
-        self.level.solid_rects = bridges;
+        self.bridge_rects = bridges;
+        self.level.solid_rects = self.lab.solid_rects();
+
+        // Cubes the dispensers have decided to produce.
+        for index in std::mem::take(&mut self.lab.cube_spawns) {
+            let (x, y) = dispenser_mouth(self.lab.elements[index].cell);
+            let mut cube = crate::cube::Cube::at(x, y);
+            cube.dispenser = Some(index);
+            cube.slot = self.lab.elements[index].driver;
+            self.cubes.push(cube);
+        }
+        // A dispenser told to reset bins the cube it is responsible for. The cube dies
+        // quietly — pushing `toggle` back would restart the cycle that is already
+        // running.
+        for index in 0..self.lab.elements.len() {
+            if self.lab.elements[index].kind == LabKind::BoxTube
+                && !self.lab.elements[index].box_exists
+            {
+                self.cubes.retain(|c| c.dispenser != Some(index));
+            }
+        }
     }
 
     /// Cut every laser beam at the first body standing in it, and hurt that body.
@@ -847,9 +941,9 @@ impl Mari0Game {
     /// `mario:laser` dies, `goomba:laser` and `koopa:laser` are `shotted()`
     /// (`mario.lua:2672`, `goomba.lua:284`, `koopa.lua:383`).
     ///
-    /// **Not implemented:** the held-cube shield. `mario:laser` returns early when he
-    /// is carrying a cube and pointing into the beam — there are no cubes yet, so
-    /// there is nothing to shield him with.
+    /// A cube in the beam blocks it, which is how you hold a detector off — and a cube
+    /// *carried* in front of you stops the beam killing you, by the separate aim test in
+    /// [`Mari0Game::cube_shields_from`].
     fn block_beams(&mut self, ctx: &mut Context) {
         let mut kill_player = false;
         let mut shot: Vec<usize> = Vec::new();
@@ -890,10 +984,14 @@ impl Mari0Game {
                         })
                         .map(|(i, _)| i)
                         .collect();
-                    if !hit_player && hit_enemies.is_empty() {
+                    let hit_cube = self.cubes.iter().any(|cu| aabb_overlap(cu.rect(), strip));
+                    if !hit_player && hit_enemies.is_empty() && !hit_cube {
                         continue;
                     }
-                    kill_player |= hit_player;
+                    // Struck from the side the beam came from — that is what the shield
+                    // test needs, and it is the argument the original passes
+                    // (`obj:laser("right")` for a beam travelling left).
+                    kill_player |= hit_player && !self.cube_shields_from(segment.dir.opposite());
                     shot.extend(hit_enemies);
                     cut = Some((s, c));
                     break 'runs;
@@ -1018,6 +1116,19 @@ fn apply_signal(element: &mut LabElement, signal: Signal) {
         }
         return;
     }
+    // A dispenser answers `on` and `toggle` the same way: bin the cube it is
+    // responsible for and start a new cycle (`cubedispenser.lua:22-33`). That is both
+    // the "cube fell in a pit" path — the dying cube pushes `toggle` — and the reset
+    // button a couple of levels give you. `off` does nothing at all.
+    if element.kind == LabKind::BoxTube {
+        if signal != Signal::Off {
+            element.box_exists = false;
+            if element.timer >= CUBE_DISPENSER_TIME {
+                element.timer = 0.0;
+            }
+        }
+        return;
+    }
     match signal {
         Signal::On => element.on = true,
         Signal::Off => element.on = false,
@@ -1066,6 +1177,26 @@ pub(crate) fn button_sense_rect(cell: (i32, i32)) -> [f32; 4] {
         20.0 / 16.0 * TILE_SIZE,
         TILE_SIZE,
     ]
+}
+
+/// A cube dispenser's footprint: two blocks square, hanging from its anchor cell
+/// (`cubedispenser.lua:5-8`, `self.x = x-1, self.y = y-1, 2×2`).
+pub(crate) fn dispenser_rect(cell: (i32, i32)) -> [f32; 4] {
+    [
+        cell.0 as f32 * TILE_SIZE,
+        cell.1 as f32 * TILE_SIZE,
+        2.0 * TILE_SIZE,
+        2.0 * TILE_SIZE,
+    ]
+}
+
+/// Where a dispenser drops the cube it makes: at the tube's mouth, half a block right
+/// of its anchor (`box:new(self.cox+.5, self.coy)`).
+pub(crate) fn dispenser_mouth(cell: (i32, i32)) -> (f32, f32) {
+    (
+        (cell.0 as f32 + 0.5 + 2.0 / 16.0) * TILE_SIZE,
+        (cell.1 as f32 + 4.0 / 16.0) * TILE_SIZE,
+    )
 }
 
 /// The rect a wall button can be pressed from, in world pixels.
@@ -1609,6 +1740,79 @@ mod tests {
             "a second later the light has switched itself off"
         );
         assert!(lab.elements[2].on, "the indicator stays latched");
+    }
+
+    /// A dispenser wired to a cube starts idle: the cube is already in the level, so
+    /// producing another would leave two.
+    #[test]
+    fn a_dispenser_starts_idle_when_its_cube_is_already_placed() {
+        let lab = Lab::build(&[
+            // A cube at 0-based (15, 7) → file 1-based (16, 8).
+            place(EntityKind::Box, 15, 7, None),
+            place(EntityKind::BoxTube, 14, 0, Some((16, 8))),
+        ]);
+        let tube = &lab.elements[1];
+        assert_eq!(tube.driver, Some(0), "the tube points at the cube");
+        assert!(tube.box_exists, "and knows the cube is there");
+        assert_eq!(tube.timer, CUBE_DISPENSER_TIME, "so it is parked");
+        assert!(lab.cube_spawns.is_empty());
+    }
+
+    /// The cycle, phase by phase: a cube's death starts it, the tube opens partway
+    /// through, and the replacement is requested at 0.6.
+    #[test]
+    fn a_dying_cube_makes_its_dispenser_produce_another() {
+        let mut lab = Lab::build(&[
+            place(EntityKind::Box, 15, 7, None),
+            place(EntityKind::BoxTube, 14, 0, Some((16, 8))),
+        ]);
+        assert_eq!(
+            lab.solid_rects().len(),
+            1,
+            "the tube is solid to start with"
+        );
+
+        // What a cube does as it falls off the map: `toggle` from the slot it filled.
+        lab.signal(0, Signal::Toggle);
+        assert!(!lab.elements[1].box_exists, "the tube knows it is gone");
+        assert_eq!(lab.elements[1].timer, 0.0, "and has started its cycle");
+
+        // 0.1 → 0.4 the tube stops colliding so the cube can drop out.
+        for _ in 0..12 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert!(lab.elements[1].timer > 0.1 && lab.elements[1].timer <= 0.4);
+        assert!(
+            lab.solid_rects().is_empty(),
+            "an open tube is not solid: that is how the cube gets out"
+        );
+        assert!(lab.cube_spawns.is_empty(), "nothing produced yet");
+
+        // Past 0.6 it asks for the cube.
+        for _ in 0..24 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert_eq!(lab.cube_spawns, vec![1], "one cube, from tube 1");
+        assert!(lab.elements[1].box_exists, "and it stops asking");
+        assert_eq!(lab.solid_rects().len(), 1, "the tube is solid again by now");
+
+        // Running the cycle out asks for nothing more.
+        lab.cube_spawns.clear();
+        for _ in 0..60 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert_eq!(lab.elements[1].timer, CUBE_DISPENSER_TIME);
+        assert!(lab.cube_spawns.is_empty(), "one cycle, one cube");
+    }
+
+    /// Cubes pass through a dispenser; everything else stands on it. Without that the
+    /// cube it makes is ejected onto the roof of the tube instead of falling out of it.
+    #[test]
+    fn a_dispenser_is_solid_to_mario_and_transparent_to_cubes() {
+        let lab = Lab::build(&[place(EntityKind::BoxTube, 14, 0, None)]);
+        let solids = lab.solid_rects();
+        assert_eq!(solids.len(), 1);
+        assert!(solids[0].cubes_pass, "the box category is masked out");
     }
 
     /// A floor button senses the body standing **on** it, and nothing a block away.

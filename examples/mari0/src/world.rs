@@ -14,6 +14,20 @@ use crate::enemies::EnemyType;
 use crate::items::BlockContent;
 use crate::level;
 
+/// One of the lab's non-tile solids.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct SolidRect {
+    /// `[x, y, w, h]` in world pixels.
+    pub(crate) rect: [f32; 4],
+    /// Cubes pass straight through this one.
+    ///
+    /// A cube dispenser is solid to Mario but transparent to cubes — its collision mask
+    /// lists the box category as ignored (`cubedispenser.lua:16`), and that is exactly
+    /// what lets the cube it produces fall *out* of the tube instead of being ejected
+    /// on top of it.
+    pub(crate) cubes_pass: bool,
+}
+
 pub(crate) struct Level {
     pub(crate) tiles: Vec<Vec<u32>>,
     pub(crate) width: usize,
@@ -85,13 +99,13 @@ pub(crate) struct Level {
     /// Cells that block movement *in addition* to the tile grid — currently shut
     /// doors. Rebuilt each frame from the lab network.
     pub(crate) solid_extras: HashSet<(i32, i32)>,
-    /// Solid boxes that aren't cells: the thin slabs a light bridge lays down, in
-    /// world pixels as `[x, y, w, h]`. Rebuilt each frame from the lab network.
+    /// Solid boxes that aren't cells: light-bridge slabs and cube dispensers. Rebuilt
+    /// each frame from the lab network.
     ///
     /// A separate list rather than more `solid_extras` because a bridge is 1/8 of a
     /// block thick and sits *inside* its cell — rounding it up to the whole cell would
     /// wall off the row a horizontal bridge is supposed to let you walk along.
-    pub(crate) solid_rects: Vec<[f32; 4]>,
+    pub(crate) solid_rects: Vec<SolidRect>,
 
     /// Cells whose collision is suppressed because a portal has opened there.
     ///

@@ -8,7 +8,7 @@
 use crate::constants::*;
 use crate::level;
 use crate::player::Orientation;
-use crate::world::Level;
+use crate::world::{Level, SolidRect};
 
 /// One frame at the nominal 60 Hz.
 ///
@@ -96,6 +96,7 @@ pub(crate) fn in_range(value: f32, a: f32, b: f32) -> bool {
     (a <= value && value <= b) || (b <= value && value <= a)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn move_and_collide_x(
     player_x: &mut f32,
     player_y: f32,
@@ -104,6 +105,7 @@ pub(crate) fn move_and_collide_x(
     vx: f32,
     level: &Level,
     dt: f32,
+    body: Body,
 ) -> f32 {
     let dx = vx * dt;
     *player_x += dx;
@@ -128,9 +130,10 @@ pub(crate) fn move_and_collide_x(
             }
         }
     }
-    // Solid boxes that aren't cells — light-bridge slabs.
-    for rect in &level.solid_rects {
-        if aabb_overlap([*player_x, player_y, pw, ph], *rect) {
+    // Solid boxes that aren't cells — light-bridge slabs and dispensers.
+    for solid in solids(level, body) {
+        let rect = solid.rect;
+        if aabb_overlap([*player_x, player_y, pw, ph], rect) {
             if dx > 0.0 {
                 *player_x = rect[0] - pw;
             } else if dx < 0.0 {
@@ -142,6 +145,24 @@ pub(crate) fn move_and_collide_x(
     vx
 }
 
+/// Which non-tile solids `body` collides with.
+fn solids(level: &Level, body: Body) -> impl Iterator<Item = &SolidRect> {
+    level
+        .solid_rects
+        .iter()
+        .filter(move |s| body != Body::Cube || !s.cubes_pass)
+}
+
+/// What is moving, for the handful of solids that care.
+///
+/// Only the cube dispenser does, and only about cubes — see [`SolidRect::cubes_pass`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Body {
+    Normal,
+    Cube,
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn move_and_collide_y(
     player_x: f32,
     player_y: &mut f32,
@@ -150,6 +171,7 @@ pub(crate) fn move_and_collide_y(
     vy: f32,
     level: &Level,
     dt: f32,
+    body: Body,
 ) -> (f32, bool) {
     let dy = vy * dt;
     *player_y += dy;
@@ -179,8 +201,9 @@ pub(crate) fn move_and_collide_y(
     }
     // Light-bridge slabs. A horizontal bridge is a floor, so landing on one has to
     // report ground contact or you'd slide off it.
-    for rect in &level.solid_rects {
-        if aabb_overlap([player_x, *player_y, pw, ph], *rect) {
+    for solid in solids(level, body) {
+        let rect = solid.rect;
+        if aabb_overlap([player_x, *player_y, pw, ph], rect) {
             if dy > 0.0 {
                 *player_y = rect[1] - ph;
                 on_ground = true;

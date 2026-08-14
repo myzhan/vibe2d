@@ -178,8 +178,30 @@ impl Mari0Game {
                         cell,
                     );
                 }
+                LabKind::BoxTube => {
+                    // Two blocks square, and it visibly opens: the tube's shutter is
+                    // just the collision going away, so the art doesn't change — but
+                    // this is where the cube appears from.
+                    let [x, y, w, h] = crate::lab::dispenser_rect(element.cell);
+                    screen.draw_sprite(self.tex_cube_dispenser, x - cam_x, y, w, h);
+                }
                 LabKind::Door => self.draw_door(screen, element, cam_x),
                 _ => {}
+            }
+        }
+
+        // Cubes, over the fixtures they sit on.
+        for cube in &self.cubes {
+            let [x, y, w, h] = cube.rect();
+            let draw = |screen: &mut Screen| {
+                screen.draw_sprite(self.tex_cube, x - cam_x, y, w, h);
+            };
+            // A cube keeps the rotation a portal gave it and eases back to square, so
+            // the sprite has to turn with it.
+            if cube.rotation == 0.0 {
+                draw(screen);
+            } else {
+                screen.rotated(cube.rotation, draw);
             }
         }
 

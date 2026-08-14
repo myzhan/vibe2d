@@ -59,6 +59,8 @@ pub(crate) struct Mari0Inspect {
     /// pixels. This is the list the collision resolver reads, so a test can check
     /// "can he stand on it" against the same numbers the physics uses.
     pub(crate) solid_rects: Vec<[f32; 4]>,
+    /// Weighted cubes, with the wiring each one answers to.
+    pub(crate) cubes: Vec<CubeView>,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -177,6 +179,21 @@ pub(crate) struct LabElementView {
     /// Emitters only: the runs this element's beam makes. More than one means it is
     /// bending through a portal.
     pub(crate) beam: Vec<BeamView>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct CubeView {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) vx: f32,
+    pub(crate) vy: f32,
+    pub(crate) held: bool,
+    pub(crate) falling: bool,
+    /// The `box` lab element this cube fills, or `null` for one nothing is wired to.
+    pub(crate) slot: Option<usize>,
+    /// The dispenser that will replace it if it is lost.
+    pub(crate) dispenser: Option<usize>,
 }
 
 #[cfg(feature = "vdp")]
@@ -483,7 +500,21 @@ impl Mari0Game {
                         .collect(),
                 })
                 .collect(),
-            solid_rects: self.level.solid_rects.clone(),
+            solid_rects: self.level.solid_rects.iter().map(|s| s.rect).collect(),
+            cubes: self
+                .cubes
+                .iter()
+                .map(|c| CubeView {
+                    x: c.x,
+                    y: c.y,
+                    vx: c.vx,
+                    vy: c.vy,
+                    held: c.held,
+                    falling: c.falling,
+                    slot: c.slot,
+                    dispenser: c.dispenser,
+                })
+                .collect(),
             maze: (!self.level.maze_starts.is_empty()).then(|| MazeView {
                 var: self.maze.var,
                 solved: self.maze.solved.clone(),

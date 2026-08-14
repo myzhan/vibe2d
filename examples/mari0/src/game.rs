@@ -78,6 +78,12 @@ pub(crate) struct Mari0Game {
 
     /// The lab's signal network: buttons, doors, indicators and the wiring.
     pub(crate) lab: Lab,
+    /// Weighted cubes. Bodies, not lab elements — see `cube.rs`.
+    pub(crate) cubes: Vec<crate::cube::Cube>,
+    /// Last frame's light-bridge slabs, so a slab that has just appeared can shove
+    /// whatever is standing in it. Kept apart from `level.solid_rects`, which also holds
+    /// the dispensers — those don't push.
+    pub(crate) bridge_rects: Vec<[f32; 4]>,
 
     /// The highest checkpoint passed, as a tile cell.
     ///
@@ -142,6 +148,8 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_door_centre: TextureId,
     pub(crate) tex_wall_indicator: TextureId,
     pub(crate) tex_wall_timer: TextureId,
+    pub(crate) tex_cube: TextureId,
+    pub(crate) tex_cube_dispenser: TextureId,
 
     pub(crate) vw: f32,
     /// Virtual screen height. Needed alongside `vw` so the pipe scissor can span
@@ -283,6 +291,10 @@ impl Mari0Game {
         self.maze = MazeState::for_level(level.maze_starts.len());
         self.lab = Lab::build(&lab_placements);
         self.level = level;
+        // After the graph, because each cube needs the index of the `box` element it
+        // stands for — that wire is how its dispenser hears about its death.
+        self.spawn_level_cubes();
+        self.bridge_rects.clear();
         // `self.portals` was just cleared, so there are no holes either. Explicit
         // rather than relying on the freshly-loaded level starting empty.
         self.refresh_portal_holes();
@@ -449,6 +461,7 @@ impl Mari0Game {
                 self.player.vx,
                 &self.level,
                 dt,
+                Body::Normal,
             );
 
             let (new_vy, on_ground) = move_and_collide_y(
@@ -459,6 +472,7 @@ impl Mari0Game {
                 self.player.vy,
                 &self.level,
                 dt,
+                Body::Normal,
             );
             self.player.vy = new_vy;
             self.player.on_ground = on_ground;
@@ -558,6 +572,11 @@ impl Mari0Game {
 
         // ── Enemies ──
         self.update_enemies(dt, ctx);
+
+        // ── Cubes ──
+        // After the enemies so a cube dropped on a goomba lands on where it actually
+        // is, and before the lab so a cube resting on a plate is sensed this frame.
+        self.update_cubes(dt);
 
         // ── Items (mushroom, star, 1-up, flower) ──
         self.update_items(ctx, dt);
@@ -745,6 +764,8 @@ impl Game for Mari0Game {
             pipe: None,
             maze: MazeState::default(),
             lab: Lab::default(),
+            cubes: Vec::new(),
+            bridge_rects: Vec::new(),
             checkpoint: None,
             checkpoints_passed: 0,
             respawn_sublevel: 0,
@@ -793,6 +814,8 @@ impl Game for Mari0Game {
             tex_door_centre: t("door_centre"),
             tex_wall_indicator: t("wall_indicator"),
             tex_wall_timer: t("wall_timer"),
+            tex_cube: t("cube"),
+            tex_cube_dispenser: t("cube_dispenser"),
             vw,
             vh,
         }

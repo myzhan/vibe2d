@@ -10,6 +10,7 @@ mod level;
 
 mod atlas;
 mod constants;
+mod cube;
 mod effects;
 mod enemies;
 mod game;

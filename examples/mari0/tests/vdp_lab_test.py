@@ -128,12 +128,12 @@ async def run(ws):
         s2 = await snap(ws)
         check(f"离开三格后松开", not s2["lab"][i]["on"])
 
-    section("3. 尚未实现行为的元件被标成 inert，不假装能用")
+    section("3. 已经没有 inert 元件了：出厂关卡用到的每种元件都真的在动")
     s = await load_lab(ws, 1, 1)
     lab = s["lab"]
     inert = sorted({e["kind"] for e in lab if e["inert"]})
-    check("box / box_tube 标为 inert", inert == ["box", "box_tube"], str(inert))
-    check("门和按钮不是 inert", not any(e["inert"] for e in lab if e["kind"] in ("door", "button")))
+    # 这一栏留着：它是"还没做的东西不假装能用"的诚实开关，只是现在全空了。
+    check("1-1 里没有任何 inert 元件", inert == [], str(inert))
 
     section("4. 门收到 on 之后半秒开满；doorspeed = 2")
     doors = [i for i, e in enumerate(lab) if e["kind"] == "door"]
@@ -306,7 +306,87 @@ async def run(ws):
     s = await snap(ws)
     check("门最终完全关上", s["lab"][doors[0]]["timer"] == 0.0, f"{s['lab'][doors[0]]['timer']:.2f}")
 
-    section("14. 把镜头横扫过全部九关：clip 出屏不能把画面搞崩")
+    section("14. 方块：推、举、放，压住按钮，掉下去由分配器补一个")
+    s = await load_lab(ws, 1, 1)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    await rpc(ws, "game.setScore", {"lives": 9})
+    lab = s["lab"]
+    slots = [i for i, e in enumerate(lab) if e["kind"] == "box"]
+    check("1-1 的两个 box 实体各生成了一个方块", len(s["cubes"]) == len(slots) == 2, str(len(s["cubes"])))
+    check("每个方块都接着自己的 slot 与分配器",
+          all(c["slot"] is not None and c["dispenser"] is not None for c in s["cubes"]),
+          str([(c["slot"], c["dispenser"]) for c in s["cubes"]]))
+    check("装载后它们都已落地", all(not c["falling"] for c in s["cubes"]), str([c["falling"] for c in s["cubes"]]))
+
+    # 1-1 里那个方块停在 (29,6)：左边 (28,6) 是空的、脚下 (28..30,7) 是墙，可以走过去推。
+    cube = next(c for c in s["cubes"] if c["x"] > 900)
+    await rpc(ws, "game.setPlayerPos", {"x": 28 * T, "y": 6 * T})
+    await step(ws, 3)
+    s = await snap(ws)
+    await rpc(ws, "engine.simulateInput",
+              {"device": "mouse", "action": "move", "x": s["player"]["x"] - s["camera_x"] + 200, "y": 200.0})
+    x0 = next(c for c in s["cubes"] if c["x"] > 900)["x"]
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "press", "key": "Right"})
+    await step(ws, 30)
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "release", "key": "Right"})
+    s = await snap(ws)
+    pushed = next(c for c in s["cubes"] if c["x"] > 900)
+    check("走进方块会把它推着走（没有力、没有质量，就是贴着他的边）", pushed["x"] > x0 + 16,
+          f"{x0:.0f} → {pushed['x']:.0f}")
+
+    # 举起来：use 的探测框在**瞄准方向**上一格，不是身体周围
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "press", "key": "E"})
+    await step(ws, 2)
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "release", "key": "E"})
+    await step(ws, 2)
+    s = await snap(ws)
+    held = [c for c in s["cubes"] if c["held"]]
+    check("按 use 举起了瞄着的那个方块", len(held) == 1, str([c["held"] for c in s["cubes"]]))
+    # 举着的方块跟着准星转，这就是它能当盾牌的原因
+    await rpc(ws, "engine.simulateInput",
+              {"device": "mouse", "action": "move", "x": s["player"]["x"] - s["camera_x"] - 200, "y": 200.0})
+    await step(ws, 3)
+    s2 = await snap(ws)
+    left_side = next(c for c in s2["cubes"] if c["held"])
+    check("准星转到左边，方块也跟到左边", left_side["x"] < held[0]["x"], f"{held[0]['x']:.0f} → {left_side['x']:.0f}")
+
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "press", "key": "E"})
+    await step(ws, 2)
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "release", "key": "E"})
+    await step(ws, 25)
+    s = await snap(ws)
+    check("再按一次放下，并且落回地面", not any(c["held"] for c in s["cubes"]) and not any(c["falling"] for c in s["cubes"]),
+          str([(round(c["x"]), round(c["y"]), c["falling"]) for c in s["cubes"]]))
+
+    section("15. 分配器：方块没了就补一个，管口会打开让它掉出来")
+    s = await load_lab(ws, 1, 1)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    tube = next(i for i, e in enumerate(s["lab"]) if e["kind"] == "box_tube")
+    slot = s["lab"][tube]["driver"]
+    solid_before = len(s["solid_rects"])
+    doomed = next(c for c in s["cubes"] if c["dispenser"] == tube)
+    # 方块掉出地图时干的正是这件事：从自己的 slot 推一个 toggle 上去。
+    await rpc(ws, "game.labSignal", {"index": slot, "signal": "toggle"})
+    await step(ws, 3)
+    s = await snap(ws)
+    check("旧方块被回收", not any(c["dispenser"] == tube for c in s["cubes"]), str(len(s["cubes"])))
+    await step(ws, 12)
+    s = await snap(ws)
+    check("周期中段管口不再是实体（方块要从这里掉出来）", len(s["solid_rects"]) < solid_before,
+          f"{solid_before} → {len(s['solid_rects'])}")
+    await step(ws, 30)
+    s = await snap(ws)
+    fresh = [c for c in s["cubes"] if c["dispenser"] == tube]
+    check("0.6 秒后新方块出现在管口", len(fresh) == 1, str(len(fresh)))
+    check("而且是从上面掉下来的", fresh and fresh[0]["falling"], str(fresh))
+    await step(ws, 90)
+    s = await snap(ws)
+    fresh = [c for c in s["cubes"] if c["dispenser"] == tube]
+    check("它落到了原来那个方块的位置", fresh and abs(fresh[0]["y"] - doomed["y"]) < 1.0,
+          f"{fresh[0]['y']:.0f} vs {doomed['y']:.0f}" if fresh else "没有方块")
+    check("并且只补了一个", len(fresh) == 1, str(len(fresh)))
+
+    section("16. 把镜头横扫过全部九关：clip 出屏不能把画面搞崩")
     # 门是用 scissor 裁到自己那两格的，门滚出屏幕右侧时裁剪框会伸到画面外 ——
     # wgpu 要求 x+w <= 宽度，越界会直接 panic 整帧。这一条扫描就是那次崩溃的复现。
     swept = 0
