@@ -53,6 +53,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) respawn_sublevel: u32,
     /// Has the player passed `lakitoend`? Once true lakitu stops throwing and leaves.
     pub(crate) lakito_retired: bool,
+    /// Is the `bulletbillstart`…`bulletbillend` stretch currently raining bills?
+    pub(crate) bullet_bill_zone: bool,
     /// Maze progress, for the looping castles. `null` in levels without spans.
     pub(crate) maze: Option<MazeView>,
     /// The lab signal network. Empty outside the lab mappack.
@@ -358,6 +360,12 @@ pub(crate) struct SetPlayerSize {
 
 #[cfg(feature = "vdp")]
 #[derive(serde::Deserialize)]
+pub(crate) struct SetStar {
+    pub(crate) seconds: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
 pub(crate) struct SetState {
     pub(crate) state: String,
 }
@@ -530,6 +538,7 @@ impl Mari0Game {
             checkpoint: self.checkpoint.map(|(c, r)| [c, r]),
             respawn_sublevel: self.respawn_sublevel,
             lakito_retired: self.lakito_retired,
+            bullet_bill_zone: self.bullet_bill_zone,
             lab: self
                 .lab
                 .elements
@@ -690,6 +699,19 @@ impl Mari0Game {
         Ok(serde_json::json!({"is_big": self.player.is_big}))
     }
 
+    /// Hand the player star invincibility for `seconds`.
+    ///
+    /// The probe primitive for hazards. Measuring anything that hurts — bullet bills
+    /// raining down a corridor, a hammer bro's arc, Bowser's breath — otherwise ends
+    /// the same way: the player dies, `update_playing` stops, the whole scene freezes,
+    /// and every later assertion reads as "the feature does nothing" rather than "the
+    /// probe stood in the line of fire".
+    #[vdp("game.setStar")]
+    pub(crate) fn vdp_set_star(&mut self, p: SetStar) -> Result<serde_json::Value, String> {
+        self.star_timer = p.seconds.max(0.0);
+        Ok(serde_json::json!({"star_timer": self.star_timer}))
+    }
+
     #[vdp("game.setState")]
     pub(crate) fn vdp_set_state(&mut self, p: SetState) -> Result<serde_json::Value, String> {
         match p.state.as_str() {
@@ -798,10 +820,20 @@ impl Mari0Game {
             "beetle" => EnemyType::Beetle,
             "plant" => EnemyType::Plant,
             "lakito" => EnemyType::Lakito,
+            "bullet_bill" => EnemyType::BulletBill,
+            "bullet_bill_cannon" => EnemyType::BulletBillCannon,
             "spikey" => EnemyType::Spikey,
             "spikey_fall" => EnemyType::SpikeyFall,
             _ => return Err(format!("Unknown enemy type: {}", p.etype)),
         };
+        // A bill needs its own constructor: the generic one below hands out the
+        // walking speed of 2 blocks/s, and a bullet bill that crawls is not a bullet
+        // bill. Its age is also load-bearing, since that's what expires it.
+        if etype == EnemyType::BulletBill {
+            let dir = if p.facing_right { 1.0 } else { -1.0 };
+            self.enemies.push(Enemy::bullet_bill(p.x, p.y, dir));
+            return Ok(serde_json::json!({"status": "ok", "enemy_count": self.enemies.len()}));
+        }
         self.enemies.push(Enemy {
             x: p.x,
             y: p.y,
@@ -823,6 +855,8 @@ impl Mari0Game {
             spawn_x: p.x,
             angle_deg: 0.0,
             segment: 0,
+            fire_delay: 0.0,
+            portaled: false,
         });
         Ok(serde_json::json!({"status": "ok", "enemy_count": self.enemies.len()}))
     }

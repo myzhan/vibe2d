@@ -4,7 +4,7 @@ use vibe2d::prelude::*;
 
 use crate::constants::*;
 use crate::effects::*;
-use crate::enemies::{EnemyState, EnemyType};
+use crate::enemies::{EnemyState, enemy_height};
 use crate::game::Mari0Game;
 use crate::physics::*;
 use crate::portal::{PortalBody, portal_carry};
@@ -642,13 +642,12 @@ impl Mari0Game {
                 continue;
             }
             for (ei, enemy) in self.enemies.iter().enumerate() {
-                if enemy.state == EnemyState::Dead {
+                // A bullet-bill cannon has no hitbox at all, so a fireball flies
+                // through the spot it occupies rather than bursting on it.
+                if enemy.state == EnemyState::Dead || enemy.enemy_type.harmless() {
                     continue;
                 }
-                let eh = match enemy.enemy_type {
-                    EnemyType::Koopa if enemy.state == EnemyState::Walking => 48.0,
-                    _ => PLAYER_SMALL_H,
-                };
+                let eh = enemy_height(enemy.enemy_type, enemy.state);
                 if aabb_overlap(
                     [fb.x, fb.y, FIREBALL_SIZE, FIREBALL_SIZE],
                     [enemy.x, enemy.y, PLAYER_SMALL_W, eh],
@@ -670,8 +669,9 @@ impl Mari0Game {
             self.fireballs[fi].explode_timer = 0.0;
         }
         for &ei in &enemy_kills {
+            // Fire kills pay a flat per-kind rate, not the stomp combo ladder.
+            self.score += self.enemies[ei].enemy_type.fire_points();
             self.enemies[ei].shotted();
-            self.score += 100;
         }
 
         // Remove expired fireballs

@@ -92,6 +92,12 @@ pub(crate) fn spikey_uv(frame: u32) -> [f32; 4] {
     [(frame % 4) as f32 * 0.25, 0.0, 0.25, 1.0]
 }
 
+/// Bullet bill. `bulletbill.png` is 16x64: one 16x16 frame per spriteset, stacked.
+/// Only the first is used — the port doesn't swap enemy art per environment.
+pub(crate) fn bullet_bill_uv() -> [f32; 4] {
+    [0.0, 0.0, 1.0, 16.0 / 64.0]
+}
+
 /// Piranha plant frame UV. `plant.png` is 32x128: **16x23** cells, 2 frames wide.
 ///
 /// 23, not 24 (`main.lua:464`): the rows butt up against each other with no

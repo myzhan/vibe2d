@@ -204,6 +204,11 @@ impl Mari0Game {
 
         // ── Enemies ──
         for enemy in &self.enemies {
+            // The cannon is tile art (42 over 64), already drawn with the level. The
+            // entry in this list is only its firing timer.
+            if enemy.enemy_type.harmless() {
+                continue;
+            }
             let ex = enemy.x - cam_x;
             let ey = enemy.y;
             let eh = enemy_height(enemy.enemy_type, enemy.state);
@@ -240,6 +245,15 @@ impl Mari0Game {
                                     spikey_uv(0),
                                     dst,
                                     false,
+                                    true,
+                                );
+                            }
+                            EnemyType::BulletBill => {
+                                screen.draw_sprite_region_flipped(
+                                    self.tex_bullet_bill,
+                                    bullet_bill_uv(),
+                                    dst,
+                                    enemy.facing_right,
                                     true,
                                 );
                             }
@@ -303,6 +317,17 @@ impl Mari0Game {
                                 lakito_uv(frame),
                                 lakito_dst(dst),
                                 !enemy.facing_right,
+                                false,
+                            );
+                        }
+                        EnemyType::BulletBill => {
+                            // No animation — it's a bullet. It faces its direction of
+                            // travel, and the sheet's frame points left.
+                            screen.draw_sprite_region_flipped(
+                                self.tex_bullet_bill,
+                                bullet_bill_uv(),
+                                dst,
+                                enemy.facing_right,
                                 false,
                             );
                         }

@@ -121,6 +121,13 @@ pub(crate) struct Level {
     /// set — see `physics::blocks_movement`.
     pub(crate) portal_holes: HashSet<(i32, i32)>,
 
+    /// The stretch in which bullet bills rain in from the right edge, as columns.
+    ///
+    /// Both are compared against the *player*, and the pair is not symmetric in use:
+    /// 5-3 sets both and so fences off one run, while 6-3 sets only a start and never
+    /// turns it off again.
+    pub(crate) bullet_bill_start: Option<i32>,
+    pub(crate) bullet_bill_end: Option<i32>,
     /// Column past which lakitu gives up and drifts away, if this level has one.
     ///
     /// A single column rather than a cell: the marker is "place anywhere — defines a
@@ -525,6 +532,16 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
                 facing_right: false,
                 segment: 0,
             }),
+            // Entity 60 is the *cannon*, not a bullet. Its own barrel and base are
+            // tiles 42 and 64 in the level data, so it draws and collides as terrain;
+            // what this spawns is only the timer that fires out of it.
+            level::EntityKind::BulletBill => enemy_spawns.push(EnemySpawnPoint {
+                enemy_type: EnemyType::BulletBillCannon,
+                x: px,
+                y: py,
+                facing_right: false,
+                segment: 0,
+            }),
             // Lakitu starts drifting left, which is what sends him back over the
             // player the moment he's revealed.
             level::EntityKind::Lakito => enemy_spawns.push(EnemySpawnPoint {
@@ -662,6 +679,8 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         maze_gates,
         maze_end_cols,
         lakito_end: parsed.markers.lakito_end.map(|c| c as i32),
+        bullet_bill_start: parsed.markers.bullet_bill_start.map(|c| c as i32),
+        bullet_bill_end: parsed.markers.bullet_bill_end.map(|c| c as i32),
         portal_holes: HashSet::new(),
         solid_extras: HashSet::new(),
         solid_rects: Vec::new(),

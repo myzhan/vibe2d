@@ -131,6 +131,28 @@ pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
 /// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
 pub(crate) const LAKITO_SCORE: u32 = 200;
 
+// ── Bullet bills and the cannons that fire them (variables.lua:235-238, :403) ──
+/// Flight speed, 8 blocks/s — faster than the player can run away from.
+pub(crate) const BULLET_BILL_SPEED: f32 = 8.0 * TILE_SIZE;
+/// A bill removes itself after this long (`bulletbilllifetime`), since nothing else
+/// will: it ignores terrain, so it would otherwise fly forever.
+pub(crate) const BULLET_BILL_LIFETIME: f32 = 20.0;
+/// Random gap between shots from one cannon, in seconds.
+pub(crate) const BULLET_BILL_TIME_MIN: f32 = 1.0;
+pub(crate) const BULLET_BILL_TIME_MAX: f32 = 4.5;
+/// A cannon holds its fire while the player is within this many blocks either side,
+/// so standing on top of one is safe.
+pub(crate) const BULLET_BILL_RANGE: f32 = 3.0 * TILE_SIZE;
+/// Cap on live bills from cannons. The `bulletbillstart` zone spawner ignores it.
+pub(crate) const MAX_BULLET_BILLS: usize = 5;
+/// A fresh cannon fires half a second after it appears (`bulletbill.lua:8`).
+pub(crate) const BULLET_BILL_FIRST_SHOT: f32 = 0.5;
+/// Random gap between the `bulletbillstart` zone's bills (`game.lua:830`).
+pub(crate) const BULLET_BILL_ZONE_MIN: f32 = 0.5;
+pub(crate) const BULLET_BILL_ZONE_MAX: f32 = 4.0;
+/// Rows the zone spawner picks from, 0-based (`math.random(4, 12)` over 1-based rows).
+pub(crate) const BULLET_BILL_ZONE_ROWS: (i32, i32) = (3, 11);
+
 // ── Enemies killed by fire, a star or a shell (variables.lua:162-164) ──
 /// Constant horizontal speed of a shot enemy, 4 blocks/s.
 pub(crate) const SHOT_SPEED_X: f32 = 4.0 * TILE_SIZE;

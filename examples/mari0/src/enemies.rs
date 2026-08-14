@@ -53,6 +53,21 @@ pub(crate) enum EnemyType {
     /// first two blocks of its descent it can strike the lakitu who threw it.
     /// Landing turns it into a [`EnemyType::Spikey`].
     SpikeyFall,
+    /// A bullet bill in flight: constant speed, no gravity, and **no terrain at all**.
+    ///
+    /// The last part is not a simplification. Every one of its collision handlers
+    /// returns `false` (`bulletbill.lua:158-179`), and returning `false` is how the
+    /// original's physics is told *not* to resolve a contact (`physics.lua:288-296`),
+    /// so a bill flies through walls, floors and pipes alike. Only its 20-second
+    /// lifetime stops it.
+    BulletBill,
+    /// The cannon, which is a timer rather than a creature.
+    ///
+    /// It lives in the enemy list only to inherit the lazy per-column reveal and the
+    /// off-screen cull — the original's `rocketlauncher` isn't in `objects` at all and
+    /// has no hitbox (`bulletbill.lua:1-20`). What you can stand on and bump into is
+    /// the tile art underneath it, tiles 42 and 64. See [`EnemyType::harmless`].
+    BulletBillCannon,
 }
 
 impl EnemyType {
@@ -111,6 +126,8 @@ impl EnemyType {
                 | EnemyType::CheepWhite
                 | EnemyType::KoopaFlying
                 | EnemyType::Lakito
+                | EnemyType::BulletBill
+                | EnemyType::BulletBillCannon
         )
     }
 
@@ -144,12 +161,88 @@ impl EnemyType {
                 | EnemyType::CheepRed
                 | EnemyType::CheepWhite
                 | EnemyType::Lakito
+                // A fixture like the plants: it has a position and a timer, nothing
+                // that could be carried anywhere.
+                | EnemyType::BulletBillCannon
         )
     }
 
     /// Indestructible hazards: fire and stars don't remove them either.
     pub(crate) fn indestructible(self) -> bool {
-        matches!(self, EnemyType::Firebar | EnemyType::UpFire)
+        matches!(
+            self,
+            EnemyType::Firebar | EnemyType::UpFire | EnemyType::BulletBillCannon
+        )
+    }
+
+    /// Not a creature at all: no hitbox, no sprite, cannot hurt or be hurt.
+    ///
+    /// Only the bullet-bill cannon. It rides in the enemy list for the lazy reveal and
+    /// nothing else, so every interaction pass has to skip it — otherwise the player
+    /// dies to a cannon he is standing on, which is precisely the spot the original
+    /// makes safe by refusing to fire at close range.
+    pub(crate) fn harmless(self) -> bool {
+        self == EnemyType::BulletBillCannon
+    }
+
+    /// Points for killing this with fire or a star (`firepoints`, `variables.lua:28-37`).
+    ///
+    /// A flat table, unlike stomping, which runs up the combo ladder. A goomba is the
+    /// only cheap one; everything else in Super Mario Bros is worth 200 except the
+    /// hammer bro at 1000 and Bowser at 5000.
+    pub(crate) fn fire_points(self) -> u32 {
+        match self {
+            EnemyType::Goomba | EnemyType::Spikey | EnemyType::SpikeyFall => 100,
+            _ => 200,
+        }
+    }
+
+    /// Skips the portal system's third, catch-all entry test.
+    ///
+    /// The original expresses this as `mask[2]`, which the portal code reads as "don't
+    /// run `inportal` on this" (`game.lua`'s portal pass). Swept entry still applies —
+    /// a bill crossing a portal plane goes through — but it is never grabbed just for
+    /// *overlapping* a mouth. Without the exemption a bill travelling at 8 blocks/s
+    /// past a floor portal gets yanked sideways by a mouth it was never aimed at.
+    pub(crate) fn exempt_from_containment(self) -> bool {
+        self == EnemyType::BulletBill
+    }
+}
+
+/// The deterministic stand-in for `math.random`.
+///
+/// The original picks cannon delays and bullet-bill altitudes at random. A real PRNG
+/// would make every VDP probe and every autopilot run irreproducible, so this is a
+/// plain 32-bit LCG (the Numerical Recipes constants) seeded per level. It looks
+/// random, and the same level played twice plays the same way.
+#[derive(Clone)]
+pub(crate) struct Rng(u32);
+
+impl Rng {
+    pub(crate) fn new(seed: u32) -> Self {
+        // Never zero: an LCG seeded at 0 with these constants is fine, but a nonzero
+        // seed keeps the first few draws from clustering.
+        Rng(seed | 1)
+    }
+
+    fn next_u32(&mut self) -> u32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        self.0
+    }
+
+    /// A float in `min..=max`, quantised to tenths the way the original's
+    /// `math.random(min*10, max*10)/10` is.
+    pub(crate) fn tenths(&mut self, min: f32, max: f32) -> f32 {
+        let lo = (min * 10.0).round() as u32;
+        let hi = (max * 10.0).round() as u32;
+        let span = hi - lo + 1;
+        (lo + self.next_u32() % span) as f32 / 10.0
+    }
+
+    /// An integer in `min..=max`.
+    pub(crate) fn range(&mut self, min: i32, max: i32) -> i32 {
+        let span = (max - min + 1) as u32;
+        min + (self.next_u32() % span) as i32
     }
 }
 
@@ -187,6 +280,15 @@ pub(crate) struct Enemy {
     pub(crate) angle_deg: f32,
     /// Index of this fireball along its firebar (0 = at the pivot).
     pub(crate) segment: u32,
+    /// Seconds until this cannon's next shot. Unused by everything else.
+    pub(crate) fire_delay: f32,
+    /// Has this been through a portal?
+    ///
+    /// Only a bullet bill cares, and what it earns is the right to kill: a bill that
+    /// has been portaled sets `killstuff` and thereafter shoots down any goomba or
+    /// koopa it touches (`bulletbill.lua:181-194`). Before that it passes through
+    /// them harmlessly.
+    pub(crate) portaled: bool,
 }
 
 /// Collision height of an enemy in its current state.
@@ -218,12 +320,14 @@ impl Enemy {
     fn from_spawn(sp: &EnemySpawnPoint) -> Self {
         let h = enemy_height(sp.enemy_type, EnemyState::Walking);
         // Spawn coordinates name the cell the enemy stands *on*, so a taller
-        // enemy has to be lifted by its own height to rest on that surface. A
-        // plant instead hangs *below* its cell, tucked into the pipe.
-        let y = if sp.enemy_type == EnemyType::Plant {
-            plant_rest_y(sp.y)
-        } else {
-            sp.y - h
+        // enemy has to be lifted by its own height to rest on that surface. Two
+        // exceptions: a plant hangs *below* its cell, tucked into the pipe, and a
+        // cannon simply *is* its cell — it doesn't stand anywhere, and lifting it
+        // sends its bills out a row above the barrel.
+        let y = match sp.enemy_type {
+            EnemyType::Plant => plant_rest_y(sp.y),
+            EnemyType::BulletBillCannon => sp.y,
+            _ => sp.y - h,
         };
         // A plant is a block wide but its cell is the pipe's *left* column, so it
         // straddles both (`plant.lua:9`, `self.x = x - 8/16`) — that half-block is
@@ -257,6 +361,12 @@ impl Enemy {
             // from the pivot is what differs.
             angle_deg: 0.0,
             segment: sp.segment,
+            // A cannon opens fire half a second after it appears. The original gets
+            // there by starting its timer at `time - 0.5` with a random `time`
+            // (`bulletbill.lua:7-8`); a fixed first delay is the same thing observed,
+            // and it means `from_spawn` needs no access to the RNG.
+            fire_delay: BULLET_BILL_FIRST_SHOT,
+            portaled: false,
         }
     }
 
@@ -282,6 +392,33 @@ impl Enemy {
         };
     }
 
+    /// A bullet bill leaving a cannon, or dropped in by the `bulletbillstart` zone.
+    ///
+    /// `cycle_timer` is its age; at [`BULLET_BILL_LIFETIME`] the cull takes it, which
+    /// is the only thing that ever will — it has no terrain to stop it.
+    pub(crate) fn bullet_bill(x: f32, y: f32, dir: f32) -> Self {
+        Enemy {
+            x,
+            y,
+            vx: dir * BULLET_BILL_SPEED,
+            vy: 0.0,
+            enemy_type: EnemyType::BulletBill,
+            state: EnemyState::Walking,
+            facing_right: dir > 0.0,
+            on_ground: false,
+            anim_timer: 0.0,
+            death_timer: 0.0,
+            flipped_death: false,
+            spawn_y: y,
+            cycle_timer: 0.0,
+            spawn_x: x,
+            angle_deg: 0.0,
+            segment: 0,
+            fire_delay: 0.0,
+            portaled: false,
+        }
+    }
+
     /// A spiny egg, mid-throw. `spawn_y` is the release height, which is what the
     /// two-block window for hitting lakitu is measured from.
     fn spiny_egg(x: f32, y: f32) -> Self {
@@ -302,6 +439,8 @@ impl Enemy {
             spawn_x: x,
             angle_deg: 0.0,
             segment: 0,
+            fire_delay: 0.0,
+            portaled: false,
         }
     }
 }
@@ -397,9 +536,20 @@ impl Mari0Game {
                     && e.state != EnemyState::Dead
             })
             .count();
-        // Eggs can't be pushed onto `self.enemies` from inside the loop that borrows
-        // it, so they queue here and join at the end of the frame.
+        // Eggs and bullet bills can't be pushed onto `self.enemies` from inside the
+        // loop that borrows it, so they queue here and join at the end of the frame.
         let mut thrown: Vec<Enemy> = Vec::new();
+        let mut fired: Vec<(f32, f32, f32)> = Vec::new();
+        // Cannons share one cap on live bills (`maximumbulletbills`). Counted before
+        // anything moves, so two cannons in range can't both slip past the fifth slot.
+        let bills_out = self
+            .enemies
+            .iter()
+            .filter(|e| e.enemy_type == EnemyType::BulletBill && e.state == EnemyState::Walking)
+            .count();
+        // Borrowed out of `self` so the loop below can draw from it while holding
+        // `&mut self.enemies`.
+        let mut rng = std::mem::replace(&mut self.rng, Rng::new(1));
         // Where lakitu aims: the player's position `LAKITO_DISTANCE_TIME` seconds
         // from now at his current speed (`lakito.lua:80`). Chasing where the player
         // *is* would let you shake him off by just holding a direction.
@@ -408,6 +558,39 @@ impl Mari0Game {
         for enemy in &mut self.enemies {
             let ew = PLAYER_SMALL_W;
             let eh = enemy_height(enemy.enemy_type, enemy.state);
+
+            // Portals, before the scripted/walking split rather than inside the
+            // walking branch. Being scripted and being portable are independent
+            // properties — a winged koopa and a bullet bill are both scripted and
+            // both travel — and while the check sat inside the walker path neither
+            // of them ever could.
+            if enemy.enemy_type.portalable()
+                && enemy.state != EnemyState::Dead
+                && let Some((nx, ny, nvx, nvy)) = portal_carry(
+                    &self.level,
+                    portals.as_ref(),
+                    PortalBody {
+                        x: enemy.x,
+                        y: enemy.y,
+                        w: ew,
+                        h: eh,
+                        vx: enemy.vx,
+                        vy: enemy.vy,
+                    },
+                    dt,
+                    !enemy.enemy_type.exempt_from_containment(),
+                )
+            {
+                enemy.x = nx;
+                enemy.y = ny;
+                enemy.vx = nvx;
+                enemy.vy = nvy;
+                enemy.facing_right = nvx > 0.0;
+                // A bill that has been through a portal comes out lethal to other
+                // enemies. Nothing else acts on this.
+                enemy.portaled = true;
+                continue;
+            }
 
             // Scripted enemies follow their own path and ignore gravity and
             // terrain entirely, so they bypass the walking/collision path below.
@@ -465,6 +648,42 @@ impl Mari0Game {
                             enemy.y = floor;
                             enemy.vy = -UPFIRE_FORCE;
                         }
+                    }
+                    EnemyType::BulletBill => {
+                        // Straight line, forever, through everything. The lifetime
+                        // check that eventually removes it lives in the cull below.
+                        enemy.x += enemy.vx * dt;
+                    }
+                    EnemyType::BulletBillCannon => {
+                        // The timer runs whether or not the cannon is on screen; only
+                        // *firing* is gated on being visible (`bulletbill.lua:12-19`).
+                        if enemy.cycle_timer <= enemy.fire_delay {
+                            continue;
+                        }
+                        let on_screen =
+                            enemy.x > cam_x && enemy.x < cam_x + self.vw + 2.0 * TILE_SIZE;
+                        if !on_screen {
+                            continue;
+                        }
+                        if bills_out >= MAX_BULLET_BILLS {
+                            // Timer keeps climbing, so it fires the instant a slot
+                            // frees rather than waiting out a fresh delay.
+                            continue;
+                        }
+                        // Fires *away from* the player's right edge, and only once he
+                        // is more than `BULLET_BILL_RANGE` clear — which is what makes
+                        // standing on a cannon safe (`bulletbill.lua:35-41`).
+                        let player_edge = self.player.x + self.player.width;
+                        let dir = if player_edge > enemy.x + BULLET_BILL_RANGE {
+                            1.0
+                        } else if player_edge < enemy.x - BULLET_BILL_RANGE {
+                            -1.0
+                        } else {
+                            continue;
+                        };
+                        fired.push((enemy.x, enemy.y, dir));
+                        enemy.cycle_timer = 0.0;
+                        enemy.fire_delay = rng.tenths(BULLET_BILL_TIME_MIN, BULLET_BILL_TIME_MAX);
                     }
                     EnemyType::Lakito => {
                         if retired {
@@ -529,33 +748,6 @@ impl Mari0Game {
             match enemy.state {
                 EnemyState::Walking | EnemyState::ShellMoving => {
                     enemy.anim_timer += dt;
-
-                    // Portals carry enemies too. `static = true` kinds are excluded
-                    // by `portalable()`, and a shell counts as a mover, so a kicked
-                    // shell can be routed through a portal like anything else.
-                    if enemy.enemy_type.portalable()
-                        && let Some((nx, ny, nvx, nvy)) = portal_carry(
-                            &self.level,
-                            portals.as_ref(),
-                            PortalBody {
-                                x: enemy.x,
-                                y: enemy.y,
-                                w: ew,
-                                h: eh,
-                                vx: enemy.vx,
-                                vy: enemy.vy,
-                            },
-                            dt,
-                            true,
-                        )
-                    {
-                        enemy.x = nx;
-                        enemy.y = ny;
-                        enemy.vx = nvx;
-                        enemy.vy = nvy;
-                        enemy.facing_right = nvx > 0.0;
-                        continue;
-                    }
 
                     // Gravity. Per-kind because a thrown spiny egg is the one thing
                     // in the game that falls slower than everything else.
@@ -710,7 +902,7 @@ impl Mari0Game {
         // Player-enemy interaction
         let mut player_bounce = false;
         for enemy in &mut self.enemies {
-            if enemy.state == EnemyState::Dead {
+            if enemy.state == EnemyState::Dead || enemy.enemy_type.harmless() {
                 continue;
             }
 
@@ -825,13 +1017,28 @@ impl Mari0Game {
             self.player.on_ground = false;
         }
 
+        self.rng = rng;
         self.enemies.append(&mut thrown);
+        for (x, y, dir) in fired {
+            self.enemies.push(Enemy::bullet_bill(x, y, dir));
+            ctx.audio.play("bulletbill");
+        }
         self.egg_may_hit_its_thrower();
+        self.portaled_bills_shoot_things_down();
         self.respawn_shot_lakitos();
 
         // Remove dead enemies after timer, or enemies that fell off the map
         self.enemies.retain(|e| {
             if e.state == EnemyState::Dead && e.death_timer <= 0.0 {
+                return false;
+            }
+            // A live bill expires on a clock, because nothing else can stop one: it
+            // ignores terrain, so without this it would fly to the end of the world
+            // and sit off the right edge for the rest of the level.
+            if e.enemy_type == EnemyType::BulletBill
+                && e.state == EnemyState::Walking
+                && e.cycle_timer >= BULLET_BILL_LIFETIME
+            {
                 return false;
             }
             if e.y > (self.level.height as f32) * TILE_SIZE + 100.0 {
@@ -898,6 +1105,50 @@ impl Mari0Game {
                 value: LAKITO_SCORE,
                 timer: 0.0,
             });
+        }
+    }
+
+    /// A bullet bill that has been through a portal mows down goombas and koopas.
+    ///
+    /// `bulletbill:portaled()` sets `killstuff`, and only then does its collision
+    /// handler shoot anything down (`bulletbill.lua:181-194`). Before that a bill and a
+    /// goomba pass through each other. So the bill is harmless to other enemies as
+    /// fired and becomes a weapon once you route it through a portal — which is the
+    /// one place Mari0's own mechanics reach into Super Mario Bros' bestiary.
+    ///
+    /// The kill is always `shotted("left")` regardless of which way the bill is
+    /// travelling; that asymmetry is the original's, not a slip here.
+    fn portaled_bills_shoot_things_down(&mut self) {
+        let bills: Vec<[f32; 4]> = self
+            .enemies
+            .iter()
+            .filter(|e| {
+                e.enemy_type == EnemyType::BulletBill
+                    && e.portaled
+                    && e.state == EnemyState::Walking
+            })
+            .map(|e| [e.x, e.y, PLAYER_SMALL_W, PLAYER_SMALL_H])
+            .collect();
+        if bills.is_empty() {
+            return;
+        }
+        for enemy in &mut self.enemies {
+            let victim = enemy.enemy_type == EnemyType::Goomba
+                || enemy.enemy_type.is_koopa_like()
+                || matches!(enemy.enemy_type, EnemyType::Spikey | EnemyType::SpikeyFall);
+            if !victim || enemy.state == EnemyState::Dead {
+                continue;
+            }
+            let box_ = [
+                enemy.x,
+                enemy.y,
+                PLAYER_SMALL_W,
+                enemy_height(enemy.enemy_type, enemy.state),
+            ];
+            if bills.iter().any(|b| aabb_overlap(box_, *b)) {
+                enemy.facing_right = false;
+                enemy.shotted();
+            }
         }
     }
 
@@ -1267,6 +1518,104 @@ mod tests {
         }
         assert_eq!(on_pipe, 99, "plants mounted on a pipe's left rim tile");
         assert_eq!(elsewhere, 3, "8-4's three wall-mounted plants");
+    }
+
+    /// A cannon is scenery with a timer, not an enemy.
+    ///
+    /// It is in the enemy list for the lazy reveal and the off-screen cull, and every
+    /// interaction pass has to skip it. If it didn't, the player would die to the
+    /// cannon he is standing on — the exact spot the original makes safe by refusing
+    /// to fire within three blocks.
+    #[test]
+    fn the_cannon_is_scenery_and_the_bill_is_not() {
+        assert!(EnemyType::BulletBillCannon.harmless());
+        assert!(EnemyType::BulletBillCannon.indestructible());
+        assert!(!EnemyType::BulletBillCannon.portalable());
+        assert!(!EnemyType::BulletBill.harmless());
+        assert!(EnemyType::BulletBill.stompable());
+        assert!(EnemyType::BulletBill.portalable());
+        // But exempt from the catch-all containment test, so a mouth it flies past
+        // doesn't swallow it.
+        assert!(EnemyType::BulletBill.exempt_from_containment());
+        assert!(!EnemyType::Goomba.exempt_from_containment());
+    }
+
+    /// A bill flies flat and fast, and only a clock stops it.
+    #[test]
+    fn a_bill_flies_level_at_full_speed() {
+        let right = Enemy::bullet_bill(0.0, 0.0, 1.0);
+        assert_eq!(right.vx, BULLET_BILL_SPEED);
+        assert_eq!(right.vy, 0.0);
+        assert!(right.facing_right);
+        let left = Enemy::bullet_bill(0.0, 0.0, -1.0);
+        assert_eq!(left.vx, -BULLET_BILL_SPEED);
+        assert!(!left.facing_right);
+        assert!(!left.portaled, "only a portal trip sets that");
+    }
+
+    /// The RNG has to be a *reproducible* stand-in for `math.random`.
+    ///
+    /// Two runs of the same level must play out identically or every VDP probe and the
+    /// autopilot become flaky. Also checks the quantisation: the original draws
+    /// `math.random(min*10, max*10)/10`, so the values land on tenths.
+    #[test]
+    fn the_random_stand_in_repeats_and_stays_in_range() {
+        let draw = |seed| {
+            let mut rng = Rng::new(seed);
+            (0..64)
+                .map(|_| rng.tenths(BULLET_BILL_TIME_MIN, BULLET_BILL_TIME_MAX))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(draw(7), draw(7), "same seed must replay exactly");
+        assert_ne!(draw(7), draw(8), "different seeds should diverge");
+        for v in draw(7) {
+            assert!(
+                (BULLET_BILL_TIME_MIN..=BULLET_BILL_TIME_MAX).contains(&v),
+                "{v} outside 1.0..=4.5"
+            );
+            assert!(
+                ((v * 10.0) - (v * 10.0).round()).abs() < 1e-4,
+                "{v} not a tenth"
+            );
+        }
+
+        let mut rng = Rng::new(3);
+        let rows: Vec<i32> = (0..200)
+            .map(|_| rng.range(BULLET_BILL_ZONE_ROWS.0, BULLET_BILL_ZONE_ROWS.1))
+            .collect();
+        assert!(rows.iter().all(|r| (3..=11).contains(r)));
+        assert!(
+            rows.contains(&3) && rows.contains(&11),
+            "both ends of the row range should come up"
+        );
+    }
+
+    /// The two bullet-bill sources appear in different levels, and 6-3 has no end.
+    ///
+    /// Worth pinning because the asymmetry looks like missing data: 5-3 fences off a
+    /// stretch with both markers, while 6-3 opens the tap and never closes it.
+    #[test]
+    fn the_cannon_levels_and_the_zone_levels_are_different_levels() {
+        let mut cannons = Vec::new();
+        let mut zones = Vec::new();
+        for (pack, name, _) in level::LEVELS {
+            let parsed = level::load(pack, name)
+                .expect("shipped level")
+                .expect("parses");
+            if parsed
+                .markers
+                .enemies
+                .iter()
+                .any(|s| s.kind == level::EntityKind::BulletBill)
+            {
+                cannons.push(name);
+            }
+            if parsed.markers.bullet_bill_start.is_some() {
+                zones.push((name, parsed.markers.bullet_bill_end.is_some()));
+            }
+        }
+        assert_eq!(cannons, ["5-1", "5-2", "7-1", "8-2", "8-3"]);
+        assert_eq!(zones, [("5-3", true), ("6-3", false)]);
     }
 
     /// No level places a spiny, and every level with a lakitu says where he stops.

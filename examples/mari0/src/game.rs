@@ -113,6 +113,20 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// Deterministic stand-in for `math.random`: cannon delays, bill altitudes.
+    ///
+    /// Reseeded per level so a level always plays out the same way — the VDP probes
+    /// and the autopilot both depend on that.
+    pub(crate) rng: Rng,
+    /// Is the player inside this level's `bulletbillstart`…`bulletbillend` stretch?
+    ///
+    /// Unlike lakitu's retirement this one is **not** a latch: crossing `end` turns it
+    /// back off (`mario.lua:985-991`), and 5-3 uses both ends to fence off one run of
+    /// the level. 6-3 has only a start, so once on it stays on.
+    pub(crate) bullet_bill_zone: bool,
+    /// Time since the zone last dropped a bill, and how long it waits this round.
+    pub(crate) bullet_bill_timer: f32,
+    pub(crate) bullet_bill_delay: f32,
     /// Has the player walked past this level's `lakitoend` column?
     ///
     /// A latch, never cleared while the level runs (`mario.lua:993-995` only ever
@@ -148,6 +162,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_beetle: TextureId,
     pub(crate) tex_plant: TextureId,
     pub(crate) tex_lakito: TextureId,
+    pub(crate) tex_bullet_bill: TextureId,
     pub(crate) tex_spikey: TextureId,
     pub(crate) tex_cheep_red: TextureId,
     pub(crate) tex_cheep_white: TextureId,
@@ -306,6 +321,13 @@ impl Mari0Game {
         };
         self.enemies.clear();
         self.lakito_retired = false;
+        self.bullet_bill_zone = false;
+        self.bullet_bill_timer = 0.0;
+        // Seeded from the level's shape so different levels differ but a reload of the
+        // same one repeats. `time_limit` and `width` are both stable per file.
+        self.rng =
+            Rng::new((level.width as u32).wrapping_mul(2_654_435_761) ^ level.time_limit as u32);
+        self.bullet_bill_delay = self.rng.tenths(BULLET_BILL_ZONE_MIN, BULLET_BILL_ZONE_MAX);
         self.spawned = vec![false; level.enemy_spawns.len()];
         // -1, not 0: the catch-up loop pre-increments, so column 0 still gets
         // processed on the first sweep.
@@ -367,6 +389,45 @@ impl Mari0Game {
             }
             self.checkpoints_passed += 1;
             self.checkpoint = Some((col, row));
+        }
+    }
+
+    /// Drop bullet bills in from the right edge while the player is in the zone.
+    ///
+    /// A second, quite different source from the cannons: no cannon, no range check
+    /// and **no cap** on how many are alive (`game.lua:826-831`). Bills simply appear
+    /// two blocks past the right edge of the screen at a random altitude and fly left,
+    /// which is why 5-3's tightrope section feels like weather rather than gunfire.
+    ///
+    /// The `while` is the original's, and it matters: each pass draws a *fresh* delay,
+    /// so a long frame can release several at once with different gaps behind them.
+    fn update_bullet_bill_zone(&mut self, dt: f32, ctx: &mut Context) {
+        if let Some(start) = self.level.bullet_bill_start
+            && self.player.x >= start as f32 * TILE_SIZE
+        {
+            self.bullet_bill_zone = true;
+        }
+        if let Some(end) = self.level.bullet_bill_end
+            && self.player.x >= end as f32 * TILE_SIZE
+        {
+            self.bullet_bill_zone = false;
+        }
+        if !self.bullet_bill_zone {
+            return;
+        }
+        self.bullet_bill_timer += dt;
+        while self.bullet_bill_timer > self.bullet_bill_delay {
+            self.bullet_bill_timer -= self.bullet_bill_delay;
+            self.bullet_bill_delay = self.rng.tenths(BULLET_BILL_ZONE_MIN, BULLET_BILL_ZONE_MAX);
+            let row = self
+                .rng
+                .range(BULLET_BILL_ZONE_ROWS.0, BULLET_BILL_ZONE_ROWS.1);
+            self.enemies.push(Enemy::bullet_bill(
+                self.camera.x + self.vw + 2.0 * TILE_SIZE,
+                row as f32 * TILE_SIZE,
+                -1.0,
+            ));
+            ctx.audio.play("bulletbill");
         }
     }
 
@@ -707,6 +768,7 @@ impl Mari0Game {
         self.spawn_revealed_columns();
         self.check_checkpoint_passed();
         self.check_lakito_retired();
+        self.update_bullet_bill_zone(dt, ctx);
         self.check_maze_gate();
         self.update_maze();
         self.update_lab(ctx, dt, input.is_action_just_pressed("use"));
@@ -866,6 +928,10 @@ impl Game for Mari0Game {
             checkpoint: None,
             checkpoints_passed: 0,
             lakito_retired: false,
+            rng: Rng::new(1),
+            bullet_bill_zone: false,
+            bullet_bill_timer: 0.0,
+            bullet_bill_delay: BULLET_BILL_ZONE_MIN,
             respawn_sublevel: 0,
             music_phase: MusicPhase::Normal,
             warning_started_at: None,
@@ -887,6 +953,7 @@ impl Game for Mari0Game {
             tex_beetle: t("beetle"),
             tex_plant: t("plant"),
             tex_lakito: t("lakito"),
+            tex_bullet_bill: t("bullet_bill"),
             tex_spikey: t("spikey"),
             tex_cheep_red: t("cheep_red"),
             tex_cheep_white: t("cheep_white"),
