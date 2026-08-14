@@ -21,6 +21,7 @@ mod items;
 mod lab;
 mod lab_render;
 mod maze;
+mod menu;
 mod music;
 mod physics;
 mod pipe;

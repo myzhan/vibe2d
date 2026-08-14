@@ -759,9 +759,35 @@ impl Mari0Game {
                 if let Some(font) = ui_font {
                     screen.draw_text_centered(font, "Mario + Portal", 140.0);
                     screen.draw_text_centered(font, "A tribute to Stabyourself.net", 165.0);
-                    screen.draw_text_centered(font, "WASD/Arrows: Move  Space: Jump", 200.0);
-                    screen.draw_text_centered(font, "Mouse: Aim  L/R Click: Portals", 220.0);
-                    screen.draw_text_centered(font, "Press SPACE to start", 280.0);
+
+                    // Mappack and level picker. Without it the portal mappack — nine
+                    // levels of lab — is unreachable outside the debug protocol.
+                    let pack = self.menu.pack_name();
+                    let label = if pack == "portal" {
+                        "PORTAL (lab)"
+                    } else {
+                        "SUPER MARIO BROS"
+                    };
+                    screen.draw_text_centered(font, label, 205.0);
+                    screen.draw_text_centered(
+                        font,
+                        &format!("< {}-{} >", self.menu.world, self.menu.level),
+                        230.0,
+                    );
+                    let (fw, fl) = self.furthest_in(pack);
+                    screen.draw_text_centered(font, &format!("furthest {fw}-{fl}"), 252.0);
+                    screen.draw_text_centered(
+                        font,
+                        &format!("high score {:06}", self.high_score),
+                        272.0,
+                    );
+
+                    screen.draw_text_centered(font, "Left/Right: level   Down: mappack", 310.0);
+                    screen.draw_text_centered(
+                        font,
+                        "Space: start   Mouse: aim, click: portals",
+                        330.0,
+                    );
                 }
             }
             GameState::Playing => {

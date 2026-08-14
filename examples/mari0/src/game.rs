@@ -80,6 +80,12 @@ pub(crate) struct Mari0Game {
     pub(crate) lab: Lab,
     /// Weighted cubes. Bodies, not lab elements — see `cube.rs`.
     pub(crate) cubes: Vec<crate::cube::Cube>,
+    /// Where the title screen's cursor is.
+    pub(crate) menu: crate::menu::MenuCursor,
+    /// Saved state: best score ever, and the furthest level reached per mappack.
+    pub(crate) storage: Storage,
+    pub(crate) high_score: u32,
+    pub(crate) furthest: Vec<(String, u32, u32)>,
     /// Fireworks earned by the last flagpole — 500 points each, and the count is a
     /// function of the clock's last digit. Kept so the end-of-level screen (and a test)
     /// can see how many went up.
@@ -199,6 +205,7 @@ impl Mari0Game {
             self.start_fresh();
             self.score_carry_over();
             self.state = GameState::Playing;
+            self.record_progress();
         } else {
             // Mappack finished.
             self.state = GameState::Menu;
@@ -778,6 +785,8 @@ impl Mari0Game {
 
 impl Game for Mari0Game {
     fn new(ctx: &mut Context, _renderer: &Renderer) -> Self {
+        // The saved progress is read into the struct below via `load_progress`, called
+        // on the way out — `Storage::load` never fails, it just comes back empty.
         let t = |n: &str| Self::tex(ctx, n);
 
         let vw = ctx.virtual_width;
@@ -789,7 +798,7 @@ impl Game for Mari0Game {
         let spawned = vec![false; level.enemy_spawns.len()];
         let time_limit = level.time_limit;
 
-        Self {
+        let mut game = Self {
             state: GameState::Menu,
             current,
             player: Player::new(player_start.0, player_start.1),
@@ -821,6 +830,10 @@ impl Game for Mari0Game {
             maze: MazeState::default(),
             lab: Lab::default(),
             cubes: Vec::new(),
+            menu: crate::menu::MenuCursor::default(),
+            storage: Storage::load("mari0"),
+            high_score: 0,
+            furthest: Vec::new(),
             fireworks: 0,
             grills: Vec::new(),
             previous_player_centre: (0.0, 0.0),
@@ -889,7 +902,9 @@ impl Game for Mari0Game {
             ],
             vw,
             vh,
-        }
+        };
+        game.load_progress();
+        game
     }
 
     fn update(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
@@ -899,15 +914,7 @@ impl Game for Mari0Game {
         }
 
         match self.state {
-            GameState::Menu => {
-                if input.is_action_just_pressed("jump") {
-                    self.state = GameState::Playing;
-                    self.reset_level();
-                    self.score = 0;
-                    self.coins = 0;
-                    self.lives = 3;
-                }
-            }
+            GameState::Menu => self.update_menu(input),
             GameState::Playing => {
                 self.update_playing(ctx, dt, input);
             }
