@@ -436,23 +436,32 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
     let mut enemy_spawns = Vec::new();
     let mut firebar_segments: Vec<(f32, f32, u32)> = Vec::new();
     for spawn in &parsed.markers.enemies {
-        let px = spawn.x as f32 * TILE_SIZE;
+        // The four `…half` ids differ from their plain form in **x and nothing else**:
+        // `goomba:new(x-0.5, …)` against `goomba:new(x, …)` (`game.lua:3702-3719`).
+        // "Half" is half a tile to the right — the editor's own description reads
+        // "more to the right" (`entity.lua:196`) — and both forms start walking
+        // *left*, because `speedx = -goombaspeed` is in the constructor with no
+        // parameter to change it. Reading the distinction as a facing had 64 enemies
+        // across the game marching away from the player instead of towards him.
+        let half = matches!(
+            spawn.kind,
+            level::EntityKind::GoombaHalf
+                | level::EntityKind::KoopaHalf
+                | level::EntityKind::KoopaRedHalf
+                | level::EntityKind::BeetleHalf
+        );
+        let px = spawn.x as f32 * TILE_SIZE + if half { TILE_SIZE / 2.0 } else { 0.0 };
         let py = spawn.y as f32 * TILE_SIZE;
         match spawn.kind {
-            level::EntityKind::Goomba => enemy_spawns.push(EnemySpawnPoint {
-                enemy_type: EnemyType::Goomba,
-                x: px,
-                y: py,
-                facing_right: false,
-                segment: 0,
-            }),
-            level::EntityKind::GoombaHalf => enemy_spawns.push(EnemySpawnPoint {
-                enemy_type: EnemyType::Goomba,
-                x: px,
-                y: py,
-                facing_right: true,
-                segment: 0,
-            }),
+            level::EntityKind::Goomba | level::EntityKind::GoombaHalf => {
+                enemy_spawns.push(EnemySpawnPoint {
+                    enemy_type: EnemyType::Goomba,
+                    x: px,
+                    y: py,
+                    facing_right: false,
+                    segment: 0,
+                })
+            }
             level::EntityKind::Koopa | level::EntityKind::KoopaHalf => {
                 enemy_spawns.push(EnemySpawnPoint {
                     enemy_type: EnemyType::Koopa,

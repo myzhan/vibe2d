@@ -641,6 +641,13 @@ class Autopilot:
                 self.fireball_cooldown = 15  # shoot every ~15 frames
 
         # ── Enemy avoidance (ALWAYS runs) ──
+        #
+        # Hold 20, not 14. Once the `…half` goomba variants were fixed to walk left
+        # like their plain siblings, 1-1's goomba *pairs* arrive together and the
+        # avoidance jump fires about a tile earlier — which put Mario at exactly the
+        # height of the lone floating brick at col 94, row 9. He hit its left face,
+        # lost all horizontal speed, and dropped onto the goomba he was avoiding.
+        # 14 frames of hold peaks level with that brick; 20 clears over it.
         enemy, edist = nearest_enemy_ahead(state, max_dist=TILE * 6)
         if enemy and on_ground and not self.jump_held:
             if edist < TILE * 5:
@@ -648,7 +655,7 @@ class Autopilot:
                     self.release_left()
                     self.hold_right()
                     self.item_hunt_phase = 0
-                self.start_jump(14)
+                self.start_jump(20)
                 return
 
         # ── Enemy behind detection (bounced goombas approaching from rear) ──
