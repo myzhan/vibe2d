@@ -532,6 +532,15 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
                 facing_right: false,
                 segment: 0,
             }),
+            // A hammer bro starts shuffling left, and `spawn_x` becomes the anchor of
+            // his one-block patrol.
+            level::EntityKind::HammerBro => enemy_spawns.push(EnemySpawnPoint {
+                enemy_type: EnemyType::HammerBro,
+                x: px,
+                y: py,
+                facing_right: false,
+                segment: 0,
+            }),
             // Entity 60 is the *cannon*, not a bullet. Its own barrel and base are
             // tiles 42 and 64 in the level data, so it draws and collides as terrain;
             // what this spawns is only the timer that fires out of it.

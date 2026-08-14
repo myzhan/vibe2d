@@ -25,6 +25,20 @@ fn lakito_dst(hitbox: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// A hammer bro is more than twice as tall as his hitbox.
+///
+/// The cell is 16x34 for a 12/16-block box, and the extra is all head and hammer —
+/// so like lakitu's cloud the two rectangles share a bottom edge, not a top one.
+fn hammer_bro_dst(hitbox: [f32; 4]) -> [f32; 4] {
+    const SPRITE_H: f32 = 34.0 * 2.0;
+    [
+        hitbox[0],
+        hitbox[1] + hitbox[3] - SPRITE_H,
+        hitbox[2],
+        SPRITE_H,
+    ]
+}
+
 impl Mari0Game {
     /// The window a piranha plant is drawn through, in screen space.
     ///
@@ -257,6 +271,15 @@ impl Mari0Game {
                                     true,
                                 );
                             }
+                            EnemyType::HammerBro => {
+                                screen.draw_sprite_region_flipped(
+                                    self.tex_hammer_bro,
+                                    hammer_bro_uv(0),
+                                    hammer_bro_dst(dst),
+                                    enemy.facing_right,
+                                    true,
+                                );
+                            }
                             _ => {
                                 let src = koopa_uv(0, 0);
                                 screen.draw_sprite_region_flipped(
@@ -326,6 +349,32 @@ impl Mari0Game {
                             screen.draw_sprite_region_flipped(
                                 self.tex_bullet_bill,
                                 bullet_bill_uv(),
+                                dst,
+                                enemy.facing_right,
+                                false,
+                            );
+                        }
+                        EnemyType::HammerBro => {
+                            // Frames 2/3 are the wind-up: he holds the hammer over his
+                            // head for the last `HAMMERBRO_PREPARE_TIME` before it
+                            // leaves, which is the half second you get to move
+                            // (`hammerbro.lua:159-163`).
+                            let step = ((enemy.anim_timer / HAMMERBRO_ANIM_SPEED) as u32) % 2;
+                            let raised = enemy.cycle_timer < HAMMERBRO_PREPARE_TIME;
+                            let frame = step + if raised { 2 } else { 0 };
+                            screen.draw_sprite_region_flipped(
+                                self.tex_hammer_bro,
+                                hammer_bro_uv(frame),
+                                hammer_bro_dst(dst),
+                                enemy.facing_right,
+                                false,
+                            );
+                        }
+                        EnemyType::Hammer => {
+                            let frame = ((enemy.anim_timer / HAMMER_ANIM_SPEED) as u32) % 4;
+                            screen.draw_sprite_region_flipped(
+                                self.tex_hammer,
+                                hammer_uv(frame),
                                 dst,
                                 enemy.facing_right,
                                 false,

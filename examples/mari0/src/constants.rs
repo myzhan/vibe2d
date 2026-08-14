@@ -131,6 +131,37 @@ pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
 /// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
 pub(crate) const LAKITO_SCORE: u32 = 200;
 
+// ── Hammer bro (variables.lua:240-251) ──
+/// Patrol speed, 1.5 blocks/s. He shuffles rather than walks.
+pub(crate) const HAMMERBRO_SPEED: f32 = 1.5 * TILE_SIZE;
+/// He stays within one block of where he spawned — `startx - 1` to `startx`.
+pub(crate) const HAMMERBRO_PATROL: f32 = 1.0 * TILE_SIZE;
+/// The two gaps between throws he picks between (`hammerbrotime`).
+pub(crate) const HAMMERBRO_TIME: [f32; 2] = [0.6, 1.6];
+/// He raises the hammer this long before it leaves his hand — the tell.
+pub(crate) const HAMMERBRO_PREPARE_TIME: f32 = 0.5;
+pub(crate) const HAMMERBRO_ANIM_SPEED: f32 = 0.15;
+/// Seconds between hops between floors.
+pub(crate) const HAMMERBRO_JUMP_TIME: f32 = 3.0;
+/// Upward kick for a hop to the floor above, 19 blocks/s.
+pub(crate) const HAMMERBRO_JUMP_FORCE: f32 = 19.0 * TILE_SIZE;
+/// …and for a hop *down*, which still starts upward, just gently.
+pub(crate) const HAMMERBRO_JUMP_FORCE_DOWN: f32 = 6.0 * TILE_SIZE;
+/// A downward hop keeps passing through floors until it is this far below where it
+/// started, which is what picks out the next floor down.
+pub(crate) const HAMMERBRO_DROP_THROUGH: f32 = 2.0 * TILE_SIZE;
+/// Above this row he is forced to hop up, below it forced down — in blocks from the
+/// top, as the original compares raw `self.y` against 12 and 6.
+pub(crate) const HAMMERBRO_LOW_ROW: f32 = 12.0 * TILE_SIZE;
+pub(crate) const HAMMERBRO_HIGH_ROW: f32 = 6.0 * TILE_SIZE;
+/// He falls at half the world's rate, which is what makes his hops float.
+pub(crate) const HAMMERBRO_GRAVITY: f32 = 40.0 * TILE_SIZE;
+/// A hammer leaves his hand at 4 blocks/s sideways and 8 up, and falls at 25.
+pub(crate) const HAMMER_SPEED: f32 = 4.0 * TILE_SIZE;
+pub(crate) const HAMMER_TOSS_SPEED: f32 = 8.0 * TILE_SIZE;
+pub(crate) const HAMMER_GRAVITY: f32 = 25.0 * TILE_SIZE;
+pub(crate) const HAMMER_ANIM_SPEED: f32 = 0.05;
+
 // ── Bullet bills and the cannons that fire them (variables.lua:235-238, :403) ──
 /// Flight speed, 8 blocks/s — faster than the player can run away from.
 pub(crate) const BULLET_BILL_SPEED: f32 = 8.0 * TILE_SIZE;

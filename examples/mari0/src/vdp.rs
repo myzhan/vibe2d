@@ -821,6 +821,8 @@ impl Mari0Game {
             "plant" => EnemyType::Plant,
             "lakito" => EnemyType::Lakito,
             "bullet_bill" => EnemyType::BulletBill,
+            "hammer_bro" => EnemyType::HammerBro,
+            "hammer" => EnemyType::Hammer,
             "bullet_bill_cannon" => EnemyType::BulletBillCannon,
             "spikey" => EnemyType::Spikey,
             "spikey_fall" => EnemyType::SpikeyFall,
@@ -857,6 +859,9 @@ impl Mari0Game {
             segment: 0,
             fire_delay: 0.0,
             portaled: false,
+            jump_timer: 0.0,
+            ignore_tiles: false,
+            drop_from_y: None,
         });
         Ok(serde_json::json!({"status": "ok", "enemy_count": self.enemies.len()}))
     }

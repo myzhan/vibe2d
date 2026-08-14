@@ -98,6 +98,18 @@ pub(crate) fn bullet_bill_uv() -> [f32; 4] {
     [0.0, 0.0, 1.0, 16.0 / 64.0]
 }
 
+/// Hammer bro frame. `hammerbros.png` is 64x256 with **16x34** cells
+/// (`main.lua:446`), four columns per spriteset row. Columns 0/1 are the shuffle,
+/// 2/3 the same pose with the hammer raised over his head.
+pub(crate) fn hammer_bro_uv(frame: u32) -> [f32; 4] {
+    [(frame % 4) as f32 * 0.25, 0.0, 0.25, 34.0 / 256.0]
+}
+
+/// A thrown hammer. `hammer.png` is 64x64: four 16x16 frames of it tumbling.
+pub(crate) fn hammer_uv(frame: u32) -> [f32; 4] {
+    [(frame % 4) as f32 * 0.25, 0.0, 0.25, 0.25]
+}
+
 /// Piranha plant frame UV. `plant.png` is 32x128: **16x23** cells, 2 frames wide.
 ///
 /// 23, not 24 (`main.lua:464`): the rows butt up against each other with no

@@ -61,6 +61,12 @@ pub(crate) enum EnemyType {
     /// so a bill flies through walls, floors and pipes alike. Only its 20-second
     /// lifetime stops it.
     BulletBill,
+    /// Hammer bro: shuffles inside one block, throws hammers, and hops between
+    /// floors by switching off his own tile collision for the duration of the hop.
+    HammerBro,
+    /// A hammer in flight. Arcs, ignores terrain, hurts from every side, and cannot
+    /// be destroyed — a fireball bursts on one without stopping it.
+    Hammer,
     /// The cannon, which is a timer rather than a creature.
     ///
     /// It lives in the enemy list only to inherit the lazy per-column reveal and the
@@ -105,6 +111,7 @@ impl EnemyType {
                 | EnemyType::UpFire
                 | EnemyType::Spikey
                 | EnemyType::SpikeyFall
+                | EnemyType::Hammer
         )
     }
 
@@ -128,7 +135,19 @@ impl EnemyType {
                 | EnemyType::Lakito
                 | EnemyType::BulletBill
                 | EnemyType::BulletBillCannon
+                | EnemyType::Hammer
         )
+    }
+
+    /// Ground speed this kind starts with.
+    ///
+    /// Only the hammer bro differs, and noticeably: 1.5 blocks/s against everyone
+    /// else's 2, which is why he reads as shuffling rather than walking.
+    pub(crate) fn walk_speed(self) -> f32 {
+        match self {
+            EnemyType::HammerBro => HAMMERBRO_SPEED,
+            _ => ENEMY_SPEED,
+        }
     }
 
     /// Downward acceleration while walking or falling.
@@ -138,6 +157,8 @@ impl EnemyType {
     pub(crate) fn gravity(self) -> f32 {
         match self {
             EnemyType::SpikeyFall => SPIKEY_FALL_GRAVITY,
+            EnemyType::HammerBro => HAMMERBRO_GRAVITY,
+            EnemyType::Hammer => HAMMER_GRAVITY,
             _ => GRAVITY,
         }
     }
@@ -171,7 +192,10 @@ impl EnemyType {
     pub(crate) fn indestructible(self) -> bool {
         matches!(
             self,
-            EnemyType::Firebar | EnemyType::UpFire | EnemyType::BulletBillCannon
+            EnemyType::Firebar
+                | EnemyType::UpFire
+                | EnemyType::BulletBillCannon
+                | EnemyType::Hammer
         )
     }
 
@@ -193,6 +217,7 @@ impl EnemyType {
     pub(crate) fn fire_points(self) -> u32 {
         match self {
             EnemyType::Goomba | EnemyType::Spikey | EnemyType::SpikeyFall => 100,
+            EnemyType::HammerBro => 1000,
             _ => 200,
         }
     }
@@ -205,7 +230,7 @@ impl EnemyType {
     /// *overlapping* a mouth. Without the exemption a bill travelling at 8 blocks/s
     /// past a floor portal gets yanked sideways by a mouth it was never aimed at.
     pub(crate) fn exempt_from_containment(self) -> bool {
-        self == EnemyType::BulletBill
+        matches!(self, EnemyType::BulletBill | EnemyType::Hammer)
     }
 }
 
@@ -282,6 +307,20 @@ pub(crate) struct Enemy {
     pub(crate) segment: u32,
     /// Seconds until this cannon's next shot. Unused by everything else.
     pub(crate) fire_delay: f32,
+    /// Hammer bro: seconds since his last hop between floors.
+    pub(crate) jump_timer: f32,
+    /// Hammer bro: is he mid-hop, and therefore passing through floors?
+    ///
+    /// This is `mask[2]`, switched on for the duration of a hop (`hammerbro.lua:110`,
+    /// `:114`) — and since Mari0's mask *excludes*, switching it on means he stops
+    /// colliding with tiles. That is the whole trick behind him climbing between the
+    /// floors of a castle: he doesn't jump *onto* the next floor, he jumps *through*
+    /// the ceiling and then turns collision back on so he lands on top of it.
+    pub(crate) ignore_tiles: bool,
+    /// Hammer bro: for a *downward* hop, the height it began at. A downward hop keeps
+    /// falling through floors until it is [`HAMMERBRO_DROP_THROUGH`] below this.
+    /// `None` during an upward hop, which instead ends the moment he starts falling.
+    pub(crate) drop_from_y: Option<f32>,
     /// Has this been through a portal?
     ///
     /// Only a bullet bill cares, and what it earns is the right to kill: a bill that
@@ -342,9 +381,9 @@ impl Enemy {
             x,
             y,
             vx: if sp.facing_right {
-                ENEMY_SPEED
+                sp.enemy_type.walk_speed()
             } else {
-                -ENEMY_SPEED
+                -sp.enemy_type.walk_speed()
             },
             vy: 0.0,
             enemy_type: sp.enemy_type,
@@ -355,7 +394,14 @@ impl Enemy {
             death_timer: 0.0,
             flipped_death: false,
             spawn_y: y,
-            cycle_timer: 0.0,
+            // A hammer bro's throw countdown. The original picks between 0.6 and 1.6 at
+            // birth; a fixed first gap keeps `from_spawn` free of the RNG, and every
+            // gap after this one is drawn properly.
+            cycle_timer: if sp.enemy_type == EnemyType::HammerBro {
+                HAMMERBRO_TIME[0]
+            } else {
+                0.0
+            },
             spawn_x: x,
             // Each firebar segment starts at the same angle; its distance
             // from the pivot is what differs.
@@ -367,6 +413,9 @@ impl Enemy {
             // and it means `from_spawn` needs no access to the RNG.
             fire_delay: BULLET_BILL_FIRST_SHOT,
             portaled: false,
+            jump_timer: 0.0,
+            ignore_tiles: false,
+            drop_from_y: None,
         }
     }
 
@@ -416,6 +465,39 @@ impl Enemy {
             segment: 0,
             fire_delay: 0.0,
             portaled: false,
+            jump_timer: 0.0,
+            ignore_tiles: false,
+            drop_from_y: None,
+        }
+    }
+
+    /// A hammer, just released. Thrown up and forward, then it arcs down through
+    /// everything — no terrain, no lifetime, gone when it leaves the screen.
+    pub(crate) fn hammer(x: f32, y: f32, dir: f32) -> Self {
+        Enemy {
+            x,
+            // Released a block above the bro's own box (`hammerbro.lua:274`), which is
+            // what puts the arc's peak over your head rather than at his waist.
+            y: y - TILE_SIZE,
+            vx: dir * HAMMER_SPEED,
+            vy: -HAMMER_TOSS_SPEED,
+            enemy_type: EnemyType::Hammer,
+            state: EnemyState::Walking,
+            facing_right: dir > 0.0,
+            on_ground: false,
+            anim_timer: 0.0,
+            death_timer: 0.0,
+            flipped_death: false,
+            spawn_y: y - TILE_SIZE,
+            cycle_timer: 0.0,
+            spawn_x: x,
+            angle_deg: 0.0,
+            segment: 0,
+            fire_delay: 0.0,
+            portaled: false,
+            jump_timer: 0.0,
+            ignore_tiles: true,
+            drop_from_y: None,
         }
     }
 
@@ -441,6 +523,9 @@ impl Enemy {
             segment: 0,
             fire_delay: 0.0,
             portaled: false,
+            jump_timer: 0.0,
+            ignore_tiles: false,
+            drop_from_y: None,
         }
     }
 }
@@ -654,6 +739,14 @@ impl Mari0Game {
                         // check that eventually removes it lives in the cull below.
                         enemy.x += enemy.vx * dt;
                     }
+                    EnemyType::Hammer => {
+                        // A ballistic arc that ignores terrain (`mask[2]`), so it can
+                        // be thrown across a gap or down through the floor you are
+                        // standing on. The off-screen cull is what disposes of it.
+                        enemy.vy += HAMMER_GRAVITY * dt;
+                        enemy.x += enemy.vx * dt;
+                        enemy.y += enemy.vy * dt;
+                    }
                     EnemyType::BulletBillCannon => {
                         // The timer runs whether or not the cannon is on screen; only
                         // *firing* is gated on being visible (`bulletbill.lua:12-19`).
@@ -749,6 +842,68 @@ impl Mari0Game {
                 EnemyState::Walking | EnemyState::ShellMoving => {
                     enemy.anim_timer += dt;
 
+                    if enemy.enemy_type == EnemyType::HammerBro {
+                        // Faces whichever way the player is, every frame, independent
+                        // of which way he happens to be shuffling — so he throws
+                        // towards you even while stepping away (`hammerbro.lua:144`).
+                        enemy.facing_right = self.player.x > enemy.x;
+
+                        // The patrol is one block wide, between `startx - 1` and
+                        // `startx`. Not a walk: a shuffle in place.
+                        if enemy.vx < 0.0 && enemy.x < enemy.spawn_x - HAMMERBRO_PATROL {
+                            enemy.vx = HAMMERBRO_SPEED;
+                        } else if enemy.vx > 0.0 && enemy.x > enemy.spawn_x {
+                            enemy.vx = -HAMMERBRO_SPEED;
+                        }
+
+                        enemy.cycle_timer -= dt;
+                        if enemy.cycle_timer <= 0.0 {
+                            let dir = if enemy.facing_right { 1.0 } else { -1.0 };
+                            thrown.push(Enemy::hammer(enemy.x, enemy.y, dir));
+                            enemy.cycle_timer = HAMMERBRO_TIME[rng.range(0, 1) as usize];
+                        }
+
+                        enemy.jump_timer += dt;
+                        if enemy.jump_timer > HAMMERBRO_JUMP_TIME {
+                            enemy.jump_timer -= HAMMERBRO_JUMP_TIME;
+                            // Hemmed in at the top and the bottom, random in between.
+                            // The comparison is against raw y, so "low" means far down
+                            // the screen (`hammerbro.lua:96-106`).
+                            let up = if enemy.y > HAMMERBRO_LOW_ROW {
+                                true
+                            } else if enemy.y < HAMMERBRO_HIGH_ROW {
+                                false
+                            } else {
+                                rng.range(0, 1) == 0
+                            };
+                            // Both directions start with an upward kick and both switch
+                            // tile collision *off*: he leaves by going through the
+                            // ceiling or the floor, not by clearing it.
+                            enemy.ignore_tiles = true;
+                            if up {
+                                enemy.vy = -HAMMERBRO_JUMP_FORCE;
+                                enemy.drop_from_y = None;
+                            } else {
+                                enemy.vy = -HAMMERBRO_JUMP_FORCE_DOWN;
+                                enemy.drop_from_y = Some(enemy.y);
+                            }
+                        }
+                        if enemy.ignore_tiles {
+                            let landed = match enemy.drop_from_y {
+                                // Upward: the moment he stops rising, collision comes
+                                // back and he settles onto the floor he just crossed.
+                                None => enemy.vy > 0.0,
+                                // Downward: keep falling through until two blocks below
+                                // the start, which selects the next floor down.
+                                Some(from) => enemy.y > from + HAMMERBRO_DROP_THROUGH,
+                            };
+                            if landed {
+                                enemy.ignore_tiles = false;
+                                enemy.drop_from_y = None;
+                            }
+                        }
+                    }
+
                     // Gravity. Per-kind because a thrown spiny egg is the one thing
                     // in the game that falls slower than everything else.
                     enemy.vy += enemy.enemy_type.gravity() * dt;
@@ -765,7 +920,9 @@ impl Mari0Game {
                     let bottom_row = ((enemy.y + eh - 0.01) / TILE_SIZE).floor() as i32;
                     for row in top_row..=bottom_row {
                         for col in left_col..=right_col {
-                            if blocks_movement(&self.level, col, row) {
+                            // A hammer bro mid-hop has switched his tile collision off
+                            // (`mask[2]`), which is how he crosses a floor at all.
+                            if !enemy.ignore_tiles && blocks_movement(&self.level, col, row) {
                                 let (tx, _ty, tw, th) = tile_rect(col, row);
                                 if aabb_overlap([enemy.x, enemy.y, ew, eh], [tx, _ty, tw, th]) {
                                     if enemy.vx > 0.0 {
@@ -812,7 +969,7 @@ impl Mari0Game {
                     let bottom_row = ((enemy.y + eh - 0.01) / TILE_SIZE).floor() as i32;
                     for row in top_row..=bottom_row {
                         for col in left_col..=right_col {
-                            if blocks_movement(&self.level, col, row) {
+                            if !enemy.ignore_tiles && blocks_movement(&self.level, col, row) {
                                 let (tx, ty, tw, th) = tile_rect(col, row);
                                 if aabb_overlap([enemy.x, enemy.y, ew, eh], [tx, ty, tw, th]) {
                                     if enemy.vy > 0.0 {
@@ -842,7 +999,13 @@ impl Mari0Game {
                     }
 
                     // Ledge detection (only for walking enemies on ground, not shells)
-                    if enemy.state == EnemyState::Walking && enemy.on_ground {
+                    // Not for a hammer bro: his one-block patrol decides where he
+                    // goes, and this would fight it every time he shuffles to the
+                    // edge of the ledge he is standing on.
+                    if enemy.state == EnemyState::Walking
+                        && enemy.on_ground
+                        && enemy.enemy_type != EnemyType::HammerBro
+                    {
                         let foot_col = if enemy.vx > 0.0 {
                             ((enemy.x + ew) / TILE_SIZE).floor() as i32
                         } else {
@@ -1622,6 +1785,54 @@ mod tests {
         }
         assert_eq!(cannons, ["5-1", "5-2", "7-1", "8-2", "8-3"]);
         assert_eq!(zones, [("5-3", true), ("6-3", false)]);
+    }
+
+    /// A hammer bro shuffles, floats and throws — three constants apart from everyone.
+    #[test]
+    fn a_hammer_bro_is_slower_and_lighter_than_everything_else() {
+        assert_eq!(EnemyType::HammerBro.walk_speed(), HAMMERBRO_SPEED);
+        const { assert!(HAMMERBRO_SPEED < ENEMY_SPEED) };
+        assert_eq!(EnemyType::HammerBro.gravity(), HAMMERBRO_GRAVITY);
+        const { assert!(HAMMERBRO_GRAVITY < GRAVITY) };
+        // The most valuable thing in Super Mario Bros short of Bowser himself.
+        assert_eq!(EnemyType::HammerBro.fire_points(), 1000);
+        assert!(EnemyType::HammerBro.stompable());
+    }
+
+    /// A hammer can't be stopped by anything: not a stomp, not a fireball, not a wall.
+    #[test]
+    fn a_hammer_is_a_hazard_rather_than_a_creature() {
+        assert!(!EnemyType::Hammer.stompable());
+        assert!(EnemyType::Hammer.indestructible());
+        assert!(EnemyType::Hammer.is_scripted(), "it flies its own arc");
+        assert!(EnemyType::Hammer.exempt_from_containment());
+        let h = Enemy::hammer(100.0, 200.0, 1.0);
+        assert!(h.vy < 0.0, "thrown up and forward");
+        assert_eq!(h.vx, HAMMER_SPEED);
+        assert_eq!(
+            h.y,
+            200.0 - TILE_SIZE,
+            "released a block above the bro, which is what puts the arc over your head"
+        );
+        assert!(
+            h.ignore_tiles,
+            "a hammer never collides with terrain, so it starts and stays exempt"
+        );
+    }
+
+    /// Both kinds of hop start by going *up*, and both switch tile collision off.
+    ///
+    /// The downward hop is the counter-intuitive one: `speedy = -6` is still a jump.
+    /// He leaves the floor he is on by rising off it, then falls through it because
+    /// collision is off, and lands two blocks lower.
+    #[test]
+    fn a_downward_hop_still_starts_upward() {
+        // Both are positive kicks; the down-hop is just the gentler of the two.
+        const { assert!(HAMMERBRO_JUMP_FORCE_DOWN > 0.0) };
+        const { assert!(HAMMERBRO_JUMP_FORCE_DOWN < HAMMERBRO_JUMP_FORCE) };
+        // And the drop-through distance is what picks the next floor rather than the
+        // one after it.
+        assert_eq!(HAMMERBRO_DROP_THROUGH, 2.0 * TILE_SIZE);
     }
 
     /// No level places a spiny, and every level with a lakitu says where he stops.

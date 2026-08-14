@@ -31,6 +31,8 @@ assets:
     plant: "assets/mari0/plant.png"
     lakito: "assets/mari0/lakito.png"
     bullet_bill: "assets/mari0/bulletbill.png"
+    hammer_bro: "assets/mari0/hammerbros.png"
+    hammer: "assets/mari0/hammer.png"
     spikey: "assets/mari0/spikey.png"
     cheep_red: "assets/mari0/cheepcheep.png"
     cheep_white: "assets/mari0/cheepcheep.png"
