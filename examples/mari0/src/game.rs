@@ -141,6 +141,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_door_piece: TextureId,
     pub(crate) tex_door_centre: TextureId,
     pub(crate) tex_wall_indicator: TextureId,
+    pub(crate) tex_wall_timer: TextureId,
 
     pub(crate) vw: f32,
     /// Virtual screen height. Needed alongside `vw` so the pipe scissor can span
@@ -791,6 +792,7 @@ impl Game for Mari0Game {
             tex_door_piece: t("door_piece"),
             tex_door_centre: t("door_centre"),
             tex_wall_indicator: t("wall_indicator"),
+            tex_wall_timer: t("wall_timer"),
             vw,
             vh,
         }

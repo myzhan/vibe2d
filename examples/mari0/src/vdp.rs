@@ -165,8 +165,12 @@ pub(crate) struct LabElementView {
     /// Index of the element driving this one, or `null` if unwired.
     pub(crate) driver: Option<usize>,
     pub(crate) on: bool,
-    /// Door open fraction, 0..1.
+    /// Door open fraction, 0..1 — or, for the elements that count instead, their
+    /// countdown: a wall button's cooldown, a ground light's pulse, a timer's elapsed
+    /// time.
     pub(crate) timer: f32,
+    /// Timer only: how long it runs for, in seconds.
+    pub(crate) duration: f32,
     /// True when the element is only in the graph so links resolve — its behaviour
     /// isn't implemented yet.
     pub(crate) inert: bool,
@@ -466,6 +470,7 @@ impl Mari0Game {
                     driver: e.driver,
                     on: e.on,
                     timer: e.timer,
+                    duration: e.duration,
                     inert: e.kind.is_inert(),
                     beam: e
                         .beam

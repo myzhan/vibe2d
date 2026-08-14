@@ -268,7 +268,45 @@ async def run(ws):
     check("光束被身体截断，止于他之前", len(beam[0]["cells"]) == 1, str(beam[0]["cells"]))
     check("截断之后不再有终止格可探测", beam[0]["end"] is None, str(beam[0]["end"]))
 
-    section("13. 把镜头横扫过全部九关：clip 出屏不能把画面搞崩")
+    section("13. 计时器：松开按钮后门还会开着，是它在数秒")
+    # 3-1 的形状：按钮 → 计时器(walltimer) → 门。计时器是唯一既是 input 又是 output 的元件：
+    # 收到 on 就停表保持，收到 off 才开始数，数完才向下游发 off（`walltimer.lua:65-77`）。
+    s = await load_lab(ws, 3, 1)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    await rpc(ws, "game.setScore", {"lives": 9})
+    lab = s["lab"]
+    # 选 1 秒那个（3-1 另有一个 4 秒的，但它的按钮正好泡在一条常亮激光里 ——
+    # 那关的解法显然是把方块推上去，而方块还没做）。
+    ti = next(i for i, e in enumerate(lab) if e["kind"] == "timer" and e["duration"] == 1.0)
+    btn = lab[ti]["driver"]
+    doors = [i for i, e in enumerate(lab) if e["driver"] == ti and e["kind"] == "door"]
+    check("计时器不再是 inert", not lab[ti]["inert"])
+    check("它由一个按钮驱动、并驱动着门", lab[btn]["kind"] == "button" and len(doors) == 1,
+          f"driver={lab[btn]['kind']} doors={doors}")
+    check("装载时是停表状态（否则首帧就会发一次 off）", lab[ti]["timer"] == lab[ti]["duration"])
+
+    col, row = lab[btn]["cell"]
+    await rpc(ws, "game.setPlayerPos", {"x": (col + 0.5) * T, "y": (row - 1) * T})
+    await step(ws, 40)
+    s = await snap(ws)
+    check("站上按钮：门开满，计时器停在满值", s["lab"][doors[0]]["timer"] == 1.0 and s["lab"][ti]["timer"] == 1.0,
+          f"door={s['lab'][doors[0]]['timer']:.2f} timer={s['lab'][ti]['timer']:.2f}")
+
+    await rpc(ws, "game.setPlayerPos", {"x": (col - 4) * T, "y": (row - 1) * T})
+    await step(ws, 30)
+    s = await snap(ws)
+    check("离开按钮 0.5 秒后门仍然是开的", s["lab"][doors[0]]["timer"] == 1.0,
+          f"timer 走到 {s['lab'][ti]['timer']:.2f}")
+    check("计时器正在数", 0.0 < s["lab"][ti]["timer"] < 1.0, f"{s['lab'][ti]['timer']:.2f}")
+    await step(ws, 40)
+    s = await snap(ws)
+    check("数满之后它向下游发 off，门开始关", not s["lab"][doors[0]]["on"],
+          f"timer={s['lab'][ti]['timer']:.2f} door_on={s['lab'][doors[0]]['on']}")
+    await step(ws, 40)
+    s = await snap(ws)
+    check("门最终完全关上", s["lab"][doors[0]]["timer"] == 0.0, f"{s['lab'][doors[0]]['timer']:.2f}")
+
+    section("14. 把镜头横扫过全部九关：clip 出屏不能把画面搞崩")
     # 门是用 scissor 裁到自己那两格的，门滚出屏幕右侧时裁剪框会伸到画面外 ——
     # wgpu 要求 x+w <= 宽度，越界会直接 panic 整帧。这一条扫描就是那次崩溃的复现。
     swept = 0

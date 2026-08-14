@@ -87,13 +87,15 @@ pub(crate) enum LabKind {
     /// Fires while a laser is landing on it.
     LaserDetector,
 
+    /// A delay relay (`walltimer`): the only element that is both an input and an
+    /// output. Passes `on` straight through, and sends `off` once its time is up.
+    Timer,
+
     // ── Recognised, but with no behaviour yet ────────────────────────
     // These exist in the graph so links resolve and the network is complete. Their
-    // *behaviour* is not implemented, and a timer never elapses. That is deliberately
-    // inert rather than half-guessed — but it does mean a door wired to a timer
-    // currently stays shut.
-    /// Periodic pulse (`walltimer`). Waiting on its cycle rules.
-    Timer,
+    // *behaviour* is not implemented. That is deliberately inert rather than
+    // half-guessed — but it does mean a level whose only exit needs a cube is still
+    // unfinishable.
     /// Cube dispenser tube. An *input*: it carries the link.
     BoxTube,
     /// A placed cube. An *output* — the original lists `box` among the six
@@ -123,7 +125,7 @@ impl LabKind {
     /// resolve? Reported through the VDP so a test can tell the two apart.
     #[cfg(feature = "vdp")]
     pub(crate) fn is_inert(self) -> bool {
-        matches!(self, LabKind::Timer | LabKind::BoxTube | LabKind::Box)
+        matches!(self, LabKind::BoxTube | LabKind::Box)
     }
 
     /// Does this element project a beam — a laser or a light bridge?
@@ -193,6 +195,9 @@ pub(crate) struct LabElement {
     pub(crate) lit: Vec<usize>,
     /// Emitters only: where the beam currently runs. Recomputed every frame.
     pub(crate) beam: Vec<BeamSegment>,
+    /// Timer only: how long it runs for, in seconds. The entity's third field, one of
+    /// `{1, 2, 4, 8}` (`entity.lua:209-231`).
+    pub(crate) duration: f32,
 }
 
 /// One straight run of a beam, in cells.
@@ -405,6 +410,9 @@ impl Lab {
                 | EntityKind::LightBridgeDown => Some(Orientation::Down),
                 _ => None,
             };
+            // A timer with no argument would never elapse, so it falls back to the
+            // shortest of the four settings rather than to zero.
+            let duration = p.arg.filter(|a| *a > 0).unwrap_or(1) as f32;
             elements.push(LabElement {
                 kind,
                 entity: p.kind,
@@ -419,11 +427,19 @@ impl Lab {
                 // a *successful* match (`laser.lua:18-27`, `lightbridge.lua:15-27`).
                 // Nothing in the shipped levels links either, so they all start on.
                 on: kind.is_emitter(),
-                timer: 0.0,
+                // A timer starts *elapsed* (`self.timer = self.time`,
+                // `walltimer.lua:11`), which is its idle state — starting at zero would
+                // make every timer in the level fire an `off` on the first frame.
+                timer: if kind == LabKind::Timer {
+                    duration
+                } else {
+                    0.0
+                },
                 allow_clear: true,
                 pushed: false,
                 lit: Vec::new(),
                 beam: Vec::new(),
+                duration,
             });
         }
 
@@ -491,10 +507,20 @@ impl Lab {
             seen[index] = true;
             for &consumer in &self.consumers[index].clone() {
                 apply_signal(&mut self.elements[consumer], signal);
-                // Indicators and doors are leaves in the shipped data; nothing
-                // downstream of them exists to forward to. Kept as a queue anyway so
-                // adding NOT gates later needs no restructuring.
-                queue.push((consumer, signal));
+                // What an element passes on is not always what it received: a timer
+                // relays `on` for both `on` and `toggle`, and swallows `off` — the
+                // matching `off` comes later, from its own countdown
+                // (`walltimer.lua:65-77`). Everything else forwards verbatim, which for
+                // the indicators and doors that make up the rest of the shipped data
+                // means forwarding to nobody.
+                let forward = match (self.elements[consumer].kind, signal) {
+                    (LabKind::Timer, Signal::On | Signal::Toggle) => Some(Signal::On),
+                    (LabKind::Timer, Signal::Off) => None,
+                    _ => Some(signal),
+                };
+                if let Some(forward) = forward {
+                    queue.push((consumer, forward));
+                }
             }
         }
     }
@@ -677,6 +703,23 @@ impl Lab {
     /// closing, which is when collision needs rebuilding.
     pub(crate) fn tick(&mut self, dt: f32) -> bool {
         let mut changed = false;
+        // Timers count *up* to their duration and send `off` downstream on arrival.
+        // Collected first because emitting needs the whole graph.
+        let mut expired = Vec::new();
+        for (i, e) in self.elements.iter_mut().enumerate() {
+            if e.kind != LabKind::Timer || e.timer >= e.duration {
+                continue;
+            }
+            e.timer = (e.timer + dt).min(e.duration);
+            if e.timer >= e.duration {
+                e.on = false;
+                expired.push(i);
+            }
+        }
+        for index in expired {
+            self.emit(index, Signal::Off);
+        }
+
         for e in &mut self.elements {
             if e.kind == LabKind::PushButton {
                 e.timer = (e.timer - dt).max(0.0);
@@ -948,6 +991,33 @@ pub(crate) enum Signal {
 /// sends `toggle`, and the ones in 1-4 and 2-3 are wired to ground lights. So pressing
 /// a wall button flashes its lights for a second rather than switching them.
 fn apply_signal(element: &mut LabElement, signal: Signal) {
+    // A timer's `timer` is a stopwatch, not a state, and each signal means something
+    // different to it (`walltimer.lua:65-77`):
+    //
+    // - `on`     — hold. It parks at its full time, so an upstream button held down
+    //              keeps the door open indefinitely.
+    // - `off`    — start counting. The output stays asserted until the count runs out;
+    //              *that* is what eventually sends `off` on. This is the whole point of
+    //              the element: a door that shuts a few seconds after you step off.
+    // - `toggle` — assert and start counting, for a wall button that is pressed once.
+    //
+    // `on` here means "output asserted", which is not quite the original's `lighted`:
+    // that flag only picks which frame of the timer's own art to draw, and is false
+    // while counting even though the output is still on.
+    if element.kind == LabKind::Timer {
+        match signal {
+            Signal::On => {
+                element.on = true;
+                element.timer = element.duration;
+            }
+            Signal::Off => element.timer = 0.0,
+            Signal::Toggle => {
+                element.on = true;
+                element.timer = 0.0;
+            }
+        }
+        return;
+    }
     match signal {
         Signal::On => element.on = true,
         Signal::Off => element.on = false,
@@ -1024,6 +1094,23 @@ mod tests {
             y,
             kind,
             arg: None,
+            link,
+        }
+    }
+
+    /// The same, with the entity's third field — a timer's duration.
+    fn place_arg(
+        kind: EntityKind,
+        x: usize,
+        y: usize,
+        arg: u16,
+        link: Option<(u16, u16)>,
+    ) -> LabPlacement {
+        LabPlacement {
+            x,
+            y,
+            kind,
+            arg: Some(arg),
             link,
         }
     }
@@ -1432,6 +1519,69 @@ mod tests {
         lab.elements[0].on = false;
         lab.step_beams(&level, None);
         assert!(lab.bridge_rects().is_empty());
+    }
+
+    /// The timer is the shape portal 3-1 is built out of: a button, a timer, a door.
+    /// Stepping off the button does **not** shut the door — the countdown does, seconds
+    /// later. That delay is the whole element.
+    #[test]
+    fn a_timer_keeps_its_door_open_after_the_button_is_released() {
+        let mut lab = Lab::build(&[
+            place(EntityKind::Button, 5, 9, None),
+            // Timer with a 2-second setting, wired to the button at file (6, 10).
+            place_arg(EntityKind::Timer, 8, 9, 2, Some((6, 10))),
+            // Door wired to the timer at file (9, 10).
+            place(EntityKind::DoorVer, 12, 9, Some((9, 10))),
+        ]);
+        let (timer, door) = (1, 2);
+        assert_eq!(lab.elements[timer].duration, 2.0, "arg is the duration");
+        assert_eq!(
+            lab.elements[timer].timer, 2.0,
+            "a timer starts elapsed, not running"
+        );
+
+        lab.set_output(0, true);
+        assert!(lab.elements[door].on, "pressing the button opens the door");
+        for _ in 0..180 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert!(
+            lab.elements[door].on,
+            "while the button is held the timer parks and the door stays open"
+        );
+
+        lab.set_output(0, false);
+        assert!(
+            lab.elements[door].on,
+            "releasing it starts the count — the door does not shut yet"
+        );
+        for _ in 0..60 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert!(lab.elements[door].on, "one second in, still open");
+        for _ in 0..70 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert!(!lab.elements[door].on, "two seconds in, the timer shuts it");
+        assert!(!lab.elements[timer].on, "and the timer stops asserting");
+    }
+
+    /// A wall button reaches a timer through `toggle`, which asserts *and* starts the
+    /// count in one go — press once, the door opens for exactly the timer's setting.
+    #[test]
+    fn toggle_starts_a_timer_running_immediately() {
+        let mut lab = Lab::build(&[
+            place(EntityKind::PushButtonLeft, 5, 9, None),
+            place_arg(EntityKind::Timer, 8, 9, 1, Some((6, 10))),
+            place(EntityKind::DoorVer, 12, 9, Some((9, 10))),
+        ]);
+        assert!(lab.push(0));
+        assert!(lab.elements[2].on, "the door opens at once");
+        assert_eq!(lab.elements[1].timer, 0.0, "and the count has started");
+        for _ in 0..70 {
+            lab.tick(1.0 / 60.0);
+        }
+        assert!(!lab.elements[2].on, "a second later it shuts again");
     }
 
     /// `toggle` means two different things depending on who receives it: a one-second

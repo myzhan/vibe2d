@@ -161,6 +161,23 @@ impl Mari0Game {
                         );
                     });
                 }
+                LabKind::Timer => {
+                    // 160×16: ten 16×16 frames. Frame 0 is idle, 1 is held, and 2..9
+                    // count down in tenths — `quad = 1 + floor(elapsed/time * 10)`,
+                    // which never reaches the tenth frame from a standing start
+                    // (`walltimer.lua:38-46`).
+                    let frame = if element.timer >= element.duration {
+                        if element.on { 1.0 } else { 0.0 }
+                    } else {
+                        let tenths = (element.timer / element.duration * 10.0).floor();
+                        tenths.clamp(1.0, 9.0)
+                    };
+                    screen.draw_sprite_region(
+                        self.tex_wall_timer,
+                        [frame / 10.0, 0.0, 1.0 / 10.0, 1.0],
+                        cell,
+                    );
+                }
                 LabKind::Door => self.draw_door(screen, element, cam_x),
                 _ => {}
             }

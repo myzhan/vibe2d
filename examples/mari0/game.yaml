@@ -57,6 +57,7 @@ assets:
     door_piece: "assets/mari0/doorpiece.png"
     door_centre: "assets/mari0/doorcenter.png"
     wall_indicator: "assets/mari0/wallindicator.png"
+    wall_timer: "assets/mari0/walltimer.png"
   fonts:
     ui: "assets/fonts/game.ttf:16"
     title: "assets/fonts/game.ttf:24"
