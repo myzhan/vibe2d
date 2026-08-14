@@ -14,6 +14,7 @@ mod cube;
 mod effects;
 mod emancipation;
 mod enemies;
+mod flagpole;
 mod game;
 mod gel;
 mod items;

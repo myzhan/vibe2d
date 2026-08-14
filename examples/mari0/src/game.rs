@@ -80,6 +80,10 @@ pub(crate) struct Mari0Game {
     pub(crate) lab: Lab,
     /// Weighted cubes. Bodies, not lab elements — see `cube.rs`.
     pub(crate) cubes: Vec<crate::cube::Cube>,
+    /// Fireworks earned by the last flagpole — 500 points each, and the count is a
+    /// function of the clock's last digit. Kept so the end-of-level screen (and a test)
+    /// can see how many went up.
+    pub(crate) fireworks: u32,
     /// Emancipation grills, resolved to spans at load.
     pub(crate) grills: Vec<crate::emancipation::Grill>,
     /// The player's centre last frame, for the grills' swept crossing test.
@@ -650,10 +654,16 @@ impl Mari0Game {
         }
 
         // ── Flag/level complete ──
+        // Still triggered by reaching the pole's column rather than by the original's
+        // grab-and-slide animation, but the *payout* is now the real one: height on the
+        // pole, then the clock, then the fireworks.
         if self.level.flag_x > 0.0 && self.player.x + self.player.width > self.level.flag_x {
             self.state = GameState::LevelComplete;
-            let time_bonus = (self.time_remaining as u32) * 50;
-            self.score += time_bonus;
+            self.score += crate::flagpole::flagpole_score(self.player.y / TILE_SIZE);
+            self.score += (self.time_remaining as u32) * 50;
+            self.fireworks =
+                crate::flagpole::firework_count(self.time_remaining, self.current.pack == "portal");
+            self.score += self.fireworks * crate::flagpole::FIREWORK_SCORE;
             ctx.audio.play("levelend");
         }
 
@@ -811,6 +821,7 @@ impl Game for Mari0Game {
             maze: MazeState::default(),
             lab: Lab::default(),
             cubes: Vec::new(),
+            fireworks: 0,
             grills: Vec::new(),
             previous_player_centre: (0.0, 0.0),
             gel_blobs: Vec::new(),

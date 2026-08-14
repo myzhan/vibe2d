@@ -70,6 +70,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
+    /// Fireworks the last flagpole earned.
+    pub(crate) fireworks: u32,
 }
 
 #[cfg(feature = "vdp")]
@@ -624,6 +626,7 @@ impl Mari0Game {
                 })
                 .collect(),
             star_timer: self.star_timer,
+            fireworks: self.fireworks,
         };
         serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)
     }
