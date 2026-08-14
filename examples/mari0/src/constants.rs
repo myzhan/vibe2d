@@ -9,6 +9,13 @@
 // ── Physics Constants (mari0-inspired, 1 block = 32px) ─────────────
 pub(crate) const TILE_SIZE: f32 = 32.0;
 pub(crate) const GRAVITY: f32 = 2560.0; // 80 blocks/s^2
+/// Friction applied to horizontal speed **above** the walk/run limit
+/// (`superfriction = 100`, `variables.lua:20`).
+///
+/// The limit is not a clamp: anything that throws you faster than you could accelerate
+/// — a faith plate, orange gel, a portal — keeps its speed and bleeds it off at this
+/// rate. Hard-clamping instead is what made a diagonal faith plate barely move you.
+pub(crate) const SUPER_FRICTION: f32 = 100.0 * TILE_SIZE;
 pub(crate) const GRAVITY_JUMPING: f32 = 960.0; // reduced while holding jump
 pub(crate) const JUMP_VELOCITY: f32 = -512.0; // initial upward (walking)
 pub(crate) const JUMP_VELOCITY_RUN: f32 = -608.0; // higher jump when sprinting (like original SMB)

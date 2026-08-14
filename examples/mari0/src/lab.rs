@@ -100,6 +100,16 @@ pub(crate) enum LabKind {
     /// output. Passes `on` straight through, and sends `off` once its time is up.
     Timer,
 
+    /// Faith plate: a launcher. Its `timer` is the kick animation, 0→1.
+    FaithPlate,
+    /// Emancipation grill, along a row. Resolved to a span at load — see
+    /// `emancipation::Grill`.
+    GrillHor,
+    /// The same, standing in a column.
+    GrillVer,
+    /// Gel dispenser: a nozzle that sprays blobs of one colour. Carries no wiring —
+    /// none of the shipped ones is linked, and it has no `input` at all.
+    GelDispenser,
     /// Cube dispenser tube. An *input*: it carries the link, pointing at the cube it
     /// is responsible for.
     BoxTube,
@@ -166,6 +176,11 @@ impl LabKind {
                 LabKind::LaserDetector
             }
             Timer => LabKind::Timer,
+            FaithPlateUp | FaithPlateRight | FaithPlateLeft => LabKind::FaithPlate,
+            EmanceHor => LabKind::GrillHor,
+            EmanceVer => LabKind::GrillVer,
+            BlueGelDown | BlueGelRight | BlueGelLeft | OrangeGelDown | OrangeGelRight
+            | OrangeGelLeft | WhiteGelDown | WhiteGelRight | WhiteGelLeft => LabKind::GelDispenser,
             BoxTube => LabKind::BoxTube,
             Box => LabKind::Box,
             _ => return None,
@@ -414,6 +429,10 @@ impl Lab {
             let axis = match p.kind {
                 EntityKind::DoorHor => Some(Orientation::Right),
                 EntityKind::DoorVer => Some(Orientation::Up),
+                // A faith plate's facing is the direction it throws you.
+                EntityKind::FaithPlateUp => Some(Orientation::Up),
+                EntityKind::FaithPlateRight => Some(Orientation::Right),
+                EntityKind::FaithPlateLeft => Some(Orientation::Left),
                 // A wall button's facing decides which way its art is mirrored.
                 EntityKind::PushButtonLeft => Some(Orientation::Left),
                 EntityKind::PushButtonRight => Some(Orientation::Right),
@@ -712,6 +731,15 @@ impl Lab {
             })
             .collect();
         for element in &self.elements {
+            // A gel dispenser is the same 2×2 solid, minus the cycle: it is always
+            // closed and always spraying.
+            if element.kind == LabKind::GelDispenser {
+                rects.push(crate::world::SolidRect {
+                    rect: dispenser_rect(element.cell),
+                    cubes_pass: false,
+                });
+                continue;
+            }
             if element.kind != LabKind::BoxTube {
                 continue;
             }

@@ -80,6 +80,16 @@ pub(crate) struct Mari0Game {
     pub(crate) lab: Lab,
     /// Weighted cubes. Bodies, not lab elements — see `cube.rs`.
     pub(crate) cubes: Vec<crate::cube::Cube>,
+    /// Emancipation grills, resolved to spans at load.
+    pub(crate) grills: Vec<crate::emancipation::Grill>,
+    /// The player's centre last frame, for the grills' swept crossing test.
+    pub(crate) previous_player_centre: (f32, f32),
+    /// Gel in the air. What lands becomes paint in `level.gels`.
+    pub(crate) gel_blobs: Vec<crate::gel::GelBlob>,
+    /// Which of the three splat sprites the next blob gets, and how far across the
+    /// nozzle it starts. A cycle rather than the original's `math.random`, so a replay
+    /// is reproducible.
+    pub(crate) gel_frame: u32,
     /// Last frame's light-bridge slabs, so a slab that has just appeared can shove
     /// whatever is standing in it. Kept apart from `level.solid_rects`, which also holds
     /// the dispensers — those don't push.
@@ -150,6 +160,14 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_wall_timer: TextureId,
     pub(crate) tex_cube: TextureId,
     pub(crate) tex_cube_dispenser: TextureId,
+    pub(crate) tex_gel_dispenser: TextureId,
+    pub(crate) tex_faith_plate: TextureId,
+    pub(crate) tex_grill_side: TextureId,
+    pub(crate) tex_grill_particle: TextureId,
+    /// Blob art, indexed by [`crate::level::Gel`] order: blue, orange, white.
+    pub(crate) tex_gel: [TextureId; 3],
+    /// The same three colours as paint on a tile face.
+    pub(crate) tex_gel_ground: [TextureId; 3],
 
     pub(crate) vw: f32,
     /// Virtual screen height. Needed alongside `vw` so the pipe scissor can span
@@ -294,7 +312,11 @@ impl Mari0Game {
         // After the graph, because each cube needs the index of the `box` element it
         // stands for — that wire is how its dispenser hears about its death.
         self.spawn_level_cubes();
+        self.gel_blobs.clear();
         self.bridge_rects.clear();
+        // Grills need the tile grid, so they are resolved after the level is in place.
+        self.build_grills();
+        self.previous_player_centre = (self.player.center_x(), self.player.center_y());
         // `self.portals` was just cleared, so there are no holes either. Explicit
         // rather than relying on the freshly-loaded level starting empty.
         self.refresh_portal_holes();
@@ -385,12 +407,12 @@ impl Mari0Game {
         }
 
         // ── Horizontal movement (sprint = higher accel & max speed) ──
-        let accel = if sprint { RUN_ACCEL } else { WALK_ACCEL };
-        let max_speed = if sprint {
-            MAX_RUN_SPEED
-        } else {
-            MAX_WALK_SPEED
-        };
+        // The limits are looked up per frame rather than read from the constants,
+        // because orange gel replaces them for exactly as long as you are standing on
+        // it — see `gel::ground_speed_limits`.
+        let (max_walk, max_run, walk_accel, run_accel) = self.ground_speed_limits();
+        let accel = if sprint { run_accel } else { walk_accel };
+        let max_speed = if sprint { max_run } else { max_walk };
         if move_right {
             self.player.vx += accel * dt;
             self.player.facing_right = true;
@@ -407,7 +429,11 @@ impl Mari0Game {
                 }
             }
         }
-        self.player.vx = self.player.vx.clamp(-max_speed, max_speed);
+        // Above the limit, speed is bled off rather than clamped — see `SUPER_FRICTION`.
+        if self.player.vx.abs() > max_speed {
+            let slowed = (self.player.vx.abs() - SUPER_FRICTION * dt).max(max_speed);
+            self.player.vx = slowed * self.player.vx.signum();
+        }
 
         // ── Jump (higher when sprinting, like original SMB) ──
         if jump_just && self.player.on_ground {
@@ -452,6 +478,10 @@ impl Mari0Game {
         );
 
         // ── Move & collide ──
+        // Kept from before the resolver zeroes them: a blue-gel bounce is computed from
+        // the speed the player *arrived* with, not the zero they leave with.
+        let impact_vx = self.player.vx;
+        let impact_vy = self.player.vy;
         if !teleported {
             self.player.vx = move_and_collide_x(
                 &mut self.player.x,
@@ -476,6 +506,16 @@ impl Mari0Game {
             );
             self.player.vy = new_vy;
             self.player.on_ground = on_ground;
+
+            // Blue gel, floor then wall. Holding down cancels either — that is how you
+            // stop on the stuff.
+            let crouching = input.is_action_pressed("crouch");
+            if on_ground {
+                self.blue_floor_bounce(impact_vy, crouching, dt);
+            }
+            if self.player.vx == 0.0 && impact_vx != 0.0 {
+                self.blue_wall_bounce(impact_vx, crouching);
+            }
         } else {
             // A teleport ends the frame's ground contact: you left the surface.
             self.player.on_ground = false;
@@ -573,6 +613,11 @@ impl Mari0Game {
         // ── Enemies ──
         self.update_enemies(dt, ctx);
 
+        // ── Gel ──
+        // Before the cubes and the lab so paint laid this frame is what everything else
+        // reads.
+        self.update_gels(dt);
+
         // ── Cubes ──
         // After the enemies so a cube dropped on a goomba lands on where it actually
         // is, and before the lab so a cube resting on a plate is sensed this frame.
@@ -625,6 +670,7 @@ impl Mari0Game {
         self.check_maze_gate();
         self.update_maze();
         self.update_lab(ctx, dt, input.is_action_just_pressed("use"));
+        self.update_plates_and_grills(ctx, dt);
 
         // ── Timer and low-time music ──
         if self.tick_clock(ctx, dt) {
@@ -765,6 +811,10 @@ impl Game for Mari0Game {
             maze: MazeState::default(),
             lab: Lab::default(),
             cubes: Vec::new(),
+            grills: Vec::new(),
+            previous_player_centre: (0.0, 0.0),
+            gel_blobs: Vec::new(),
+            gel_frame: 0,
             bridge_rects: Vec::new(),
             checkpoint: None,
             checkpoints_passed: 0,
@@ -816,6 +866,16 @@ impl Game for Mari0Game {
             tex_wall_timer: t("wall_timer"),
             tex_cube: t("cube"),
             tex_cube_dispenser: t("cube_dispenser"),
+            tex_gel_dispenser: t("gel_dispenser"),
+            tex_faith_plate: t("faith_plate"),
+            tex_grill_side: t("grill_side"),
+            tex_grill_particle: t("grill_particle"),
+            tex_gel: [t("gel_blue"), t("gel_orange"), t("gel_white")],
+            tex_gel_ground: [
+                t("gel_blue_ground"),
+                t("gel_orange_ground"),
+                t("gel_white_ground"),
+            ],
             vw,
             vh,
         }

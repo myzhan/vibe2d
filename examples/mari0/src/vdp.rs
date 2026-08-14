@@ -61,6 +61,12 @@ pub(crate) struct Mari0Inspect {
     pub(crate) solid_rects: Vec<[f32; 4]>,
     /// Weighted cubes, with the wiring each one answers to.
     pub(crate) cubes: Vec<CubeView>,
+    /// Emancipation grills, resolved to the spans they cover.
+    pub(crate) grills: Vec<GrillView>,
+    /// Gel blobs still in the air.
+    pub(crate) gel_blobs: Vec<GelBlobView>,
+    /// Every cell with paint on it, and which faces. Sparse — most cells have none.
+    pub(crate) gels: Vec<GelPaintView>,
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
@@ -194,6 +200,36 @@ pub(crate) struct CubeView {
     pub(crate) slot: Option<usize>,
     /// The dispenser that will replace it if it is lost.
     pub(crate) dispenser: Option<usize>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct GrillView {
+    pub(crate) cell: [i32; 2],
+    pub(crate) horizontal: bool,
+    /// First and last cell of the span, along the grill's own axis.
+    pub(crate) start: i32,
+    pub(crate) end: i32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct GelBlobView {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) vx: f32,
+    pub(crate) vy: f32,
+    pub(crate) gel: crate::level::Gel,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct GelPaintView {
+    pub(crate) cell: [i32; 2],
+    pub(crate) top: Option<crate::level::Gel>,
+    pub(crate) bottom: Option<crate::level::Gel>,
+    pub(crate) left: Option<crate::level::Gel>,
+    pub(crate) right: Option<crate::level::Gel>,
 }
 
 #[cfg(feature = "vdp")]
@@ -501,6 +537,44 @@ impl Mari0Game {
                 })
                 .collect(),
             solid_rects: self.level.solid_rects.iter().map(|s| s.rect).collect(),
+            grills: self
+                .grills
+                .iter()
+                .map(|g| GrillView {
+                    cell: [g.cell.0, g.cell.1],
+                    horizontal: g.horizontal,
+                    start: g.start,
+                    end: g.end,
+                })
+                .collect(),
+            gel_blobs: self
+                .gel_blobs
+                .iter()
+                .map(|b| GelBlobView {
+                    x: b.x,
+                    y: b.y,
+                    vx: b.vx,
+                    vy: b.vy,
+                    gel: b.gel,
+                })
+                .collect(),
+            gels: (0..self.level.height as i32)
+                .flat_map(|row| (0..self.level.width as i32).map(move |col| (col, row)))
+                .filter_map(|cell| {
+                    let g = self.level.gels(cell);
+                    let bare = g.top.is_none()
+                        && g.bottom.is_none()
+                        && g.left.is_none()
+                        && g.right.is_none();
+                    (!bare).then_some(GelPaintView {
+                        cell: [cell.0, cell.1],
+                        top: g.top,
+                        bottom: g.bottom,
+                        left: g.left,
+                        right: g.right,
+                    })
+                })
+                .collect(),
             cubes: self
                 .cubes
                 .iter()

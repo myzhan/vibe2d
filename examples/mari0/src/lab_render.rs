@@ -47,6 +47,42 @@ fn facing_rotation(dir: Orientation) -> f32 {
     }
 }
 
+/// Texture-array index for a gel colour.
+fn gel_index(gel: crate::level::Gel) -> usize {
+    match gel {
+        crate::level::Gel::Blue => 0,
+        crate::level::Gel::Orange => 1,
+        crate::level::Gel::White => 2,
+    }
+}
+
+impl Mari0Game {
+    /// Paint on a tile's faces, drawn over the tile itself.
+    ///
+    /// One 16×16 sprite per coated face, rotated a quarter turn per side and centred on
+    /// the cell (`game.lua:993-1000`) — so the same art serves all four faces.
+    pub(crate) fn draw_gel_paint(&self, screen: &mut Screen, cell: (i32, i32), x: f32, y: f32) {
+        let gels = self.level.gels(cell);
+        for (face, rot) in [
+            (crate::level::GelFace::Top, 0.0),
+            (crate::level::GelFace::Right, std::f32::consts::FRAC_PI_2),
+            (crate::level::GelFace::Bottom, std::f32::consts::PI),
+            (crate::level::GelFace::Left, std::f32::consts::PI * 1.5),
+        ] {
+            let Some(gel) = gels.face(face) else { continue };
+            screen.rotated(rot, |screen| {
+                screen.draw_sprite(
+                    self.tex_gel_ground[gel_index(gel)],
+                    x,
+                    y,
+                    TILE_SIZE,
+                    TILE_SIZE,
+                );
+            });
+        }
+    }
+}
+
 /// A ground light's colour: orange when energised, blue when not
 /// (`groundlight.lua:36-39`).
 fn indicator_colour(lit: bool) -> Color {
@@ -178,6 +214,50 @@ impl Mari0Game {
                         cell,
                     );
                 }
+                LabKind::FaithPlate => {
+                    // Two blocks wide, and it kicks: the plate lifts half a block (or
+                    // tilts a quarter turn, for the diagonal ones) over the first tenth
+                    // of the animation, holds, then eases back (`faithplate.lua:60-96`).
+                    let [x, y, w, h] = crate::emancipation::plate_rect(element.cell);
+                    let t = element.timer;
+                    let kick = if t >= 1.0 {
+                        0.0
+                    } else if t < 0.1 {
+                        t / 0.1
+                    } else if t < 0.3 {
+                        1.0
+                    } else {
+                        1.0 - (t - 0.3) / 0.7
+                    };
+                    let dir = element.axis.unwrap_or(Orientation::Up);
+                    let lift = if dir == Orientation::Up {
+                        kick * 0.5 * TILE_SIZE
+                    } else {
+                        0.0
+                    };
+                    let tilt = if dir == Orientation::Up {
+                        0.0
+                    } else {
+                        kick * std::f32::consts::FRAC_PI_4
+                            * if dir == Orientation::Right { -1.0 } else { 1.0 }
+                    };
+                    screen.rotated(tilt, |screen| {
+                        screen.draw_sprite(self.tex_faith_plate, x - cam_x, y - lift, w, h / 2.0);
+                    });
+                }
+                LabKind::GelDispenser => {
+                    // The nozzle art is drawn rotated to point the way it sprays, about
+                    // the 2×2 footprint's centre.
+                    let [x, y, w, h] = crate::lab::dispenser_rect(element.cell);
+                    let rot = match element.entity.gel_dispenser().map(|(_, dir)| dir) {
+                        Some(Orientation::Right) => -std::f32::consts::FRAC_PI_2,
+                        Some(Orientation::Left) => std::f32::consts::FRAC_PI_2,
+                        _ => 0.0,
+                    };
+                    screen.rotated(rot, |screen| {
+                        screen.draw_sprite(self.tex_gel_dispenser, x - cam_x, y, w, h);
+                    });
+                }
                 LabKind::BoxTube => {
                     // Two blocks square, and it visibly opens: the tube's shutter is
                     // just the collision going away, so the art doesn't change — but
@@ -188,6 +268,80 @@ impl Mari0Game {
                 LabKind::Door => self.draw_door(screen, element, cam_x),
                 _ => {}
             }
+        }
+
+        // Emancipation grills: a thin line across the corridor with sparks running
+        // along it, and a bracket at each end.
+        for grill in &self.grills {
+            let (lo, hi) = grill.span();
+            let line = grill.line();
+            const THICKNESS: f32 = 4.0;
+            let curtain = if grill.horizontal {
+                [lo - cam_x, line - THICKNESS / 2.0, hi - lo, THICKNESS]
+            } else {
+                [line - THICKNESS / 2.0 - cam_x, lo, THICKNESS, hi - lo]
+            };
+            // `emancelinecolor` is very nearly transparent — the sparks are what you
+            // actually see.
+            let colour = Color {
+                r: srgb_to_linear(0.4),
+                g: srgb_to_linear(0.4),
+                b: 1.0,
+                a: 0.35,
+            };
+            screen.draw_sprite_tinted(
+                self.tex_grill_particle,
+                curtain[0],
+                curtain[1],
+                curtain[2],
+                curtain[3],
+                colour,
+            );
+            // Sparks: evenly spaced, sliding along on the shared animation clock.
+            let span = hi - lo;
+            let count = (span / TILE_SIZE).max(1.0) as i32;
+            let phase = (self.aim_dot_timer / 0.8).fract();
+            for i in 0..count {
+                let t = ((i as f32 + phase) / count as f32).fract();
+                let along = lo + span * t;
+                let (sx, sy) = if grill.horizontal {
+                    (along - cam_x, line - 8.0)
+                } else {
+                    (line - 8.0 - cam_x, along)
+                };
+                let (w, h) = if grill.horizontal {
+                    (2.0, 16.0)
+                } else {
+                    (16.0, 2.0)
+                };
+                screen.draw_sprite_tinted(self.tex_grill_particle, sx, sy, w, h, Color::WHITE);
+            }
+            for end in [lo, hi] {
+                let (sx, sy, w, h) = if grill.horizontal {
+                    (end - cam_x - 5.0, line - 8.0, 10.0, 16.0)
+                } else {
+                    (line - 8.0 - cam_x, end - 5.0, 16.0, 10.0)
+                };
+                screen.rotated(
+                    if grill.horizontal {
+                        0.0
+                    } else {
+                        std::f32::consts::FRAC_PI_2
+                    },
+                    |screen| screen.draw_sprite(self.tex_grill_side, sx, sy, w, h),
+                );
+            }
+        }
+
+        // Gel blobs in the air. Three splat frames, cycled per blob.
+        for blob in &self.gel_blobs {
+            let [x, y, w, h] = crate::gel::blob_rect(blob);
+            let frame = (blob.frame % 3) as f32;
+            screen.draw_sprite_region(
+                self.tex_gel[gel_index(blob.gel)],
+                [frame / 3.0, 0.0, 1.0 / 3.0, 1.0],
+                [x - cam_x, y, w, h],
+            );
         }
 
         // Cubes, over the fixtures they sit on.

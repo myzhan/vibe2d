@@ -91,6 +91,8 @@ impl Mari0Game {
                         }
                     }
                     self.draw_smb_tile(screen, tile_id, x, y);
+                    // Gel goes on over the tile it coats.
+                    self.draw_gel_paint(screen, (col, row), x, y);
                 }
             }
         }

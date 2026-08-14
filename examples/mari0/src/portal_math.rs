@@ -408,10 +408,22 @@ pub(crate) fn portal_position(
     };
     // A backing tile must be solid, accept portals, and not already be host to the
     // other portal.
+    //
+    // White gel overrides the tile's own `portalable` flag entirely — a face coated in
+    // it takes a portal no matter what the block is made of (`getTile`,
+    // `game.lua:3255`). That is the whole point of the white gel, and it is per *face*,
+    // so painting the top of a block doesn't make its sides shootable.
+    let face = match side {
+        Orientation::Up => crate::level::GelFace::Top,
+        Orientation::Down => crate::level::GelFace::Bottom,
+        Orientation::Left => crate::level::GelFace::Left,
+        Orientation::Right => crate::level::GelFace::Right,
+    };
     let backing = |cell: (i32, i32)| {
         let tile = level_tile(level, cell);
+        let white = level.gels(cell).face(face) == Some(crate::level::Gel::White);
         crate::level::tiles::is_solid(tile)
-            && crate::level::tiles::props(tile).portalable()
+            && (white || crate::level::tiles::props(tile).portalable())
             && !occupied(cell)
     };
     let clear = |cell: (i32, i32)| !crate::level::tiles::is_solid(level_tile(level, cell));
@@ -804,6 +816,44 @@ mod tests {
         let a = anchor(8, 9, Orientation::Left);
         let b = anchor(20, 5, Orientation::Up);
         assert_eq!(portal_route((a, b), (0, 0)), None);
+    }
+
+    /// White gel overrides the tile's own refusal to take a portal — that is the
+    /// entire purpose of the white gel, and it is per *face*.
+    #[test]
+    fn white_gel_makes_a_face_take_a_portal_that_the_tile_refuses() {
+        let mut level = crate::world::load_level("portal", "2-1");
+        // A lab wall that is solid but explicitly not portalable (134 is one of the 22).
+        const NOT_PORTALABLE: u32 = 134;
+        assert!(crate::level::tiles::is_solid(NOT_PORTALABLE as u16));
+        assert!(!crate::level::tiles::props(NOT_PORTALABLE as u16).portalable());
+
+        // Two cells of it, with clear air to their left.
+        for row in 9..=10 {
+            level.tiles[row][8] = NOT_PORTALABLE;
+            level.tiles[row][7] = crate::level::tiles::TILE_EMPTY as u32;
+        }
+        let none = [None, None];
+        let bare = portal_position(&level, (8, 10), Orientation::Left, -1, &none, usize::MAX);
+        assert_eq!(bare, None, "a non-portalable wall refuses the shot");
+
+        for row in 9..=10 {
+            level.paint_gel(
+                (8, row),
+                crate::level::GelFace::Left,
+                crate::level::Gel::White,
+            );
+        }
+        let painted = portal_position(&level, (8, 10), Orientation::Left, -1, &none, usize::MAX);
+        assert_eq!(
+            painted,
+            Some((8, 10)),
+            "white gel on that face makes it take one"
+        );
+
+        // The paint is face-local: coating the left doesn't help the top.
+        let other_face = portal_position(&level, (8, 10), Orientation::Up, -1, &none, usize::MAX);
+        assert_eq!(other_face, None, "the top of that block is still bare");
     }
 
     #[test]

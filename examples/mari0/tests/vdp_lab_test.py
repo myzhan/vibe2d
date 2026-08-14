@@ -225,9 +225,10 @@ async def run(ws):
     bridges = [e for e in s["lab"] if e["kind"] == "light_bridge"]
     check("2-1 的五座光桥都是常亮的（没连线 → 永久开启）", len(bridges) == 5 and all(b["on"] for b in bridges), str(len(bridges)))
     cells = sum(len(seg["cells"]) for b in bridges for seg in b["beam"])
-    check("每覆盖一格铺一块薄板", len(s["solid_rects"]) == cells, f"{len(s['solid_rects'])} 板 / {cells} 格")
-    thin = [r for r in s["solid_rects"] if min(r[2], r[3]) < T / 4]
-    check("每块都是薄的（1/8 格左右）", len(thin) == len(s["solid_rects"]))
+    # solid_rects 里还有喷嘴/管子那些 2×2 的方块，光桥板是其中"薄"的那一类。
+    slabs = [r for r in s["solid_rects"] if min(r[2], r[3]) < T / 4]
+    check("每覆盖一格铺一块薄板", len(slabs) == cells, f"{len(slabs)} 板 / {cells} 格")
+    check("薄板只有 1/8 格厚", all(min(r[2], r[3]) <= T / 8 for r in slabs))
     # 横向光桥（(1,7) 往右 9 格）铺出来的板顶在 (7+7/16)*32
     top = (7 + 7 / 16) * T
     await rpc(ws, "game.setPlayerPos", {"x": 5 * T, "y": top - 52})
@@ -244,11 +245,12 @@ async def run(ws):
         if e["kind"] == "light_bridge"
         and any([5, 7] in seg["cells"] for seg in e["beam"])
     )
-    before = len(s["solid_rects"])
+    before = len([r for r in s["solid_rects"] if min(r[2], r[3]) < T / 4])
     await rpc(ws, "game.labSignal", {"index": idx, "signal": "off"})
     await step(ws, 2)
     s = await snap(ws)
-    check("薄板数量减少", len(s["solid_rects"]) < before, f"{before} → {len(s['solid_rects'])}")
+    now = len([r for r in s["solid_rects"] if min(r[2], r[3]) < T / 4])
+    check("薄板数量减少", now < before, f"{before} → {now}")
     check("关掉的那座桥没有光束", not s["lab"][idx]["beam"])
     await step(ws, 20)
     s = await snap(ws)
@@ -386,7 +388,85 @@ async def run(ws):
           f"{fresh[0]['y']:.0f} vs {doomed['y']:.0f}" if fresh else "没有方块")
     check("并且只补了一个", len(fresh) == 1, str(len(fresh)))
 
-    section("16. 把镜头横扫过全部九关：clip 出屏不能把画面搞崩")
+    section("16. 凝胶：喷出来、涂在面上、蓝胶把人弹起来")
+    s = await load_lab(ws, 1, 3)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    await rpc(ws, "game.setScore", {"lives": 9})
+    disp = [e for e in s["lab"] if e["kind"] == "gel_dispenser"]
+    check("1-3 有一台凝胶喷嘴", len(disp) == 1, str([e["cell"] for e in disp]))
+    check("装载时地图上还没有涂层", s["gels"] == [], str(s["gels"]))
+    # 站远一点，让喷嘴喷两秒
+    await rpc(ws, "game.setPlayerPos", {"x": 12 * T, "y": 12 * T})
+    await step(ws, 120)
+    s = await snap(ws)
+    check("空中有飞行的凝胶球", len(s["gel_blobs"]) > 0, str(len(s["gel_blobs"])))
+    painted = [g for g in s["gels"] if g["top"] == "blue"]
+    check("落地的凝胶把地面顶面涂成了蓝色", len(painted) > 0, str(s["gels"]))
+
+    col = painted[0]["cell"][0]
+    floor = painted[0]["cell"][1]
+    # 从三格高摔到蓝胶上：会被弹起来；摔到干净地面上不会
+    for target, label in [(col, "蓝胶地面"), (col + 5, "干净地面")]:
+        await rpc(ws, "game.setPlayerPos", {"x": target * T, "y": (floor - 4) * T, "vx": 0.0, "vy": 0.0})
+        rebound = 0.0
+        for _ in range(40):
+            await step(ws, 2)
+            rebound = min(rebound, (await snap(ws))["player"]["vy"])
+        if label == "蓝胶地面":
+            check("落在蓝胶上会被弹起来（速度反向）", rebound < -200, f"vy={rebound:.0f}")
+        else:
+            check("落在干净地面上不会弹", rebound > -1, f"vy={rebound:.0f}")
+    # 按住下键取消弹跳 —— 这就是在蓝胶上停下来的方法
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "press", "key": "Down"})
+    await rpc(ws, "game.setPlayerPos", {"x": col * T, "y": (floor - 4) * T, "vx": 0.0, "vy": 0.0})
+    rebound = 0.0
+    for _ in range(40):
+        await step(ws, 2)
+        rebound = min(rebound, (await snap(ws))["player"]["vy"])
+    await rpc(ws, "engine.simulateInput", {"device": "keyboard", "action": "release", "key": "Down"})
+    check("按住下键就不弹了", rebound > -1, f"vy={rebound:.0f}")
+
+    section("17. 信仰之跃：绝对赋值，不是冲量")
+    s = await load_lab(ws, 3, 1)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    plate = next(e for e in s["lab"] if e["kind"] == "faith_plate")
+    col, row = plate["cell"]
+    # 从两格高落到踏板上，无论怎么来都以固定速度离开（右向踏板 = 30/-30 格每秒）
+    await rpc(ws, "game.setPlayerPos", {"x": (col + 1) * T, "y": (row - 2) * T, "vx": 0.0, "vy": 0.0})
+    launch = (0.0, 0.0)
+    for _ in range(10):
+        await step(ws, 3)
+        p = (await snap(ws))["player"]
+        if p["vy"] < launch[1]:
+            launch = (p["vx"], p["vy"])
+    check("向右的踏板给出 +30 / -30 格每秒", abs(launch[0] - 30 * T) < 1 and abs(launch[1] + 30 * T) < 1,
+          f"vx={launch[0]:.0f} vy={launch[1]:.0f}")
+    # 关键：上限不是硬夹，而是被 superfriction 慢慢磨掉 —— 否则斜向踏板一出手就被削到走速
+    check("水平速度远超走速上限（说明没有被硬夹）", launch[0] > 3 * 205, f"{launch[0]:.0f}")
+
+    section("18. Emancipation Grill：穿过去传送门就散了")
+    s = await load_lab(ws, 1, 1)
+    await rpc(ws, "game.setState", {"state": "playing"})
+    check("1-1 的三道栅栏都解析出了跨度", len(s["grills"]) == 3, str(s["grills"]))
+    grill = next(g for g in s["grills"] if not g["horizontal"])
+    check("竖直栅栏的跨度是一段连续的空格", grill["end"] >= grill["start"], str(grill))
+    # 放一对传送门，然后从栅栏一侧走到另一侧
+    await rpc(ws, "game.setPortal", {"index": 0, "x": 10 * T, "y": 3 * T, "orientation": "left"})
+    await rpc(ws, "game.setPortal", {"index": 1, "x": 4 * T, "y": 11 * T, "orientation": "right"})
+    await step(ws, 2)
+    s = await snap(ws)
+    check("两个门都在", s["portals"]["blue"] and s["portals"]["orange"])
+    gx, row = grill["cell"][0], grill["start"] + 1
+    # 直接跨到栅栏另一侧：上一帧的中心在左、这一帧在右 → 扫掠判定命中
+    await rpc(ws, "game.setPlayerPos", {"x": (gx - 2) * T, "y": row * T, "vx": 0.0, "vy": 0.0})
+    await step(ws, 2)
+    await rpc(ws, "game.setPlayerPos", {"x": (gx + 1) * T, "y": row * T, "vx": 0.0, "vy": 0.0})
+    await step(ws, 2)
+    s = await snap(ws)
+    check("穿过栅栏后两个门都消失了", not s["portals"]["blue"] and not s["portals"]["orange"],
+          str(s["portals"]))
+
+    section("19. 把镜头横扫过全部九关：clip 出屏不能把画面搞崩")
     # 门是用 scissor 裁到自己那两格的，门滚出屏幕右侧时裁剪框会伸到画面外 ——
     # wgpu 要求 x+w <= 宽度，越界会直接 panic 整帧。这一条扫描就是那次崩溃的复现。
     swept = 0

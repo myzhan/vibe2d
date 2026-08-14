@@ -270,15 +270,6 @@ impl EntityKind {
                 | PlatformRight
                 | PlatformFall
                 | PlatformBonus
-                | BlueGelDown
-                | BlueGelRight
-                | BlueGelLeft
-                | OrangeGelDown
-                | OrangeGelRight
-                | OrangeGelLeft
-                | WhiteGelDown
-                | WhiteGelRight
-                | WhiteGelLeft
         )
     }
 
@@ -320,7 +311,39 @@ impl EntityKind {
                 | GroundLightRightDown
                 | GroundLightDownLeft
                 | GroundLightLeftUp
+                // Gel dispensers: lab fixtures like the cube tubes, and the only
+                // source of the paint the three gels are made of.
+                | BlueGelDown
+                | BlueGelRight
+                | BlueGelLeft
+                | OrangeGelDown
+                | OrangeGelRight
+                | OrangeGelLeft
+                | WhiteGelDown
+                | WhiteGelRight
+                | WhiteGelLeft
         )
+    }
+
+    /// The colour and direction of a gel dispenser, if this is one.
+    ///
+    /// The entity encodes both: nine ids, three colours × three nozzle directions.
+    /// There is no upward-facing one.
+    pub fn gel_dispenser(self) -> Option<(Gel, crate::player::Orientation)> {
+        use crate::player::Orientation::*;
+        use EntityKind::*;
+        Some(match self {
+            BlueGelDown => (Gel::Blue, Down),
+            BlueGelRight => (Gel::Blue, Right),
+            BlueGelLeft => (Gel::Blue, Left),
+            OrangeGelDown => (Gel::Orange, Down),
+            OrangeGelRight => (Gel::Orange, Right),
+            OrangeGelLeft => (Gel::Orange, Left),
+            WhiteGelDown => (Gel::White, Down),
+            WhiteGelRight => (Gel::White, Right),
+            WhiteGelLeft => (Gel::White, Left),
+            _ => return None,
+        })
     }
 
     /// Gel painted directly onto a tile face by the level, with its face and
@@ -349,6 +372,8 @@ pub enum GelFace {
 
 /// Gel colour. 1 blue (bounce), 2 orange (speed), 3 white (portalable).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 pub enum Gel {
     Blue,
     Orange,

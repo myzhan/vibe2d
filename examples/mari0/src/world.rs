@@ -99,6 +99,13 @@ pub(crate) struct Level {
     /// Cells that block movement *in addition* to the tile grid — currently shut
     /// doors. Rebuilt each frame from the lab network.
     pub(crate) solid_extras: HashSet<(i32, i32)>,
+    /// Gel painted on tile faces, one entry per cell, row-major with `width` stride.
+    ///
+    /// **Mutable at runtime**: this is where a gel blob's splat lands, and it is what
+    /// the movement code and the portal-placement rules read back. The level's own
+    /// `geltop`/`gelleft`/… entities seed it at load — only where the tile is actually
+    /// solid (`game.lua:2435-2450`).
+    pub(crate) gels: Vec<level::Gels>,
     /// Solid boxes that aren't cells: light-bridge slabs and cube dispensers. Rebuilt
     /// each frame from the lab network.
     ///
@@ -123,6 +130,31 @@ pub(crate) struct Level {
 }
 
 impl Level {
+    /// The gel coating a cell's faces. Cells outside the level are bare.
+    pub(crate) fn gels(&self, cell: (i32, i32)) -> level::Gels {
+        if cell.0 < 0
+            || cell.1 < 0
+            || cell.0 as usize >= self.width
+            || cell.1 as usize >= self.height
+        {
+            return level::Gels::default();
+        }
+        self.gels[cell.1 as usize * self.width + cell.0 as usize]
+    }
+
+    /// Paint one face of one cell.
+    pub(crate) fn paint_gel(&mut self, cell: (i32, i32), face: level::GelFace, gel: level::Gel) {
+        if cell.0 < 0
+            || cell.1 < 0
+            || cell.0 as usize >= self.width
+            || cell.1 as usize >= self.height
+        {
+            return;
+        }
+        let index = cell.1 as usize * self.width + cell.0 as usize;
+        self.gels[index].set(face, gel);
+    }
+
     /// Splice a copy of column `source` in at `at`, widening the level by one.
     ///
     /// This is the whole trick behind the looping castles. The original does
@@ -147,6 +179,20 @@ impl Level {
             let copied = row[source as usize];
             row.insert(at_usize, copied);
         }
+        // The gel layer is indexed by the same grid, so it grows with it.
+        let mut gels = Vec::with_capacity((self.width + 1) * self.height);
+        for row in 0..self.height {
+            for col in 0..self.width {
+                if col == at_usize {
+                    gels.push(self.gels[row * self.width + source as usize]);
+                }
+                gels.push(self.gels[row * self.width + col]);
+            }
+            if at_usize >= self.width {
+                gels.push(self.gels[row * self.width + source as usize]);
+            }
+        }
+        self.gels = gels;
         self.width += 1;
 
         let bump_col = |c: i32| if c >= at { c + 1 } else { c };
@@ -589,6 +635,10 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         portal_holes: HashSet::new(),
         solid_extras: HashSet::new(),
         solid_rects: Vec::new(),
+        gels: (0..height)
+            .flat_map(|row| (0..width).map(move |col| (col, row)))
+            .map(|(col, row)| parsed.gels(col, row))
+            .collect(),
     }
 }
 
