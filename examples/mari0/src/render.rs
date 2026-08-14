@@ -26,6 +26,28 @@ fn lakito_dst(hitbox: [f32; 4]) -> [f32; 4] {
 }
 
 impl Mari0Game {
+    /// The window a piranha plant is drawn through, in screen space.
+    ///
+    /// `customscissor = {x-1, y-2, 2, 2}` (`plant.lua:33`) — two blocks square,
+    /// spanning the pipe's own two columns and ending **exactly at the pipe's rim**.
+    /// That last part is the whole trick: a retracted plant's sprite starts at the
+    /// rim, so the window clips all of it and the plant is invisible until it rises.
+    /// Without this a plant is on screen the entire time, snapping away inside a
+    /// pipe you can see through.
+    ///
+    /// Derived from the plant's rest position rather than stored, so it stays put
+    /// while the plant slides.
+    fn plant_clip_rect(&self, enemy: &Enemy, cam_x: f32) -> [f32; 4] {
+        // Back out the cell from the rest height, then the window is anchored on it.
+        let cell_top = enemy.spawn_y - PLANT_REST_DROP;
+        [
+            enemy.x - TILE_SIZE / 2.0 - cam_x,
+            cell_top - TILE_SIZE,
+            TILE_SIZE * 2.0,
+            TILE_SIZE * 2.0,
+        ]
+    }
+
     /// Draw one tile, from whichever of the two sheets owns its id.
     ///
     /// The lab tiles are ids 133..220 on a second sheet. Sending those to the SMB
@@ -184,10 +206,7 @@ impl Mari0Game {
         for enemy in &self.enemies {
             let ex = enemy.x - cam_x;
             let ey = enemy.y;
-            let eh = match enemy.enemy_type {
-                EnemyType::Koopa if enemy.state == EnemyState::Walking => 48.0,
-                _ => PLAYER_SMALL_H,
-            };
+            let eh = enemy_height(enemy.enemy_type, enemy.state);
             let dst = [ex, ey, PLAYER_SMALL_W, eh];
             match enemy.state {
                 EnemyState::Dead => {
@@ -308,8 +327,19 @@ impl Mari0Game {
                             // Two frames alternating on PLANT_ANIM_DELAY — the
                             // snapping mouth. The sprite sheet is 32x128 with
                             // 16x24 cells, two frames per spriteset row.
+                            //
+                            // Drawn at its own 16x24 rather than squeezed into the
+                            // hitbox, offset up by `PLANT_SPRITE_RISE`, and clipped
+                            // to the two-block window over the pipe — that scissor is
+                            // the only thing hiding a retracted plant, which is
+                            // otherwise drawn after the pipe and so on top of it.
                             let frame = ((enemy.anim_timer / PLANT_ANIM_DELAY) as u32) % 2;
-                            screen.draw_sprite_region(self.tex_plant, plant_uv(frame), dst);
+                            let sprite =
+                                [ex, ey - PLANT_SPRITE_RISE, PLANT_SPRITE_W, PLANT_SPRITE_H];
+                            let [cx, cy, cw, ch] = self.plant_clip_rect(enemy, cam_x);
+                            screen.clipped(cx, cy, cw, ch, |screen| {
+                                screen.draw_sprite_region(self.tex_plant, plant_uv(frame), sprite);
+                            });
                         }
                         EnemyType::Firebar | EnemyType::UpFire => {
                             // Both are animated fire. The firebar's own rotation

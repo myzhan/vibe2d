@@ -191,25 +191,52 @@ pub(crate) struct Enemy {
 
 /// Collision height of an enemy in its current state.
 ///
-/// Koopa-likes stand 24px tall (48 at 2x) while walking but shrink to a shell;
-/// everything else is one small-Mario tall.
+/// Koopa-likes stand 24px tall (48 at 2x) while walking but shrink to a shell; a
+/// piranha plant is shorter than a block; everything else is one small-Mario tall.
 pub(crate) fn enemy_height(enemy_type: EnemyType, state: EnemyState) -> f32 {
     if enemy_type.is_koopa_like() && state == EnemyState::Walking {
         48.0
+    } else if enemy_type == EnemyType::Plant {
+        PLANT_HEIGHT
     } else {
         PLAYER_SMALL_H
     }
+}
+
+/// Where a piranha plant's hitbox sits when fully retracted, given its spawn cell.
+///
+/// Its own function because a plant is the one enemy whose placement is not "stand
+/// it on the cell": it is a fixture, so nothing corrects a bad y afterwards. Every
+/// other enemy is dropped a tile high and lands in the right place within a few
+/// frames, which is why this was wrong for a long time without being obvious.
+pub(crate) fn plant_rest_y(spawn_y: f32) -> f32 {
+    spawn_y + PLANT_REST_DROP
 }
 
 impl Enemy {
     /// Instantiate one spawn point.
     fn from_spawn(sp: &EnemySpawnPoint) -> Self {
         let h = enemy_height(sp.enemy_type, EnemyState::Walking);
+        // Spawn coordinates name the cell the enemy stands *on*, so a taller
+        // enemy has to be lifted by its own height to rest on that surface. A
+        // plant instead hangs *below* its cell, tucked into the pipe.
+        let y = if sp.enemy_type == EnemyType::Plant {
+            plant_rest_y(sp.y)
+        } else {
+            sp.y - h
+        };
+        // A plant is a block wide but its cell is the pipe's *left* column, so it
+        // straddles both (`plant.lua:9`, `self.x = x - 8/16`) — that half-block is
+        // what centres it on a two-wide pipe. All 102 plants in the shipped levels
+        // sit one row above a pipe's rim, which is what makes this safe to assume.
+        let x = if sp.enemy_type == EnemyType::Plant {
+            sp.x + TILE_SIZE / 2.0
+        } else {
+            sp.x
+        };
         Enemy {
-            x: sp.x,
-            // Spawn coordinates name the cell the enemy stands *on*, so a taller
-            // enemy has to be lifted by its own height to rest on that surface.
-            y: sp.y - h,
+            x,
+            y,
             vx: if sp.facing_right {
                 ENEMY_SPEED
             } else {
@@ -223,9 +250,9 @@ impl Enemy {
             anim_timer: 0.0,
             death_timer: 0.0,
             flipped_death: false,
-            spawn_y: sp.y - h,
+            spawn_y: y,
             cycle_timer: 0.0,
-            spawn_x: sp.x,
+            spawn_x: x,
             // Each firebar segment starts at the same angle; its distance
             // from the pivot is what differs.
             angle_deg: 0.0,
@@ -687,10 +714,12 @@ impl Mari0Game {
                 continue;
             }
 
-            let eh = match enemy.enemy_type {
-                EnemyType::Koopa if enemy.state == EnemyState::Walking => 48.0,
-                _ => PLAYER_SMALL_H,
-            };
+            // The same height the movement code used. This was a second, subtly
+            // different copy that only recognised a green koopa as tall and gave
+            // every plant a full block — so a red koopa and a beetle were fought
+            // with a shorter box than they were drawn at, and a plant's box did not
+            // match where it actually is.
+            let eh = enemy_height(enemy.enemy_type, enemy.state);
 
             if !aabb_overlap(
                 [
@@ -1130,6 +1159,114 @@ mod tests {
                 "{pack}/{name}: some spawns were never claimed"
             );
         }
+    }
+
+    /// A fully grown plant's feet land exactly on the pipe's rim.
+    ///
+    /// This is the check that pins the whole placement, because it is exact rather
+    /// than approximate: the plant's cell is always one row above a pipe's top tile,
+    /// so the rim is at `(row + 1) * TILE_SIZE`, and the original's numbers put the
+    /// extended hitbox's bottom edge precisely there. Get the 1-based row shift or
+    /// the `9/16` wrong and this misses by whole tiles — which is exactly how the
+    /// plant ended up hovering a block and a half above its pipe.
+    #[test]
+    fn a_fully_grown_plant_stands_on_the_pipes_rim() {
+        for row in [4, 9, 10, 12] {
+            let cell_top = row as f32 * TILE_SIZE;
+            let rim = cell_top + TILE_SIZE;
+            let extended_top = plant_rest_y(cell_top) - PLANT_MOVE_DIST;
+            let extended_bottom = extended_top + PLANT_HEIGHT;
+            assert!(
+                (extended_bottom - rim).abs() < 0.01,
+                "row {row}: extended plant bottom {extended_bottom} should sit on the rim {rim}"
+            );
+        }
+    }
+
+    /// A retracted plant's sprite starts at the rim, so the clip window hides it all.
+    ///
+    /// The other exact landing. It is what makes the two-block scissor sufficient:
+    /// the window's bottom edge *is* the rim, so "retracted" and "invisible" are the
+    /// same condition rather than two things that have to be kept in step.
+    #[test]
+    fn a_retracted_plants_sprite_begins_exactly_at_the_rim() {
+        let cell_top = 9.0 * TILE_SIZE;
+        let rim = cell_top + TILE_SIZE;
+        let sprite_top = plant_rest_y(cell_top) - PLANT_SPRITE_RISE;
+        assert!(
+            (sprite_top - rim).abs() < 0.01,
+            "retracted sprite top {sprite_top} should be the rim {rim}"
+        );
+        // Extended, the sprite ends on the rim too and sits wholly inside the
+        // window, so the plant grows *out of* the pipe rather than through its wall.
+        let window_top = cell_top - TILE_SIZE;
+        let extended_sprite_top = plant_rest_y(cell_top) - PLANT_MOVE_DIST - PLANT_SPRITE_RISE;
+        assert!(
+            (extended_sprite_top + PLANT_SPRITE_H - rim).abs() < 0.01,
+            "extended sprite bottom {} should be the rim {rim}",
+            extended_sprite_top + PLANT_SPRITE_H
+        );
+        assert!(
+            extended_sprite_top >= window_top,
+            "extended sprite top {extended_sprite_top} escapes the window top {window_top}"
+        );
+    }
+
+    /// A plant is shorter than a block, and one code path used to think otherwise.
+    #[test]
+    fn a_plant_is_shorter_than_every_other_enemy() {
+        assert_eq!(
+            enemy_height(EnemyType::Plant, EnemyState::Walking),
+            PLANT_HEIGHT
+        );
+        const { assert!(PLANT_HEIGHT < PLAYER_SMALL_H) };
+        // All three koopa-likes are tall while walking, not just the green one.
+        for kind in [EnemyType::Koopa, EnemyType::KoopaRed, EnemyType::Beetle] {
+            assert_eq!(enemy_height(kind, EnemyState::Walking), 48.0, "{kind:?}");
+            assert_eq!(
+                enemy_height(kind, EnemyState::Shell),
+                PLAYER_SMALL_H,
+                "{kind:?} in a shell"
+            );
+        }
+    }
+
+    /// Every plant hangs one row above something solid, nearly always a pipe's rim.
+    ///
+    /// The placement maths only needs "solid below", since the drop is measured from
+    /// the plant's own cell — but the tile ids are worth pinning too. 14 and 16 are
+    /// the **left** halves of the two spritesets' pipe-top pairs, and that all 99
+    /// pipe-mounted plants land on a left half is the evidence for the half-block
+    /// shift that centres a plant on its two-block-wide pipe. The other three are in
+    /// 8-4, growing out of a castle wall instead.
+    #[test]
+    fn every_plant_hangs_over_something_solid() {
+        let mut on_pipe = 0;
+        let mut elsewhere = 0;
+        for (pack, name, _) in level::LEVELS {
+            let parsed = level::load(pack, name)
+                .expect("shipped level")
+                .expect("parses");
+            for spawn in &parsed.markers.enemies {
+                if spawn.kind != level::EntityKind::Plant {
+                    continue;
+                }
+                let below = parsed.tile(spawn.x as i32, spawn.y as i32 + 1);
+                assert!(
+                    level::tiles::props(below).collision(),
+                    "{pack}/{name}: plant at ({}, {}) has nothing to hide in — tile {below}",
+                    spawn.x,
+                    spawn.y
+                );
+                if matches!(below, 14 | 16) {
+                    on_pipe += 1;
+                } else {
+                    elsewhere += 1;
+                }
+            }
+        }
+        assert_eq!(on_pipe, 99, "plants mounted on a pipe's left rim tile");
+        assert_eq!(elsewhere, 3, "8-4's three wall-mounted plants");
     }
 
     /// No level places a spiny, and every level with a lakitu says where he stops.

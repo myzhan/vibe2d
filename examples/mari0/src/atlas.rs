@@ -92,9 +92,12 @@ pub(crate) fn spikey_uv(frame: u32) -> [f32; 4] {
     [(frame % 4) as f32 * 0.25, 0.0, 0.25, 1.0]
 }
 
-/// Piranha plant frame UV. `plant.png` is 32x128: 16x24 cells, 2 frames wide.
+/// Piranha plant frame UV. `plant.png` is 32x128: **16x23** cells, 2 frames wide.
+///
+/// 23, not 24 (`main.lua:464`): the rows butt up against each other with no
+/// padding, so a 24 pulls one row of the next spriteset's plant into this one.
 pub(crate) fn plant_uv(frame: u32) -> [f32; 4] {
-    [(frame * 16) as f32 / 32.0, 0.0, 16.0 / 32.0, 24.0 / 128.0]
+    [(frame % 2) as f32 * 0.5, 0.0, 0.5, 23.0 / 128.0]
 }
 
 /// One firebar/geyser fireball. `fireball.png` is 80x16 and its **first four

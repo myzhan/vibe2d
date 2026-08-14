@@ -51,6 +51,33 @@ pub(crate) const PLANT_ANIM_DELAY: f32 = 0.15;
 pub(crate) const PLANT_MOVE_DIST: f32 = 23.0 / 16.0 * TILE_SIZE;
 /// Rise/fall speed, 2.3 blocks/s.
 pub(crate) const PLANT_MOVE_SPEED: f32 = 2.3 * TILE_SIZE;
+/// Collision height, 14/16 blocks (`plant.lua:13`) — shorter than everything else.
+pub(crate) const PLANT_HEIGHT: f32 = 14.0 / 16.0 * TILE_SIZE;
+/// How far **below** its cell a fully retracted plant's hitbox sits.
+///
+/// `plant:new` is handed the cell as the original's *1-based* row index and then
+/// adds `9/16` (`plant.lua:11`), so the drop is one block of index shift plus the
+/// plant tucking itself down inside the pipe. Every other enemy is lifted *up* by
+/// its own height instead, which is why a plant cannot share that code path.
+///
+/// Two independent checks that this is the right number, both landing exactly:
+/// at full extension (`PLANT_MOVE_DIST` above here) the hitbox's **bottom** sits on
+/// the pipe's rim, and the sprite's **top** sits on the rim when retracted.
+pub(crate) const PLANT_REST_DROP: f32 = (1.0 + 9.0 / 16.0) * TILE_SIZE;
+/// How far above the hitbox the sprite's top edge sits.
+///
+/// `offsetY = 17` with the quad's origin at its own top-left (`plant.lua:29-33`),
+/// less the 8px by which the original's whole world is drawn higher than its
+/// coordinates read (tiles go to `(row-1)*16 - 8`, `game.lua:1005`). Net 9/16 of a
+/// block. Skip the 8 and the plant rides half a tile high — visible as a gap
+/// between the plant and the pipe it is supposed to be growing out of.
+pub(crate) const PLANT_SPRITE_RISE: f32 = (17.0 - 8.0) / 16.0 * TILE_SIZE;
+/// Rendered sprite size at this port's 2x scale.
+///
+/// The cell is **23** px tall, not 24 (`main.lua:464` steps rows by 23) — the sheet
+/// has no padding, so a 24 here shears the next spriteset's head onto this one.
+pub(crate) const PLANT_SPRITE_W: f32 = 16.0 * 2.0;
+pub(crate) const PLANT_SPRITE_H: f32 = 23.0 * 2.0;
 /// A retracted plant will not emerge while the player is within ±3 blocks
 /// horizontally — standing on the pipe is what makes it safe to wait.
 pub(crate) const PLANT_PLAYER_NEAR: f32 = 3.0 * TILE_SIZE;
