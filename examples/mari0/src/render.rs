@@ -10,6 +10,21 @@ use crate::items::*;
 use crate::physics::*;
 use crate::player::*;
 
+/// Lakitu's cloud is taller than he is.
+///
+/// His hitbox is one small-Mario square like a goomba's, but the sprite is 16x24 —
+/// the extra half-block is cloud, and it belongs *above* him, so the two rectangles
+/// share a bottom edge rather than a top one.
+fn lakito_dst(hitbox: [f32; 4]) -> [f32; 4] {
+    const SPRITE_H: f32 = 24.0 * 2.0;
+    [
+        hitbox[0],
+        hitbox[1] + hitbox[3] - SPRITE_H,
+        hitbox[2],
+        SPRITE_H,
+    ]
+}
+
 impl Mari0Game {
     /// Draw one tile, from whichever of the two sheets owns its id.
     ///
@@ -189,6 +204,26 @@ impl Mari0Game {
                                     true,
                                 );
                             }
+                            // Lakitu evicted from his cloud, which the original draws
+                            // by simply negating the vertical scale (`lakito.lua:118`).
+                            EnemyType::Lakito => {
+                                screen.draw_sprite_region_flipped(
+                                    self.tex_lakito,
+                                    lakito_uv(0),
+                                    lakito_dst(dst),
+                                    !enemy.facing_right,
+                                    true,
+                                );
+                            }
+                            EnemyType::Spikey | EnemyType::SpikeyFall => {
+                                screen.draw_sprite_region_flipped(
+                                    self.tex_spikey,
+                                    spikey_uv(0),
+                                    dst,
+                                    false,
+                                    true,
+                                );
+                            }
                             _ => {
                                 let src = koopa_uv(0, 0);
                                 screen.draw_sprite_region_flipped(
@@ -205,6 +240,11 @@ impl Mari0Game {
                         match enemy.enemy_type {
                             EnemyType::Goomba | EnemyType::Plant => {
                                 screen.draw_sprite_region(self.tex_goomba, goomba_uv(1, 0), dst);
+                            }
+                            EnemyType::Spikey | EnemyType::SpikeyFall => {
+                                // Unreachable in practice — a spiny can't be stomped —
+                                // but a spiny caught by a grill takes this path.
+                                screen.draw_sprite_region(self.tex_spikey, spikey_uv(0), dst);
                             }
                             _ => {
                                 screen.draw_sprite_region(self.tex_koopa, koopa_uv(4, 0), dst);
@@ -232,6 +272,37 @@ impl Mari0Game {
                             } else {
                                 screen.draw_sprite_region(self.tex_goomba, src, dst);
                             }
+                        }
+                        EnemyType::Lakito => {
+                            // Frame 2 is the wind-up: he pulls into the cloud for the
+                            // last half-second before an egg leaves, which is the tell
+                            // that gives you time to move (`lakito.lua:123-125`).
+                            let frame =
+                                u32::from(enemy.cycle_timer > LAKITO_THROW_TIME - LAKITO_HIDE_TIME);
+                            screen.draw_sprite_region_flipped(
+                                self.tex_lakito,
+                                lakito_uv(frame),
+                                lakito_dst(dst),
+                                !enemy.facing_right,
+                                false,
+                            );
+                        }
+                        EnemyType::Spikey | EnemyType::SpikeyFall => {
+                            // Two frames each, from different halves of the sheet:
+                            // 0/1 walking, 2/3 tumbling through the air.
+                            let base = if enemy.enemy_type == EnemyType::Spikey {
+                                0
+                            } else {
+                                2
+                            };
+                            let frame = base + ((enemy.anim_timer / GOOMBA_ANIM_SPEED) as u32) % 2;
+                            screen.draw_sprite_region_flipped(
+                                self.tex_spikey,
+                                spikey_uv(frame),
+                                dst,
+                                enemy.facing_right,
+                                false,
+                            );
                         }
                         EnemyType::Plant => {
                             // Two frames alternating on PLANT_ANIM_DELAY — the

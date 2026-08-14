@@ -113,6 +113,13 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// Has the player walked past this level's `lakitoend` column?
+    ///
+    /// A latch, never cleared while the level runs (`mario.lua:993-995` only ever
+    /// sets it true), which is what makes lakitu's retirement final: once past the
+    /// column he goes passive and drifts off to the left for good, even if you walk
+    /// back. Levels without a `lakitoend` never set it.
+    pub(crate) lakito_retired: bool,
     /// Sublevel to reload after a death; 0 is the main level.
     ///
     /// Only ever non-zero after taking a pipe out of an *intermission* stub
@@ -140,6 +147,8 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_koopa_red: TextureId,
     pub(crate) tex_beetle: TextureId,
     pub(crate) tex_plant: TextureId,
+    pub(crate) tex_lakito: TextureId,
+    pub(crate) tex_spikey: TextureId,
     pub(crate) tex_cheep_red: TextureId,
     pub(crate) tex_cheep_white: TextureId,
     pub(crate) tex_coin_anim: TextureId,
@@ -296,6 +305,7 @@ impl Mari0Game {
             None => 0,
         };
         self.enemies.clear();
+        self.lakito_retired = false;
         self.spawned = vec![false; level.enemy_spawns.len()];
         // -1, not 0: the catch-up loop pre-increments, so column 0 still gets
         // processed on the first sweep.
@@ -357,6 +367,18 @@ impl Mari0Game {
             }
             self.checkpoints_passed += 1;
             self.checkpoint = Some((col, row));
+        }
+    }
+
+    /// Retire lakitu once the player is past this level's `lakitoend` column.
+    ///
+    /// Checked against the *player*, not the camera (`mario.lua:993`), so running
+    /// ahead is what dismisses him rather than the view catching up.
+    fn check_lakito_retired(&mut self) {
+        if let Some(col) = self.level.lakito_end
+            && self.player.x >= col as f32 * TILE_SIZE
+        {
+            self.lakito_retired = true;
         }
     }
 
@@ -684,6 +706,7 @@ impl Mari0Game {
         // a goomba that appears this frame still gets its first step.
         self.spawn_revealed_columns();
         self.check_checkpoint_passed();
+        self.check_lakito_retired();
         self.check_maze_gate();
         self.update_maze();
         self.update_lab(ctx, dt, input.is_action_just_pressed("use"));
@@ -842,6 +865,7 @@ impl Game for Mari0Game {
             bridge_rects: Vec::new(),
             checkpoint: None,
             checkpoints_passed: 0,
+            lakito_retired: false,
             respawn_sublevel: 0,
             music_phase: MusicPhase::Normal,
             warning_started_at: None,
@@ -862,6 +886,8 @@ impl Game for Mari0Game {
             tex_koopa_red: t("koopa_red"),
             tex_beetle: t("beetle"),
             tex_plant: t("plant"),
+            tex_lakito: t("lakito"),
+            tex_spikey: t("spikey"),
             tex_cheep_red: t("cheep_red"),
             tex_cheep_white: t("cheep_white"),
             tex_coin_anim: t("coin_anim"),

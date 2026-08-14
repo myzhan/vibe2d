@@ -75,6 +75,45 @@ pub(crate) const FIREBAR_SEGMENT_SPACING: f32 = 0.5 * TILE_SIZE;
 pub(crate) const UPFIRE_FORCE: f32 = 19.0 * TILE_SIZE;
 pub(crate) const UPFIRE_GRAVITY: f32 = 20.0 * TILE_SIZE;
 
+// ── Lakitu and his spinies (variables.lua:143-149) ──
+/// Seconds between thrown spiny eggs.
+pub(crate) const LAKITO_THROW_TIME: f32 = 4.0;
+/// How long before the throw he ducks into his cloud (the wind-up frame).
+pub(crate) const LAKITO_HIDE_TIME: f32 = 0.5;
+/// Seconds a shot lakitu stays gone before returning at the screen edge.
+pub(crate) const LAKITO_RESPAWN: f32 = 16.0;
+/// How far past the player he may drift before turning around, in blocks.
+pub(crate) const LAKITO_SPACE: f32 = 4.0;
+/// He aims at where the player *will be*, this many seconds ahead. Chasing the
+/// current position would let you outrun him by simply holding a direction.
+pub(crate) const LAKITO_DISTANCE_TIME: f32 = 1.5;
+/// Speed of the one-way drift he settles into past `lakitoend`, in blocks/s.
+pub(crate) const LAKITO_PASSIVE_SPEED: f32 = 3.0 * TILE_SIZE;
+/// He stops throwing while this many spinies are already out (`lakito.lua:70`).
+pub(crate) const LAKITO_MAX_SPINIES: usize = 3;
+/// Upward toss given to a spiny egg, 10 blocks/s (`goomba.lua:57`).
+pub(crate) const SPIKEY_TOSS_SPEED: f32 = 10.0 * TILE_SIZE;
+/// A falling egg is lighter than everything else in the game: 30 blocks/s² rather
+/// than the usual 80 (`goomba.lua:56`), which is what makes the lob readable.
+pub(crate) const SPIKEY_FALL_GRAVITY: f32 = 30.0 * TILE_SIZE;
+/// How far an egg must fall past its release point before it stops being able to
+/// hit the lakitu who threw it (`goomba.lua:132`), in blocks.
+pub(crate) const SPIKEY_HITS_LAKITO_WITHIN: f32 = 2.0 * TILE_SIZE;
+/// Frame flip interval shared by goombas and spinies (`goombaanimationspeed`).
+pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
+/// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
+pub(crate) const LAKITO_SCORE: u32 = 200;
+
+// ── Enemies killed by fire, a star or a shell (variables.lua:162-164) ──
+/// Constant horizontal speed of a shot enemy, 4 blocks/s.
+pub(crate) const SHOT_SPEED_X: f32 = 4.0 * TILE_SIZE;
+/// Initial upward kick, 8 blocks/s.
+pub(crate) const SHOT_JUMP_FORCE: f32 = 8.0 * TILE_SIZE;
+/// Shot enemies fall at 60 blocks/s², not the world's 80.
+pub(crate) const SHOT_GRAVITY: f32 = 60.0 * TILE_SIZE;
+/// How long a shot enemy is kept around — long enough to fall clear of the screen.
+pub(crate) const SHOT_DEATH_TIME: f32 = 3.0;
+
 // ── Cheep-cheep (variables.lua:120-124) ──
 pub(crate) const CHEEP_RED_SPEED: f32 = 1.8 * TILE_SIZE;
 pub(crate) const CHEEP_WHITE_SPEED: f32 = 1.0 * TILE_SIZE;

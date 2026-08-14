@@ -121,6 +121,13 @@ pub(crate) struct Level {
     /// set — see `physics::blocks_movement`.
     pub(crate) portal_holes: HashSet<(i32, i32)>,
 
+    /// Column past which lakitu gives up and drifts away, if this level has one.
+    ///
+    /// A single column rather than a cell: the marker is "place anywhere — defines a
+    /// right border for lakito" (`entity.lua:189`) and the loader keeps only its x
+    /// (`game.lua:2412`). All three levels that use it park it on row 13 or 14, where
+    /// it means nothing.
+    pub(crate) lakito_end: Option<i32>,
     /// Columns holding a `mazeend`. Copying one marks the end of a repetition.
     ///
     /// A column set, not cells: the original's test is "does this column contain a
@@ -509,6 +516,19 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
                 facing_right: false,
                 segment: 0,
             }),
+            // Lakitu starts drifting left, which is what sends him back over the
+            // player the moment he's revealed.
+            level::EntityKind::Lakito => enemy_spawns.push(EnemySpawnPoint {
+                enemy_type: EnemyType::Lakito,
+                x: px,
+                y: py,
+                facing_right: false,
+                segment: 0,
+            }),
+            // `spikey`/`spikeyhalf` are deliberately absent: neither id appears in
+            // any of the 73 shipped level files. A spiny only ever enters the world
+            // as lakitu's ammunition (`lakito.lua:72`), so the walking form is
+            // reached by a thrown egg landing, never by a spawn point.
             // A firebar is N fireballs sharing one pivot, so it expands into
             // `length` separate entities here rather than being one wide object.
             level::EntityKind::CastleFireCw | level::EntityKind::CastleFireCcw => {
@@ -632,6 +652,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         maze_gate_counts,
         maze_gates,
         maze_end_cols,
+        lakito_end: parsed.markers.lakito_end.map(|c| c as i32),
         portal_holes: HashSet::new(),
         solid_extras: HashSet::new(),
         solid_rects: Vec::new(),

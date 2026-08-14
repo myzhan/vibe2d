@@ -79,6 +79,19 @@ pub(crate) fn goomba_uv(col: u32, row: u32) -> [f32; 4] {
     ]
 }
 
+/// Lakitu frame. `lakito.png` is 32x24: two 16x24 frames, the second the crouch
+/// he ducks into just before letting an egg go.
+pub(crate) fn lakito_uv(frame: u32) -> [f32; 4] {
+    [(frame % 2) as f32 * 0.5, 0.0, 0.5, 1.0]
+}
+
+/// Spiny frame. `spikey.png` is 64x16: four 16x16 frames, **the first two walking
+/// and the last two the egg** (`goomba.lua:51-61` picks `quadi` 1/2 vs 3/4), so the
+/// sheet holds two animations rather than one four-frame cycle.
+pub(crate) fn spikey_uv(frame: u32) -> [f32; 4] {
+    [(frame % 4) as f32 * 0.25, 0.0, 0.25, 1.0]
+}
+
 /// Piranha plant frame UV. `plant.png` is 32x128: 16x24 cells, 2 frames wide.
 pub(crate) fn plant_uv(frame: u32) -> [f32; 4] {
     [(frame * 16) as f32 / 32.0, 0.0, 16.0 / 32.0, 24.0 / 128.0]

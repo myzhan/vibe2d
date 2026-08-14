@@ -51,6 +51,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) checkpoint: Option<[i32; 2]>,
     /// Sublevel a death would reload; 0 is the main level.
     pub(crate) respawn_sublevel: u32,
+    /// Has the player passed `lakitoend`? Once true lakitu stops throwing and leaves.
+    pub(crate) lakito_retired: bool,
     /// Maze progress, for the looping castles. `null` in levels without spans.
     pub(crate) maze: Option<MazeView>,
     /// The lab signal network. Empty outside the lab mappack.
@@ -153,10 +155,18 @@ pub(crate) struct ProjectileView {
 pub(crate) struct EnemyView {
     pub(crate) x: f32,
     pub(crate) y: f32,
+    pub(crate) vx: f32,
+    pub(crate) vy: f32,
     #[serde(rename = "type")]
     pub(crate) enemy_type: EnemyType,
     pub(crate) state: EnemyState,
     pub(crate) facing_right: bool,
+    /// Seconds left before a dead enemy is removed — or, for lakitu, before he
+    /// returns.
+    pub(crate) death_timer: f32,
+    /// Whatever cycle this kind runs on: a plant's emerge/retract position, a
+    /// firebar's tick accumulator, lakitu's countdown to the next egg.
+    pub(crate) cycle_timer: f32,
 }
 
 #[cfg(feature = "vdp")]
@@ -469,9 +479,13 @@ impl Mari0Game {
                 .map(|e| EnemyView {
                     x: e.x,
                     y: e.y,
+                    vx: e.vx,
+                    vy: e.vy,
                     enemy_type: e.enemy_type,
                     state: e.state,
                     facing_right: e.facing_right,
+                    death_timer: e.death_timer,
+                    cycle_timer: e.cycle_timer,
                 })
                 .collect(),
             coins: self
@@ -515,6 +529,7 @@ impl Mari0Game {
             pipe_clip: self.pipe_clip_rect(self.camera.x, self.vw, self.vh),
             checkpoint: self.checkpoint.map(|(c, r)| [c, r]),
             respawn_sublevel: self.respawn_sublevel,
+            lakito_retired: self.lakito_retired,
             lab: self
                 .lab
                 .elements
@@ -782,6 +797,9 @@ impl Mari0Game {
             "koopa_red" => EnemyType::KoopaRed,
             "beetle" => EnemyType::Beetle,
             "plant" => EnemyType::Plant,
+            "lakito" => EnemyType::Lakito,
+            "spikey" => EnemyType::Spikey,
+            "spikey_fall" => EnemyType::SpikeyFall,
             _ => return Err(format!("Unknown enemy type: {}", p.etype)),
         };
         self.enemies.push(Enemy {

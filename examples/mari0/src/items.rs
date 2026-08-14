@@ -670,10 +670,7 @@ impl Mari0Game {
             self.fireballs[fi].explode_timer = 0.0;
         }
         for &ei in &enemy_kills {
-            self.enemies[ei].state = EnemyState::Dead;
-            self.enemies[ei].death_timer = 3.0; // longer timer — flies off screen
-            self.enemies[ei].flipped_death = true;
-            self.enemies[ei].vy = -300.0; // launch upward
+            self.enemies[ei].shotted();
             self.score += 100;
         }
 

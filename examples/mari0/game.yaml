@@ -29,6 +29,8 @@ assets:
     koopa_red: "assets/mari0/koopared.png"
     beetle: "assets/mari0/beetle.png"
     plant: "assets/mari0/plant.png"
+    lakito: "assets/mari0/lakito.png"
+    spikey: "assets/mari0/spikey.png"
     cheep_red: "assets/mari0/cheepcheep.png"
     cheep_white: "assets/mari0/cheepcheep.png"
     coin_anim: "assets/mari0/coinanimation.png"

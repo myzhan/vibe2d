@@ -39,6 +39,20 @@ pub(crate) enum EnemyType {
     /// Cheep-cheep. Red swims fast and level; white drifts slower and bobs.
     CheepRed,
     CheepWhite,
+    /// Lakitu: rides a cloud above the level, matches the player's pace and lobs
+    /// spiny eggs at him. Never touched by gravity or terrain.
+    Lakito,
+    /// A spiny, walking. Mechanically a goomba that cannot be stomped — the
+    /// original literally builds it as one (`goomba.lua:48`, `t = "spikey"`), which
+    /// is why it shares the walker path and the goomba's speed and animation rate.
+    Spikey,
+    /// A spiny still in its egg, arcing through the air after lakitu throws it.
+    ///
+    /// Its own kind rather than a flag because three things differ: it falls at
+    /// 30 blocks/s² instead of 80, it drifts with no horizontal speed, and for the
+    /// first two blocks of its descent it can strike the lakitu who threw it.
+    /// Landing turns it into a [`EnemyType::Spikey`].
+    SpikeyFall,
 }
 
 impl EnemyType {
@@ -63,15 +77,30 @@ impl EnemyType {
     /// Can the player kill this by landing on it?
     ///
     /// Plants, firebars and geysers hurt from every direction — jumping on a
-    /// firebar is how you die, not how you win.
+    /// firebar is how you die, not how you win. So does a spiny, and that is the
+    /// whole point of one: the original's test is a single inequality on the
+    /// goomba's subtype, `a == "goomba" and b.t ~= "goomba"` → kill
+    /// (`mario.lua:1778`), so anything built as a goomba that *isn't* a goomba
+    /// hurts from above as well.
     pub(crate) fn stompable(self) -> bool {
         !matches!(
             self,
-            EnemyType::Plant | EnemyType::Firebar | EnemyType::UpFire
+            EnemyType::Plant
+                | EnemyType::Firebar
+                | EnemyType::UpFire
+                | EnemyType::Spikey
+                | EnemyType::SpikeyFall
         )
     }
 
     /// Enemies that ignore gravity and terrain and follow their own path.
+    ///
+    /// Lakitu is in here on a small liberty: he does carry tile collision in the
+    /// original (`lakito.lua:18`, mask index 2 is the tile category), but all three
+    /// levels that place one — 4-1, 6-1 and 8-2 — are empty of solid tiles for the
+    /// four rows he flies in, so a wall is something he can never reach. Letting him
+    /// ignore terrain costs nothing observable and keeps him out of the walker path,
+    /// which would otherwise reverse him at every wall he doesn't touch.
     pub(crate) fn is_scripted(self) -> bool {
         matches!(
             self,
@@ -81,7 +110,19 @@ impl EnemyType {
                 | EnemyType::CheepRed
                 | EnemyType::CheepWhite
                 | EnemyType::KoopaFlying
+                | EnemyType::Lakito
         )
+    }
+
+    /// Downward acceleration while walking or falling.
+    ///
+    /// Only the thrown spiny egg differs from the world's gravity, and it differs a
+    /// lot — see [`SPIKEY_FALL_GRAVITY`].
+    pub(crate) fn gravity(self) -> f32 {
+        match self {
+            EnemyType::SpikeyFall => SPIKEY_FALL_GRAVITY,
+            _ => GRAVITY,
+        }
     }
 
     /// Can this kind travel through a portal?
@@ -93,7 +134,7 @@ impl EnemyType {
     ///   through a portal never runs (`plant.lua:15`, `castlefire.lua:84`,
     ///   `upfire.lua:16`).
     /// - **`portalable = false`** — cheep-cheeps opt out explicitly even though they
-    ///   do move (`cheepcheep.lua:33`). Lakito does the same, for when it exists.
+    ///   do move (`cheepcheep.lua:33`), and so does lakitu (`lakito.lua:24`).
     pub(crate) fn portalable(self) -> bool {
         !matches!(
             self,
@@ -102,6 +143,7 @@ impl EnemyType {
                 | EnemyType::UpFire
                 | EnemyType::CheepRed
                 | EnemyType::CheepWhite
+                | EnemyType::Lakito
         )
     }
 
@@ -111,7 +153,7 @@ impl EnemyType {
     }
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "vdp", derive(serde::Serialize))]
 #[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
 pub(crate) enum EnemyState {
@@ -188,6 +230,51 @@ impl Enemy {
             // from the pivot is what differs.
             angle_deg: 0.0,
             segment: sp.segment,
+        }
+    }
+
+    /// Killed by fire, a star or a kicked shell: flips over and sails off screen
+    /// (`goomba.lua:177-189`).
+    ///
+    /// Worth a method rather than four copies because lakitu turns it into something
+    /// else entirely: for him "dead" is a 16-second absence, after which he sails
+    /// back in from the right edge as if nothing happened.
+    pub(crate) fn shotted(&mut self) {
+        self.state = EnemyState::Dead;
+        self.flipped_death = true;
+        self.vy = -SHOT_JUMP_FORCE;
+        self.vx = if self.facing_right {
+            SHOT_SPEED_X
+        } else {
+            -SHOT_SPEED_X
+        };
+        self.death_timer = if self.enemy_type == EnemyType::Lakito {
+            LAKITO_RESPAWN
+        } else {
+            SHOT_DEATH_TIME
+        };
+    }
+
+    /// A spiny egg, mid-throw. `spawn_y` is the release height, which is what the
+    /// two-block window for hitting lakitu is measured from.
+    fn spiny_egg(x: f32, y: f32) -> Self {
+        Enemy {
+            x,
+            y,
+            vx: 0.0,
+            vy: -SPIKEY_TOSS_SPEED,
+            enemy_type: EnemyType::SpikeyFall,
+            state: EnemyState::Walking,
+            facing_right: false,
+            on_ground: false,
+            anim_timer: 0.0,
+            death_timer: 0.0,
+            flipped_death: false,
+            spawn_y: y,
+            cycle_timer: 0.0,
+            spawn_x: x,
+            angle_deg: 0.0,
+            segment: 0,
         }
     }
 }
@@ -271,6 +358,25 @@ impl Mari0Game {
         let cam_x = self.camera.x;
         // Cloned up front: the loop below holds `&mut self.enemies`.
         let portals = self.portal_pair();
+        let retired = self.lakito_retired;
+        // Lakitu holds his fire while three spinies are already out. Counted once,
+        // before anything moves, so two lakitus in one level (no shipped level has
+        // any) would both see the same tally rather than racing each other.
+        let spinies_out = self
+            .enemies
+            .iter()
+            .filter(|e| {
+                matches!(e.enemy_type, EnemyType::Spikey | EnemyType::SpikeyFall)
+                    && e.state != EnemyState::Dead
+            })
+            .count();
+        // Eggs can't be pushed onto `self.enemies` from inside the loop that borrows
+        // it, so they queue here and join at the end of the frame.
+        let mut thrown: Vec<Enemy> = Vec::new();
+        // Where lakitu aims: the player's position `LAKITO_DISTANCE_TIME` seconds
+        // from now at his current speed (`lakito.lua:80`). Chasing where the player
+        // *is* would let you shake him off by just holding a direction.
+        let lead_x = self.player.x + self.player.vx * LAKITO_DISTANCE_TIME;
 
         for enemy in &mut self.enemies {
             let ew = PLAYER_SMALL_W;
@@ -333,6 +439,48 @@ impl Mari0Game {
                             enemy.vy = -UPFIRE_FORCE;
                         }
                     }
+                    EnemyType::Lakito => {
+                        if retired {
+                            // Past `lakitoend` he stops caring: no more eggs, no more
+                            // tracking, just a steady drift left until the cull takes
+                            // him (`lakito.lua:59-60`, `:106-108`).
+                            enemy.x -= LAKITO_PASSIVE_SPEED * dt;
+                            enemy.facing_right = false;
+                            continue;
+                        }
+
+                        if spinies_out < LAKITO_MAX_SPINIES && enemy.cycle_timer > LAKITO_THROW_TIME
+                        {
+                            // Released from just above him, tossed straight up. The
+                            // egg carries no sideways speed at all — the arc you dodge
+                            // comes from lakitu's own motion at the moment of release.
+                            thrown.push(Enemy::spiny_egg(enemy.x, enemy.y - PLAYER_SMALL_H));
+                            enemy.cycle_timer = 0.0;
+                        }
+
+                        // Turning is hysteretic: he only reverses once he is a full
+                        // `LAKITO_SPACE` blocks past the lead point, so he oscillates
+                        // slowly around the player instead of jittering on top of him.
+                        let space = LAKITO_SPACE * TILE_SIZE;
+                        if !enemy.facing_right && enemy.x < lead_x - space {
+                            enemy.facing_right = true;
+                        } else if enemy.facing_right && enemy.x > lead_x + space {
+                            enemy.facing_right = false;
+                        }
+
+                        // The two directions are not mirror images, and that
+                        // asymmetry is the whole character: heading right he closes
+                        // at a speed proportional to the gap, so he always catches
+                        // up; heading left he only ever manages 2 blocks/s, so you
+                        // can outrun him going forward but never leave him behind.
+                        enemy.vx = if enemy.facing_right {
+                            let blocks = (enemy.x - lead_x).abs() / TILE_SIZE;
+                            ((blocks - 3.0) * 2.0).round().max(2.0) * TILE_SIZE
+                        } else {
+                            -2.0 * TILE_SIZE
+                        };
+                        enemy.x += enemy.vx * dt;
+                    }
                     EnemyType::CheepRed | EnemyType::CheepWhite => {
                         let speed = if enemy.enemy_type == EnemyType::CheepRed {
                             CHEEP_RED_SPEED
@@ -382,8 +530,9 @@ impl Mari0Game {
                         continue;
                     }
 
-                    // Gravity
-                    enemy.vy += GRAVITY * dt;
+                    // Gravity. Per-kind because a thrown spiny egg is the one thing
+                    // in the game that falls slower than everything else.
+                    enemy.vy += enemy.enemy_type.gravity() * dt;
                     if enemy.vy > MAX_Y_SPEED {
                         enemy.vy = MAX_Y_SPEED;
                     }
@@ -459,6 +608,20 @@ impl Mari0Game {
                         }
                     }
 
+                    // An egg that has touched down hatches (`goomba.lua:250-272`): it
+                    // becomes an ordinary walking spiny and sets off *towards* the
+                    // player, which is why a spiny always greets you head-on rather
+                    // than wandering off.
+                    if enemy.enemy_type == EnemyType::SpikeyFall && enemy.on_ground {
+                        enemy.enemy_type = EnemyType::Spikey;
+                        enemy.facing_right = enemy.x < self.player.x;
+                        enemy.vx = if enemy.facing_right {
+                            ENEMY_SPEED
+                        } else {
+                            -ENEMY_SPEED
+                        };
+                    }
+
                     // Ledge detection (only for walking enemies on ground, not shells)
                     if enemy.state == EnemyState::Walking && enemy.on_ground {
                         let foot_col = if enemy.vx > 0.0 {
@@ -478,8 +641,11 @@ impl Mari0Game {
                 EnemyState::Dead => {
                     enemy.death_timer -= dt;
                     if enemy.flipped_death {
-                        enemy.vy += GRAVITY * dt;
+                        // `shotgravity`, not the world's — a shot enemy hangs a beat
+                        // longer at the top of its arc (`variables.lua:164`).
+                        enemy.vy += SHOT_GRAVITY * dt;
                         enemy.y += enemy.vy * dt;
+                        enemy.x += enemy.vx * dt;
                     }
                 }
                 EnemyState::Shell => {
@@ -557,6 +723,18 @@ impl Mari0Game {
                             -ENEMY_SPEED
                         };
                     }
+                    EnemyState::Walking if enemy.enemy_type == EnemyType::Lakito => {
+                        // Stomping lakitu doesn't finish him, it evicts him: he drops
+                        // out of his cloud upside-down and is back at the right edge
+                        // of the screen 16 seconds later (`lakito.lua:45-56`,
+                        // `:130-133`). Straight down, because `stomp` zeroes the
+                        // upward kick `shotted` had just given him.
+                        enemy.state = EnemyState::Dead;
+                        enemy.flipped_death = true;
+                        enemy.death_timer = LAKITO_RESPAWN;
+                        enemy.vx = 0.0;
+                        enemy.vy = 0.0;
+                    }
                     EnemyState::Walking => {
                         if enemy.enemy_type.is_koopa_like() {
                             // Koopas, red koopas and beetles all retreat into a
@@ -590,10 +768,7 @@ impl Mari0Game {
                 // Star invincibility: kill enemy on contact (flip + fly off).
                 // A star does not clear a firebar or a lava geyser — those are
                 // level geometry with a hitbox, not enemies.
-                enemy.state = EnemyState::Dead;
-                enemy.death_timer = 3.0; // longer timer — flies off screen
-                enemy.flipped_death = true;
-                enemy.vy = -300.0; // launch upward
+                enemy.shotted();
                 let combo_score = COMBO_SCORES[self.combo_index.min(COMBO_SCORES.len() - 1)];
                 self.score += combo_score;
                 self.combo_index += 1;
@@ -621,12 +796,22 @@ impl Mari0Game {
             self.player.on_ground = false;
         }
 
+        self.enemies.append(&mut thrown);
+        self.egg_may_hit_its_thrower();
+        self.respawn_shot_lakitos();
+
         // Remove dead enemies after timer, or enemies that fell off the map
         self.enemies.retain(|e| {
             if e.state == EnemyState::Dead && e.death_timer <= 0.0 {
                 return false;
             }
             if e.y > (self.level.height as f32) * TILE_SIZE + 100.0 {
+                // A shot lakitu who has not yet been retired is *waiting*, not gone:
+                // he has to survive falling out of the world to make it back for his
+                // respawn. Once retired the timer runs down and this catches him.
+                if e.enemy_type == EnemyType::Lakito && e.state == EnemyState::Dead && !retired {
+                    return true;
+                }
                 return false;
             }
             // Scrolled well off the left edge. It does not come back: the
@@ -636,6 +821,83 @@ impl Mari0Game {
             }
             true
         });
+    }
+
+    /// Lakitu can be knocked out of the sky by his own egg — for about a third of
+    /// a second.
+    ///
+    /// Not a bug, though it reads like one. The egg leaves lakitu's hands able to
+    /// collide with him (`goomba.lua:54`, mask index 21 is lakitu's category) and
+    /// only loses that ability once it has fallen [`SPIKEY_HITS_LAKITO_WITHIN`]
+    /// blocks past where it was released (`goomba.lua:132`). Since it is thrown
+    /// *upward* and carries no sideways speed, it comes back down through his
+    /// altitude roughly two thirds of a second later — by which time he has almost
+    /// always moved out from under it, because his slowest speed is 2 blocks/s.
+    /// Almost always: catch him mid-turnaround, where his speed passes through zero,
+    /// and his own egg lands on his head and scores you 200.
+    fn egg_may_hit_its_thrower(&mut self) {
+        let eggs: Vec<[f32; 4]> = self
+            .enemies
+            .iter()
+            .filter(|e| {
+                e.enemy_type == EnemyType::SpikeyFall
+                    && e.state == EnemyState::Walking
+                    && e.y <= e.spawn_y + SPIKEY_HITS_LAKITO_WITHIN
+            })
+            .map(|e| [e.x, e.y, PLAYER_SMALL_W, PLAYER_SMALL_H])
+            .collect();
+        if eggs.is_empty() {
+            return;
+        }
+        let mut struck = Vec::new();
+        for (i, enemy) in self.enemies.iter_mut().enumerate() {
+            if enemy.enemy_type != EnemyType::Lakito || enemy.state != EnemyState::Walking {
+                continue;
+            }
+            let box_ = [enemy.x, enemy.y, PLAYER_SMALL_W, PLAYER_SMALL_H];
+            if eggs.iter().any(|egg| aabb_overlap(box_, *egg)) {
+                enemy.shotted();
+                struck.push(i);
+            }
+        }
+        for i in struck {
+            let (x, y) = (self.enemies[i].x, self.enemies[i].y);
+            self.score += LAKITO_SCORE;
+            self.score_popups.push(crate::effects::ScorePopup {
+                x,
+                y,
+                value: LAKITO_SCORE,
+                timer: 0.0,
+            });
+        }
+    }
+
+    /// Bring a shot lakitu back at the right edge of the screen.
+    ///
+    /// He re-enters at the altitude he first appeared at, not where he fell from
+    /// (`lakito.lua:48`), so a level's lakitu always flies the same lane. Retired
+    /// lakitus are left to expire — being past `lakitoend` is permanent.
+    fn respawn_shot_lakitos(&mut self) {
+        if self.lakito_retired {
+            return;
+        }
+        let (cam_x, vw) = (self.camera.x, self.vw);
+        for enemy in &mut self.enemies {
+            if enemy.enemy_type != EnemyType::Lakito
+                || enemy.state != EnemyState::Dead
+                || enemy.death_timer > 0.0
+            {
+                continue;
+            }
+            enemy.state = EnemyState::Walking;
+            enemy.flipped_death = false;
+            enemy.x = cam_x + vw;
+            enemy.y = enemy.spawn_y;
+            enemy.vx = 0.0;
+            enemy.vy = 0.0;
+            enemy.facing_right = false;
+            enemy.cycle_timer = 0.0;
+        }
     }
 }
 
@@ -764,12 +1026,82 @@ mod tests {
             // `portalable = false`: moves, but opts out.
             EnemyType::CheepRed,
             EnemyType::CheepWhite,
+            EnemyType::Lakito,
         ] {
             assert!(!kind.portalable(), "{kind:?} should not travel");
         }
         assert!(
             EnemyType::KoopaFlying.is_scripted() && EnemyType::KoopaFlying.portalable(),
             "scripted and portalable are independent; a flying koopa is both"
+        );
+    }
+
+    /// A spiny hurts from above, which is the one thing that makes it not a goomba.
+    ///
+    /// The original expresses this as `b.t ~= "goomba"` rather than a per-type flag
+    /// (`mario.lua:1778`), so it is easy to port a spiny as "a goomba with a different
+    /// sprite" and quietly hand the player a free stomp.
+    #[test]
+    fn a_spiny_cannot_be_stomped_but_a_goomba_can() {
+        assert!(EnemyType::Goomba.stompable());
+        assert!(!EnemyType::Spikey.stompable());
+        assert!(!EnemyType::SpikeyFall.stompable());
+        // Lakitu, by contrast, is on the stomp list (`mario.lua:1761`).
+        assert!(EnemyType::Lakito.stompable());
+    }
+
+    /// The egg falls at 30 blocks/s², nothing else does.
+    #[test]
+    fn only_a_thrown_spiny_egg_falls_slower_than_the_world() {
+        assert_eq!(EnemyType::SpikeyFall.gravity(), SPIKEY_FALL_GRAVITY);
+        const { assert!(SPIKEY_FALL_GRAVITY < GRAVITY) };
+        for kind in [
+            EnemyType::Goomba,
+            EnemyType::Spikey,
+            EnemyType::Koopa,
+            EnemyType::Lakito,
+        ] {
+            assert_eq!(kind.gravity(), GRAVITY, "{kind:?} should fall normally");
+        }
+    }
+
+    /// Lakitu opts out of portals explicitly, like a cheep-cheep — he is not a
+    /// fixture, he simply refuses.
+    #[test]
+    fn lakito_refuses_portals_without_being_a_fixture() {
+        assert!(!EnemyType::Lakito.portalable());
+        assert!(EnemyType::Lakito.is_scripted());
+        // The spinies he throws have no such exemption: they are goombas.
+        assert!(EnemyType::Spikey.portalable());
+        assert!(EnemyType::SpikeyFall.portalable());
+    }
+
+    /// "Dead" means something different for lakitu: a 16-second absence, not removal.
+    #[test]
+    fn a_downed_lakito_is_scheduled_to_return() {
+        let mut lakito = Enemy::spiny_egg(0.0, 0.0);
+        lakito.enemy_type = EnemyType::Lakito;
+        lakito.shotted();
+        assert_eq!(lakito.state, EnemyState::Dead);
+        assert_eq!(lakito.death_timer, LAKITO_RESPAWN);
+
+        let mut goomba = Enemy::spiny_egg(0.0, 0.0);
+        goomba.enemy_type = EnemyType::Goomba;
+        goomba.shotted();
+        assert_eq!(goomba.death_timer, SHOT_DEATH_TIME);
+        const { assert!(SHOT_DEATH_TIME < LAKITO_RESPAWN) };
+    }
+
+    /// The egg is tossed upward, which is why it can come back down onto its thrower.
+    #[test]
+    fn a_spiny_egg_leaves_lakitos_hands_going_up() {
+        let egg = Enemy::spiny_egg(100.0, 200.0);
+        assert_eq!(egg.enemy_type, EnemyType::SpikeyFall);
+        assert!(egg.vy < 0.0, "thrown up, not dropped");
+        assert_eq!(egg.vx, 0.0, "no sideways speed of its own");
+        assert_eq!(
+            egg.spawn_y, 200.0,
+            "the release height is what the lakitu-hit window is measured from"
         );
     }
 
@@ -797,6 +1129,43 @@ mod tests {
                 spawned.iter().all(|s| *s),
                 "{pack}/{name}: some spawns were never claimed"
             );
+        }
+    }
+
+    /// No level places a spiny, and every level with a lakitu says where he stops.
+    ///
+    /// Both halves of this are why lakitu and the spiny had to be built together. The
+    /// entity ids exist (98 and 99) and the editor offers them, but nothing ships one:
+    /// a walking spiny is only ever reached by an egg landing, so a port that adds
+    /// `spikey` as a spawn point and stops there has added an enemy the player can
+    /// never meet. The `lakitoend` half is the other side of the same coin — without
+    /// it lakitu would follow the player into the flagpole.
+    #[test]
+    fn spinies_are_never_placed_and_every_lakito_has_somewhere_to_stop() {
+        let mut with_lakito = Vec::new();
+        for (pack, name, _) in level::LEVELS {
+            let parsed = level::load(pack, name)
+                .expect("shipped level")
+                .expect("parses");
+            for spawn in &parsed.markers.enemies {
+                assert_ne!(
+                    spawn.kind,
+                    level::EntityKind::Spikey,
+                    "{pack}/{name} places a spiny; the roster assumed none did"
+                );
+                assert_ne!(spawn.kind, level::EntityKind::SpikeyHalf, "{pack}/{name}");
+                if spawn.kind == level::EntityKind::Lakito {
+                    with_lakito.push((name, parsed.markers.lakito_end));
+                }
+            }
+        }
+        assert_eq!(
+            with_lakito.len(),
+            3,
+            "expected 4-1, 6-1 and 8-2 to be the only lakitu levels, got {with_lakito:?}"
+        );
+        for (name, end) in with_lakito {
+            assert!(end.is_some(), "{name} has a lakitu but no lakitoend");
         }
     }
 
