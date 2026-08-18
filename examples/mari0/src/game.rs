@@ -113,6 +113,13 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// Moving platforms currently in the world, and which of the level's are still
+    /// waiting for the camera.
+    pub(crate) platforms: Vec<crate::platform::Platform>,
+    pub(crate) platforms_spawned: Vec<bool>,
+    /// The shaft spawners. Copied out of the level because they mutate (each carries a
+    /// release timer) and are dropped once the camera passes them.
+    pub(crate) platform_spawners: Vec<crate::platform::PlatformSpawner>,
     /// Deterministic stand-in for `math.random`: cannon delays, bill altitudes.
     ///
     /// Reseeded per level so a level always plays out the same way — the VDP probes
@@ -165,6 +172,8 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_bullet_bill: TextureId,
     pub(crate) tex_hammer_bro: TextureId,
     pub(crate) tex_hammer: TextureId,
+    pub(crate) tex_platform: TextureId,
+    pub(crate) tex_platform_bonus: TextureId,
     pub(crate) tex_spikey: TextureId,
     pub(crate) tex_cheep_red: TextureId,
     pub(crate) tex_cheep_white: TextureId,
@@ -322,6 +331,9 @@ impl Mari0Game {
             None => 0,
         };
         self.enemies.clear();
+        self.platforms.clear();
+        self.platforms_spawned = vec![false; level.platform_spawns.len()];
+        self.platform_spawners = level.platform_spawners.clone();
         self.lakito_retired = false;
         self.bullet_bill_zone = false;
         self.bullet_bill_timer = 0.0;
@@ -774,6 +786,8 @@ impl Mari0Game {
         self.check_maze_gate();
         self.update_maze();
         self.update_lab(ctx, dt, input.is_action_just_pressed("use"));
+        self.update_platforms(dt);
+        self.bump_bonus_platforms();
         self.update_plates_and_grills(ctx, dt);
 
         // ── Timer and low-time music ──
@@ -930,6 +944,9 @@ impl Game for Mari0Game {
             checkpoint: None,
             checkpoints_passed: 0,
             lakito_retired: false,
+            platforms: Vec::new(),
+            platforms_spawned: Vec::new(),
+            platform_spawners: Vec::new(),
             rng: Rng::new(1),
             bullet_bill_zone: false,
             bullet_bill_timer: 0.0,
@@ -958,6 +975,8 @@ impl Game for Mari0Game {
             tex_bullet_bill: t("bullet_bill"),
             tex_hammer_bro: t("hammer_bro"),
             tex_hammer: t("hammer"),
+            tex_platform: t("platform"),
+            tex_platform_bonus: t("platform_bonus"),
             tex_spikey: t("spikey"),
             tex_cheep_red: t("cheep_red"),
             tex_cheep_white: t("cheep_white"),

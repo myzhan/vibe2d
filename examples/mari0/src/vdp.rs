@@ -55,6 +55,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) lakito_retired: bool,
     /// Is the `bulletbillstart`…`bulletbillend` stretch currently raining bills?
     pub(crate) bullet_bill_zone: bool,
+    /// Moving platforms in the world right now.
+    pub(crate) platforms: Vec<PlatformView>,
     /// Maze progress, for the looping castles. `null` in levels without spans.
     pub(crate) maze: Option<MazeView>,
     /// The lab signal network. Empty outside the lab mappack.
@@ -169,6 +171,19 @@ pub(crate) struct EnemyView {
     /// Whatever cycle this kind runs on: a plant's emerge/retract position, a
     /// firebar's tick accumulator, lakitu's countdown to the next egg.
     pub(crate) cycle_timer: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct PlatformView {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) w: f32,
+    pub(crate) h: f32,
+    #[serde(rename = "type")]
+    pub(crate) kind: crate::platform::PlatformKind,
+    pub(crate) vx: f32,
+    pub(crate) vy: f32,
 }
 
 #[cfg(feature = "vdp")]
@@ -539,6 +554,19 @@ impl Mari0Game {
             respawn_sublevel: self.respawn_sublevel,
             lakito_retired: self.lakito_retired,
             bullet_bill_zone: self.bullet_bill_zone,
+            platforms: self
+                .platforms
+                .iter()
+                .map(|p| PlatformView {
+                    x: p.x,
+                    y: p.y,
+                    w: p.w,
+                    h: PLATFORM_HEIGHT,
+                    kind: p.kind,
+                    vx: p.vx,
+                    vy: p.vy,
+                })
+                .collect(),
             lab: self
                 .lab
                 .elements

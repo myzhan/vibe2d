@@ -25,6 +25,7 @@ mod menu;
 mod music;
 mod physics;
 mod pipe;
+mod platform;
 mod player;
 mod portal;
 mod portal_math;

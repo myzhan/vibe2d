@@ -131,6 +131,29 @@ pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
 /// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
 pub(crate) const LAKITO_SCORE: u32 = 200;
 
+// ── Moving platforms (variables.lua:126-134) ──
+/// Half a block thick — you stand on one, you don't stand *in* it.
+pub(crate) const PLATFORM_HEIGHT: f32 = 8.0 / 16.0 * TILE_SIZE;
+/// How far below its cell's top edge a platform hangs (`y - 15/16`).
+pub(crate) const PLATFORM_CELL_DROP: f32 = (1.0 - 15.0 / 16.0) * TILE_SIZE;
+/// Sideways travel and its period.
+pub(crate) const PLATFORM_HOR_DIST: f32 = 3.3125 * TILE_SIZE;
+pub(crate) const PLATFORM_HOR_TIME: f32 = 4.0;
+/// Vertical travel and its period — over eight blocks, the tallest ride in the game.
+pub(crate) const PLATFORM_VER_DIST: f32 = 8.625 * TILE_SIZE;
+pub(crate) const PLATFORM_VER_TIME: f32 = 6.4;
+/// Constant speed of the one-way shaft lifts.
+pub(crate) const PLATFORM_JUST_SPEED: f32 = 3.5 * TILE_SIZE;
+/// Seconds between a spawner's releases.
+pub(crate) const PLATFORM_SPAWN_DELAY: f32 = 2.18;
+/// Speed the bonus-stage platform slides at once headbutted.
+pub(crate) const PLATFORM_BONUS_SPEED: f32 = 3.75 * TILE_SIZE;
+/// Descent rate of a platform with someone standing on it — flat, never accelerating.
+pub(crate) const PLATFORM_FALL_SPEED: f32 = 4.0 * TILE_SIZE;
+/// How close to the surface counts as riding a *vertically* moving platform. The
+/// horizontal case is exact instead; see `carry_rider`.
+pub(crate) const PLATFORM_RIDE_TOLERANCE: f32 = 0.1 * TILE_SIZE;
+
 // ── Hammer bro (variables.lua:240-251) ──
 /// Patrol speed, 1.5 blocks/s. He shuffles rather than walks.
 pub(crate) const HAMMERBRO_SPEED: f32 = 1.5 * TILE_SIZE;

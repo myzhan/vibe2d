@@ -113,6 +113,15 @@ pub(crate) struct Level {
     /// block thick and sits *inside* its cell — rounding it up to the whole cell would
     /// wall off the row a horizontal bridge is supposed to let you walk along.
     pub(crate) solid_rects: Vec<SolidRect>,
+    /// Moving platforms, as solids. **A second list, deliberately.**
+    ///
+    /// `solid_rects` is *assigned* wholesale by the lab each frame — but only when the
+    /// level has lab elements at all (`update_lab` returns early otherwise). So in
+    /// every SMB level nothing ever clears it, and appending platforms to it leaves one
+    /// stale rectangle per frame lying around forever. The first symptom was a falling
+    /// platform that dropped a few pixels and stopped: the player was standing on the
+    /// ghost of where it had been on frame one.
+    pub(crate) platform_rects: Vec<SolidRect>,
 
     /// Cells whose collision is suppressed because a portal has opened there.
     ///
@@ -121,6 +130,16 @@ pub(crate) struct Level {
     /// set — see `physics::blocks_movement`.
     pub(crate) portal_holes: HashSet<(i32, i32)>,
 
+    /// Platforms the camera has yet to reveal, and the same cell index the enemies use.
+    ///
+    /// A separate pair of lists rather than more `enemy_spawns`, because a platform is
+    /// a solid rather than a creature — but revealed by exactly the same sweep, since
+    /// the original routes both through `spawnenemy` and so gives platforms the
+    /// `x±2` cluster rule too.
+    pub(crate) platform_spawns: Vec<PlatformSpawnPoint>,
+    pub(crate) platform_spawns_by_cell: HashMap<(i32, i32), Vec<usize>>,
+    /// Elevator-shaft spawners, built at load rather than revealed.
+    pub(crate) platform_spawners: Vec<crate::platform::PlatformSpawner>,
     /// The stretch in which bullet bills rain in from the right edge, as columns.
     ///
     /// Both are compared against the *player*, and the pair is not symmetric in use:
@@ -274,11 +293,29 @@ impl Level {
     }
 }
 
+/// A platform waiting to be revealed: its cell, which of the six behaviours, and how
+/// wide the level said to make it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct PlatformSpawnPoint {
+    pub(crate) cell: (i32, i32),
+    pub(crate) kind: crate::platform::PlatformKind,
+    pub(crate) size_blocks: f32,
+}
+
+/// The width a platform's argument asks for, in blocks.
+///
+/// Defaults to 2 when absent (`platform.lua:5`), which one `platformright` in the
+/// shipped data relies on.
+pub(crate) fn platform_width(arg: Option<f32>) -> f32 {
+    arg.unwrap_or(2.0)
+}
+
 /// A pending enemy placement produced by the loader.
 ///
 /// A named struct rather than a tuple because firebars need a segment index —
 /// each fireball on a bar is its own entity sharing the bar's pivot.
 #[derive(Debug, Clone, Copy)]
+
 pub(crate) struct EnemySpawnPoint {
     pub(crate) enemy_type: EnemyType,
     pub(crate) x: f32,
@@ -576,6 +613,49 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         }
     }
 
+    // Platforms: revealed by the same column sweep as the enemies, but kept in their
+    // own list because what they become is a solid, not a creature.
+    let mut platform_spawns: Vec<PlatformSpawnPoint> = Vec::new();
+    for spawn in &parsed.markers.enemies {
+        use crate::platform::PlatformKind;
+        let kind = match spawn.kind {
+            level::EntityKind::PlatformUp => PlatformKind::Vertical,
+            level::EntityKind::PlatformRight => PlatformKind::Horizontal,
+            level::EntityKind::PlatformFall => PlatformKind::Fall,
+            level::EntityKind::PlatformBonus => PlatformKind::Bonus,
+            _ => continue,
+        };
+        // The size argument is an index into a table of widths, not a width
+        // (`entity.lua:209-231`). The bonus-stage platform ignores it and is always 3
+        // (`game.lua:3749`).
+        let size_blocks = if kind == PlatformKind::Bonus {
+            3.0
+        } else {
+            platform_width(spawn.argf)
+        };
+        platform_spawns.push(PlatformSpawnPoint {
+            cell: (spawn.x as i32, spawn.y as i32),
+            kind,
+            size_blocks,
+        });
+    }
+    let mut platform_spawns_by_cell: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (i, p) in platform_spawns.iter().enumerate() {
+        platform_spawns_by_cell.entry(p.cell).or_default().push(i);
+    }
+    // The shaft spawners exist from load, unlike everything else here.
+    let platform_spawners: Vec<crate::platform::PlatformSpawner> = parsed
+        .markers
+        .platform_spawners
+        .iter()
+        .map(|(x, y, up, arg)| crate::platform::PlatformSpawner {
+            cell: (*x as i32, *y as i32),
+            up: *up,
+            size_blocks: platform_width(*arg),
+            timer: 0.0,
+        })
+        .collect();
+
     // Firebar segments ride along in the spawn list; `segment` is patched in
     // after construction since the tuple form has no room for it.
     for (px, py, seg) in &firebar_segments {
@@ -687,12 +767,16 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         maze_gate_counts,
         maze_gates,
         maze_end_cols,
+        platform_spawns,
+        platform_spawns_by_cell,
+        platform_spawners,
         lakito_end: parsed.markers.lakito_end.map(|c| c as i32),
         bullet_bill_start: parsed.markers.bullet_bill_start.map(|c| c as i32),
         bullet_bill_end: parsed.markers.bullet_bill_end.map(|c| c as i32),
         portal_holes: HashSet::new(),
         solid_extras: HashSet::new(),
         solid_rects: Vec::new(),
+        platform_rects: Vec::new(),
         gels: (0..height)
             .flat_map(|row| (0..width).map(move |col| (col, row)))
             .map(|(col, row)| parsed.gels(col, row))

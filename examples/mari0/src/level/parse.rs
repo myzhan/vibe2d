@@ -46,6 +46,13 @@ pub struct Cell {
     pub entity: Option<EntityKind>,
     /// The entity's argument (pipe target, platform width, gel colour, …).
     pub arg: Option<u16>,
+    /// The same argument, unrounded.
+    ///
+    /// Needed because **one** argument in the whole format isn't an integer: a
+    /// platform width of `1.5` (`entity.lua:210-214` offers 1.5, 2, 3 and 5, and four
+    /// of the shipped elevator shafts use the 1.5). Parsed as `u16` it silently
+    /// becomes `None` and the platform comes out the default width.
+    pub argf: Option<f32>,
     /// Resolved `link` target in tile coordinates, if the cell carries one.
     ///
     /// The link lives on the **receiver** and points at the **emitter** — the
@@ -59,6 +66,7 @@ impl Cell {
         tile: TILE_EMPTY,
         entity: None,
         arg: None,
+        argf: None,
         link: None,
     };
 
@@ -66,6 +74,7 @@ impl Cell {
         tile: TILE_GROUND,
         entity: None,
         arg: None,
+        argf: None,
         link: None,
     };
 }
@@ -191,6 +200,12 @@ pub struct Markers {
     pub enemies: Vec<EnemySpawn>,
     /// Contents of blocks: position → what pops out.
     pub block_contents: Vec<(usize, usize, EntityKind, Option<u16>)>,
+    /// Elevator-shaft spawners: `(x, y, is_up, width_in_blocks)`.
+    ///
+    /// Not enemies and not lab elements: the original builds these in the parsing
+    /// loop itself (`game.lua:2386-2389`), so they exist from load rather than being
+    /// revealed by the camera.
+    pub platform_spawners: Vec<(usize, usize, bool, Option<f32>)>,
     pub bullet_bill_start: Option<usize>,
     pub bullet_bill_end: Option<usize>,
     pub fire_start: Option<usize>,
@@ -220,6 +235,8 @@ pub struct EnemySpawn {
     pub y: usize,
     pub kind: EntityKind,
     pub arg: Option<u16>,
+    /// The unrounded argument — only a platform's 1.5-block width needs it.
+    pub argf: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -466,6 +483,7 @@ fn parse_cell(token: &str) -> Cell {
 
     let mut entity = None;
     let mut arg = None;
+    let mut argf = None;
     let mut link = None;
 
     let rest: Vec<&str> = parts.collect();
@@ -484,7 +502,10 @@ fn parse_cell(token: &str) -> Cell {
         }
         match i {
             0 => entity = part.parse().ok().and_then(EntityKind::from_id),
-            1 => arg = part.parse().ok(),
+            1 => {
+                arg = part.parse().ok();
+                argf = part.parse().ok();
+            }
             _ => {}
         }
         i += 1;
@@ -494,6 +515,7 @@ fn parse_cell(token: &str) -> Cell {
         tile,
         entity,
         arg,
+        argf,
         link,
     }
 }
@@ -527,7 +549,17 @@ fn collect_marker(m: &mut Markers, x: usize, y: usize, cell: &Cell) {
             m.block_contents.push((x, y, kind, arg));
         }
         Drain | Remove => {}
-        _ if kind.is_lazy_enemy() => m.enemies.push(EnemySpawn { x, y, kind, arg }),
+        PlatformSpawnerUp | PlatformSpawnerDown => {
+            m.platform_spawners
+                .push((x, y, kind == PlatformSpawnerUp, cell.argf))
+        }
+        _ if kind.is_lazy_enemy() => m.enemies.push(EnemySpawn {
+            x,
+            y,
+            kind,
+            arg,
+            argf: cell.argf,
+        }),
         _ if kind.is_lab() => m.lab.push(LabPlacement {
             x,
             y,

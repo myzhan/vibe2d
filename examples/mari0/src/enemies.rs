@@ -602,6 +602,23 @@ impl Mari0Game {
                 self.enemies
                     .push(Enemy::from_spawn(&self.level.enemy_spawns[i]));
             }
+            // Platforms come through the same sweep, and so inherit the cluster rule:
+            // the original creates them in `spawnenemy` alongside the creatures, which
+            // is also why their oscillation phase starts when the camera reveals them
+            // rather than at load — you meet a lift at the bottom of its travel.
+            for i in column_spawn_indices(
+                &self.level.platform_spawns_by_cell,
+                &mut self.platforms_spawned,
+                self.spawn_frontier,
+            ) {
+                let sp = self.level.platform_spawns[i];
+                self.platforms.push(crate::platform::Platform::new(
+                    sp.cell.0,
+                    sp.cell.1,
+                    sp.kind,
+                    sp.size_blocks,
+                ));
+            }
         }
     }
 

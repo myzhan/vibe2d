@@ -147,9 +147,13 @@ pub(crate) fn move_and_collide_x(
 
 /// Which non-tile solids `body` collides with.
 fn solids(level: &Level, body: Body) -> impl Iterator<Item = &SolidRect> {
+    // Two lists, chained: the lab's (which it reassigns every frame) and the
+    // platforms' (which nothing else touches). See `Level::platform_rects` for why
+    // they can't share one.
     level
         .solid_rects
         .iter()
+        .chain(level.platform_rects.iter())
         .filter(move |s| body != Body::Cube || !s.cubes_pass)
 }
 

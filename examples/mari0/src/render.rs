@@ -62,6 +62,31 @@ impl Mari0Game {
         ]
     }
 
+    /// Draw every platform, one block-wide segment at a time.
+    ///
+    /// `platform.png` is a single 16x8 tile repeated across the width — there is no
+    /// wide sprite (`platform.lua:146-157`). A fractional width draws `floor(size)`
+    /// segments and then **one more at the right edge**, overlapping the last, which is
+    /// how a 1.5-block platform gets a solid-looking right end.
+    fn draw_platforms(&self, screen: &mut Screen, cam_x: f32) {
+        for p in &self.platforms {
+            let tex = if p.kind == crate::platform::PlatformKind::Bonus {
+                self.tex_platform_bonus
+            } else {
+                self.tex_platform
+            };
+            let whole = (p.w / TILE_SIZE).floor() as i32;
+            for i in 0..whole {
+                let x = p.x + i as f32 * TILE_SIZE - cam_x;
+                screen.draw_sprite(tex, x, p.y, TILE_SIZE, PLATFORM_HEIGHT);
+            }
+            if p.w % TILE_SIZE != 0.0 {
+                let x = p.x + p.w - TILE_SIZE - cam_x;
+                screen.draw_sprite(tex, x, p.y, TILE_SIZE, PLATFORM_HEIGHT);
+            }
+        }
+    }
+
     /// Draw one tile, from whichever of the two sheets owns its id.
     ///
     /// The lab tiles are ids 133..220 on a second sheet. Sending those to the SMB
@@ -147,6 +172,11 @@ impl Mari0Game {
                 }
             }
         }
+
+        // ── Moving platforms ──
+        // Before the lab and the actors: they're scenery you stand on, and Mario has
+        // to draw in front of one he is riding.
+        self.draw_platforms(screen, cam_x);
 
         // ── The lab: buttons, doors, indicators, beams and bridges ──
         // After the tiles, since every one of them is mounted on a wall, and before the
