@@ -125,6 +125,10 @@ pub(crate) struct Mari0Game {
     /// Reseeded per level so a level always plays out the same way — the VDP probes
     /// and the autopilot both depend on that.
     pub(crate) rng: Rng,
+    /// Is the player inside this level's `flyingfishstart`…`flyingfishend` stretch?
+    pub(crate) flying_fish_zone: bool,
+    pub(crate) flying_fish_timer: f32,
+    pub(crate) flying_fish_delay: f32,
     /// Is the player inside this level's `bulletbillstart`…`bulletbillend` stretch?
     ///
     /// Unlike lakitu's retirement this one is **not** a latch: crossing `end` turns it
@@ -172,6 +176,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_bullet_bill: TextureId,
     pub(crate) tex_hammer_bro: TextureId,
     pub(crate) tex_hammer: TextureId,
+    pub(crate) tex_squid: TextureId,
     pub(crate) tex_platform: TextureId,
     pub(crate) tex_platform_bonus: TextureId,
     pub(crate) tex_spikey: TextureId,
@@ -337,6 +342,8 @@ impl Mari0Game {
         self.lakito_retired = false;
         self.bullet_bill_zone = false;
         self.bullet_bill_timer = 0.0;
+        self.flying_fish_zone = false;
+        self.flying_fish_timer = 0.0;
         // Seeded from the level's shape so different levels differ but a reload of the
         // same one repeats. `time_limit` and `width` are both stable per file.
         self.rng =
@@ -442,6 +449,43 @@ impl Mari0Game {
                 -1.0,
             ));
             ctx.audio.play("bulletbill");
+        }
+    }
+
+    /// Send flying fish leaping out of the water while the player is in the zone.
+    ///
+    /// The same shape as the bullet-bill zone down to the two-way latch, but the fish
+    /// come from *below*: they start under the bottom of the world at a random column
+    /// **inside the visible screen** (`flyingfish.lua:5`) rather than off the edge, so
+    /// they burst up through the floor in front of you.
+    ///
+    /// Their sideways speed is the player's own plus a nudge, which makes them
+    /// impossible to outrun by design.
+    fn update_flying_fish_zone(&mut self, dt: f32) {
+        if let Some(start) = self.level.flying_fish_start
+            && self.player.x >= start as f32 * TILE_SIZE
+        {
+            self.flying_fish_zone = true;
+        }
+        if let Some(end) = self.level.flying_fish_end
+            && self.player.x >= end as f32 * TILE_SIZE
+        {
+            self.flying_fish_zone = false;
+        }
+        if !self.flying_fish_zone {
+            return;
+        }
+        self.flying_fish_timer += dt;
+        while self.flying_fish_timer > self.flying_fish_delay {
+            self.flying_fish_timer -= self.flying_fish_delay;
+            self.flying_fish_delay = self.rng.tenths(FLYING_FISH_MIN, FLYING_FISH_MAX);
+            let col = self.rng.range(0, (self.vw / TILE_SIZE) as i32);
+            let drift = self.rng.range(FLYING_FISH_DRIFT.0, FLYING_FISH_DRIFT.1) as f32;
+            self.enemies.push(Enemy::flying_fish(
+                self.camera.x + col as f32 * TILE_SIZE,
+                self.level.height as f32 * TILE_SIZE,
+                self.player.vx + drift * TILE_SIZE,
+            ));
         }
     }
 
@@ -783,6 +827,8 @@ impl Mari0Game {
         self.check_checkpoint_passed();
         self.check_lakito_retired();
         self.update_bullet_bill_zone(dt, ctx);
+        // No sound: a leaping fish is silent in the original, and there are a lot of them.
+        self.update_flying_fish_zone(dt);
         self.check_maze_gate();
         self.update_maze();
         self.update_lab(ctx, dt, input.is_action_just_pressed("use"));
@@ -948,6 +994,9 @@ impl Game for Mari0Game {
             platforms_spawned: Vec::new(),
             platform_spawners: Vec::new(),
             rng: Rng::new(1),
+            flying_fish_zone: false,
+            flying_fish_timer: 0.0,
+            flying_fish_delay: FLYING_FISH_MIN,
             bullet_bill_zone: false,
             bullet_bill_timer: 0.0,
             bullet_bill_delay: BULLET_BILL_ZONE_MIN,
@@ -975,6 +1024,7 @@ impl Game for Mari0Game {
             tex_bullet_bill: t("bullet_bill"),
             tex_hammer_bro: t("hammer_bro"),
             tex_hammer: t("hammer"),
+            tex_squid: t("squid"),
             tex_platform: t("platform"),
             tex_platform_bonus: t("platform_bonus"),
             tex_spikey: t("spikey"),

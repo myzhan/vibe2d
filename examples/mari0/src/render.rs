@@ -400,6 +400,32 @@ impl Mari0Game {
                                 false,
                             );
                         }
+                        EnemyType::Squid => {
+                            // Two frames, but not on a timer: the sprite changes with
+                            // the *phase* — arms spread only while it sinks
+                            // (`squid.lua:121`, `:130`).
+                            let frame = u32::from(enemy.squid_phase == SquidPhase::Sink);
+                            screen.draw_sprite_region_flipped(
+                                self.tex_squid,
+                                squid_uv(frame),
+                                dst,
+                                enemy.facing_right,
+                                false,
+                            );
+                        }
+                        EnemyType::FlyingFish => {
+                            // The original draws these with the cheep-cheep sheet
+                            // (`flyingfish.lua:29`) — a flying fish *is* a cheep-cheep
+                            // that got launched.
+                            let frame = ((enemy.anim_timer / 0.35) as u32) % 2;
+                            screen.draw_sprite_region_flipped(
+                                self.tex_cheep_red,
+                                cheep_uv(frame),
+                                dst,
+                                enemy.facing_right,
+                                false,
+                            );
+                        }
                         EnemyType::Hammer => {
                             let frame = ((enemy.anim_timer / HAMMER_ANIM_SPEED) as u32) % 4;
                             screen.draw_sprite_region_flipped(

@@ -110,6 +110,12 @@ pub(crate) fn hammer_uv(frame: u32) -> [f32; 4] {
     [(frame % 4) as f32 * 0.25, 0.0, 0.25, 0.25]
 }
 
+/// Squid frame. `squid.png` is 32x32: two 16x16 frames — arms up while it drifts and
+/// lunges, arms spread while it sinks.
+pub(crate) fn squid_uv(frame: u32) -> [f32; 4] {
+    [(frame % 2) as f32 * 0.5, 0.0, 0.5, 0.5]
+}
+
 /// Piranha plant frame UV. `plant.png` is 32x128: **16x23** cells, 2 frames wide.
 ///
 /// 23, not 24 (`main.lua:464`): the rows butt up against each other with no

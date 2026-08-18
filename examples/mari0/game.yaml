@@ -33,6 +33,7 @@ assets:
     bullet_bill: "assets/mari0/bulletbill.png"
     hammer_bro: "assets/mari0/hammerbros.png"
     hammer: "assets/mari0/hammer.png"
+    squid: "assets/mari0/squid.png"
     platform: "assets/mari0/platform.png"
     platform_bonus: "assets/mari0/platformbonus.png"
     spikey: "assets/mari0/spikey.png"

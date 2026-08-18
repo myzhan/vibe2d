@@ -55,6 +55,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) lakito_retired: bool,
     /// Is the `bulletbillstart`…`bulletbillend` stretch currently raining bills?
     pub(crate) bullet_bill_zone: bool,
+    /// Is the `flyingfishstart`…`flyingfishend` stretch currently throwing fish?
+    pub(crate) flying_fish_zone: bool,
     /// Moving platforms in the world right now.
     pub(crate) platforms: Vec<PlatformView>,
     /// Maze progress, for the looping castles. `null` in levels without spans.
@@ -171,6 +173,8 @@ pub(crate) struct EnemyView {
     /// Whatever cycle this kind runs on: a plant's emerge/retract position, a
     /// firebar's tick accumulator, lakitu's countdown to the next egg.
     pub(crate) cycle_timer: f32,
+    /// Squid only: which beat of its three-part cycle it is on.
+    pub(crate) squid_phase: SquidPhase,
 }
 
 #[cfg(feature = "vdp")]
@@ -509,6 +513,7 @@ impl Mari0Game {
                     facing_right: e.facing_right,
                     death_timer: e.death_timer,
                     cycle_timer: e.cycle_timer,
+                    squid_phase: e.squid_phase,
                 })
                 .collect(),
             coins: self
@@ -554,6 +559,7 @@ impl Mari0Game {
             respawn_sublevel: self.respawn_sublevel,
             lakito_retired: self.lakito_retired,
             bullet_bill_zone: self.bullet_bill_zone,
+            flying_fish_zone: self.flying_fish_zone,
             platforms: self
                 .platforms
                 .iter()
@@ -850,6 +856,8 @@ impl Mari0Game {
             "lakito" => EnemyType::Lakito,
             "bullet_bill" => EnemyType::BulletBill,
             "hammer_bro" => EnemyType::HammerBro,
+            "squid" => EnemyType::Squid,
+            "flying_fish" => EnemyType::FlyingFish,
             "hammer" => EnemyType::Hammer,
             "bullet_bill_cannon" => EnemyType::BulletBillCannon,
             "spikey" => EnemyType::Spikey,
@@ -888,6 +896,8 @@ impl Mari0Game {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            squid_phase: SquidPhase::Idle,
+            beat_from: 0.0,
             ignore_tiles: false,
             drop_from_y: None,
         });

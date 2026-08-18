@@ -67,6 +67,12 @@ pub(crate) enum EnemyType {
     /// A hammer in flight. Arcs, ignores terrain, hurts from every side, and cannot
     /// be destroyed — a fireball bursts on one without stopping it.
     Hammer,
+    /// A bloober. Drifts down, lunges diagonally up two blocks, sinks one, repeats —
+    /// and cannot be stomped, so the only way past is round it.
+    Squid,
+    /// A flying fish, leaping out of the water on the player's own horizontal speed
+    /// plus a random nudge. Ignores terrain; stomping one kills it.
+    FlyingFish,
     /// The cannon, which is a timer rather than a creature.
     ///
     /// It lives in the enemy list only to inherit the lazy per-column reveal and the
@@ -112,6 +118,7 @@ impl EnemyType {
                 | EnemyType::Spikey
                 | EnemyType::SpikeyFall
                 | EnemyType::Hammer
+                | EnemyType::Squid
         )
     }
 
@@ -136,6 +143,8 @@ impl EnemyType {
                 | EnemyType::BulletBill
                 | EnemyType::BulletBillCannon
                 | EnemyType::Hammer
+                | EnemyType::Squid
+                | EnemyType::FlyingFish
         )
     }
 
@@ -271,6 +280,20 @@ impl Rng {
     }
 }
 
+/// Where a squid is in its three-beat cycle (`squid.lua:76-132`).
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
+pub(crate) enum SquidPhase {
+    /// Drifting down, waiting for the player to come level with it.
+    #[default]
+    Idle,
+    /// Lunging: accelerating up and sideways until it has covered two blocks across.
+    Lunge,
+    /// Settling: sinking one block, then back to idle.
+    Sink,
+}
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "vdp", derive(serde::Serialize))]
 #[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
@@ -309,6 +332,12 @@ pub(crate) struct Enemy {
     pub(crate) fire_delay: f32,
     /// Hammer bro: seconds since his last hop between floors.
     pub(crate) jump_timer: f32,
+    /// Squid: which beat of its cycle it is on.
+    pub(crate) squid_phase: SquidPhase,
+    /// Squid: where the current beat began — the x a lunge started from, or the y a
+    /// sink started from, depending on the phase. One field because only one is ever
+    /// live at a time, and the original likewise keeps `upx` and `downy` apart.
+    pub(crate) beat_from: f32,
     /// Hammer bro: is he mid-hop, and therefore passing through floors?
     ///
     /// This is `mask[2]`, switched on for the duration of a hop (`hammerbro.lua:110`,
@@ -414,6 +443,8 @@ impl Enemy {
             fire_delay: BULLET_BILL_FIRST_SHOT,
             portaled: false,
             jump_timer: 0.0,
+            squid_phase: SquidPhase::Idle,
+            beat_from: 0.0,
             ignore_tiles: false,
             drop_from_y: None,
         }
@@ -466,7 +497,45 @@ impl Enemy {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            squid_phase: SquidPhase::Idle,
+            beat_from: 0.0,
             ignore_tiles: false,
+            drop_from_y: None,
+        }
+    }
+
+    /// A flying fish, just out of the water.
+    ///
+    /// Its sideways speed is **the player's own** plus a random nudge of -4..=5
+    /// blocks/s (`flyingfish.lua:11`), which is why a school of them tracks you as you
+    /// run rather than being dodgeable by moving: outrunning them is impossible by
+    /// construction. A zero result is bumped to 1 so a stationary player still gets
+    /// fish that drift.
+    pub(crate) fn flying_fish(x: f32, y: f32, vx: f32) -> Self {
+        let vx = if vx == 0.0 { TILE_SIZE } else { vx };
+        Enemy {
+            x,
+            y,
+            vx,
+            vy: -FLYING_FISH_FORCE,
+            enemy_type: EnemyType::FlyingFish,
+            state: EnemyState::Walking,
+            facing_right: vx > 0.0,
+            on_ground: false,
+            anim_timer: 0.0,
+            death_timer: 0.0,
+            flipped_death: false,
+            spawn_y: y,
+            cycle_timer: 0.0,
+            spawn_x: x,
+            angle_deg: 0.0,
+            segment: 0,
+            fire_delay: 0.0,
+            portaled: false,
+            jump_timer: 0.0,
+            squid_phase: SquidPhase::Idle,
+            beat_from: 0.0,
+            ignore_tiles: true,
             drop_from_y: None,
         }
     }
@@ -496,6 +565,8 @@ impl Enemy {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            squid_phase: SquidPhase::Idle,
+            beat_from: 0.0,
             ignore_tiles: true,
             drop_from_y: None,
         }
@@ -524,6 +595,8 @@ impl Enemy {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            squid_phase: SquidPhase::Idle,
+            beat_from: 0.0,
             ignore_tiles: false,
             drop_from_y: None,
         }
@@ -755,6 +828,68 @@ impl Mari0Game {
                         // Straight line, forever, through everything. The lifetime
                         // check that eventually removes it lives in the cull below.
                         enemy.x += enemy.vx * dt;
+                    }
+                    EnemyType::Squid => {
+                        // Three beats, and the shape of them is what makes a bloober
+                        // awkward: it never chases you, it *intercepts*. It sinks until
+                        // you are level with it, throws itself up and across two
+                        // blocks, then settles one block and waits again.
+                        match enemy.squid_phase {
+                            SquidPhase::Idle => {
+                                enemy.vy = SQUID_FALL_SPEED;
+                                // "Level with the player" measured against where a *big*
+                                // Mario's head would be, whatever size he actually is
+                                // (`squid.lua:80` subtracts his height from 24/16), so a
+                                // small Mario is lunged at from further above.
+                                let head =
+                                    self.player.y - (SQUID_TRIGGER_HEAD - self.player.height);
+                                if enemy.y + enemy.vy * dt + eh + SQUID_TRIGGER_SLACK >= head {
+                                    enemy.squid_phase = SquidPhase::Lunge;
+                                    enemy.beat_from = enemy.x;
+                                    enemy.vx = 0.0;
+                                    enemy.vy = 0.0;
+                                    // Turn towards the player if it is facing away. The
+                                    // original wraps this in `if true then` with a
+                                    // commented-out `math.random(2) == 1`
+                                    // (`squid.lua:87`) — the coin flip was disabled, so
+                                    // it turns every time.
+                                    if enemy.facing_right && enemy.x > self.player.x {
+                                        enemy.facing_right = false;
+                                    } else if !enemy.facing_right && enemy.x < self.player.x {
+                                        enemy.facing_right = true;
+                                    }
+                                }
+                            }
+                            SquidPhase::Lunge => {
+                                let dir = if enemy.facing_right { 1.0 } else { -1.0 };
+                                enemy.vx = (enemy.vx + dir * SQUID_ACCELERATION * dt)
+                                    .clamp(-SQUID_X_SPEED, SQUID_X_SPEED);
+                                enemy.vy =
+                                    (enemy.vy - SQUID_ACCELERATION * dt).max(-SQUID_UP_SPEED);
+                                // Ends on *sideways* distance covered, not on time or
+                                // height — so a lunge is always two blocks across
+                                // however far up it got.
+                                if (enemy.x - enemy.beat_from).abs() >= SQUID_LUNGE_DIST {
+                                    enemy.squid_phase = SquidPhase::Sink;
+                                    enemy.beat_from = enemy.y;
+                                    enemy.vx = 0.0;
+                                }
+                            }
+                            SquidPhase::Sink => {
+                                enemy.vy = SQUID_FALL_SPEED;
+                                if enemy.y > enemy.beat_from + SQUID_DOWN_DIST {
+                                    enemy.squid_phase = SquidPhase::Idle;
+                                }
+                            }
+                        }
+                        enemy.x += enemy.vx * dt;
+                        enemy.y += enemy.vy * dt;
+                    }
+                    EnemyType::FlyingFish => {
+                        // A ballistic leap through everything, lighter than the world.
+                        enemy.vy += FLYING_FISH_GRAVITY * dt;
+                        enemy.x += enemy.vx * dt;
+                        enemy.y += enemy.vy * dt;
                     }
                     EnemyType::Hammer => {
                         // A ballistic arc that ignores terrain (`mask[2]`), so it can
@@ -1850,6 +1985,36 @@ mod tests {
         // And the drop-through distance is what picks the next floor rather than the
         // one after it.
         assert_eq!(HAMMERBRO_DROP_THROUGH, 2.0 * TILE_SIZE);
+    }
+
+    /// A squid can't be stomped, and a flying fish can.
+    ///
+    /// Two enemies that arrive together and differ on the one thing that matters when
+    /// you meet one: `mario.lua:1778` lists `squid` under KILL, while
+    /// `flyingfish:stomp` exists (`flyingfish.lua:139`).
+    #[test]
+    fn the_squid_is_the_one_you_cannot_land_on() {
+        assert!(!EnemyType::Squid.stompable());
+        assert!(EnemyType::FlyingFish.stompable());
+        // Both swim their own path through terrain.
+        assert!(EnemyType::Squid.is_scripted() && EnemyType::FlyingFish.is_scripted());
+        assert_eq!(EnemyType::Squid.fire_points(), 200);
+        assert_eq!(EnemyType::FlyingFish.fire_points(), 200);
+    }
+
+    /// A fish never leaves the water with zero sideways speed.
+    ///
+    /// `if self.speedx == 0 then self.speedx = 1` (`flyingfish.lua:38`) — without it a
+    /// standing player gets fish that go straight up and straight back down through the
+    /// same spot, which is both easy and wrong.
+    #[test]
+    fn a_flying_fish_always_drifts() {
+        let still = Enemy::flying_fish(0.0, 0.0, 0.0);
+        assert_ne!(still.vx, 0.0);
+        assert!(still.vy < 0.0, "it leaps up");
+        // Otherwise the speed passed in is kept verbatim, sign and all.
+        assert_eq!(Enemy::flying_fish(0.0, 0.0, -100.0).vx, -100.0);
+        assert!(!Enemy::flying_fish(0.0, 0.0, -100.0).facing_right);
     }
 
     /// No level places a spiny, and every level with a lakitu says where he stops.

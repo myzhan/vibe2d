@@ -131,6 +131,36 @@ pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
 /// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
 pub(crate) const LAKITO_SCORE: u32 = 200;
 
+// ── Squid, the bloober (variables.lua:253-257) ──
+/// Sink rate, both while idling and while settling after a lunge. Slow — it *drifts*.
+pub(crate) const SQUID_FALL_SPEED: f32 = 0.9 * TILE_SIZE;
+/// Top speed of a lunge, sideways and upward.
+pub(crate) const SQUID_X_SPEED: f32 = 3.0 * TILE_SIZE;
+pub(crate) const SQUID_UP_SPEED: f32 = 3.0 * TILE_SIZE;
+/// How hard it accelerates into a lunge.
+pub(crate) const SQUID_ACCELERATION: f32 = 10.0 * TILE_SIZE;
+/// Sideways distance that ends a lunge, in blocks.
+pub(crate) const SQUID_LUNGE_DIST: f32 = 2.0 * TILE_SIZE;
+/// How far it sinks after a lunge before idling again.
+pub(crate) const SQUID_DOWN_DIST: f32 = 1.0 * TILE_SIZE;
+/// Slack in the "am I level with the player yet" test that starts a lunge
+/// (`squid.lua:80`), in blocks.
+pub(crate) const SQUID_TRIGGER_SLACK: f32 = 0.0625 * TILE_SIZE;
+/// Height of a big Mario, which that same test measures the player's head from.
+pub(crate) const SQUID_TRIGGER_HEAD: f32 = 24.0 / 16.0 * TILE_SIZE;
+
+// ── Flying fish (variables.lua:267-268) ──
+/// The leap out of the water.
+pub(crate) const FLYING_FISH_FORCE: f32 = 23.0 * TILE_SIZE;
+/// Lighter than the world, so the arc hangs.
+pub(crate) const FLYING_FISH_GRAVITY: f32 = 20.0 * TILE_SIZE;
+/// Random gap between leaps (`math.random(6, 20)/10`).
+pub(crate) const FLYING_FISH_MIN: f32 = 0.6;
+pub(crate) const FLYING_FISH_MAX: f32 = 2.0;
+/// Sideways speed is *the player's own* plus a random nudge in this range, in blocks/s
+/// (`flyingfish.lua:11` — `math.random(10) - 5`, so -4..=5).
+pub(crate) const FLYING_FISH_DRIFT: (i32, i32) = (-4, 5);
+
 // ── Moving platforms (variables.lua:126-134) ──
 /// Half a block thick — you stand on one, you don't stand *in* it.
 pub(crate) const PLATFORM_HEIGHT: f32 = 8.0 / 16.0 * TILE_SIZE;
