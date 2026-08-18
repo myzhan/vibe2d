@@ -125,6 +125,10 @@ pub(crate) struct Mari0Game {
     /// Reseeded per level so a level always plays out the same way — the VDP probes
     /// and the autopilot both depend on that.
     pub(crate) rng: Rng,
+    /// Has the player passed `firestart`? One-way, unlike the other two zones.
+    pub(crate) fire_started: bool,
+    pub(crate) fire_timer: f32,
+    pub(crate) fire_delay: f32,
     /// Is the player inside this level's `flyingfishstart`…`flyingfishend` stretch?
     pub(crate) flying_fish_zone: bool,
     pub(crate) flying_fish_timer: f32,
@@ -177,6 +181,9 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_hammer_bro: TextureId,
     pub(crate) tex_hammer: TextureId,
     pub(crate) tex_squid: TextureId,
+    pub(crate) tex_bowser: TextureId,
+    pub(crate) tex_fire: TextureId,
+    pub(crate) tex_decoys: TextureId,
     pub(crate) tex_platform: TextureId,
     pub(crate) tex_platform_bonus: TextureId,
     pub(crate) tex_spikey: TextureId,
@@ -344,6 +351,9 @@ impl Mari0Game {
         self.bullet_bill_timer = 0.0;
         self.flying_fish_zone = false;
         self.flying_fish_timer = 0.0;
+        self.fire_started = false;
+        self.fire_timer = 0.0;
+        self.fire_delay = 1.0;
         // Seeded from the level's shape so different levels differ but a reload of the
         // same one repeats. `time_limit` and `width` are both stable per file.
         self.rng =
@@ -449,6 +459,59 @@ impl Mari0Game {
                 -1.0,
             ));
             ctx.audio.play("bulletbill");
+        }
+    }
+
+    /// Breathe fire, either from Bowser or from a `firestart` zone with no Bowser in it.
+    ///
+    /// Three things make this different from the other two zone spawners. The latch is
+    /// **one-way** — there is no `fireend` entity. The gate includes *Bowser's own
+    /// state*: he stops breathing while backing away, dying or falling
+    /// (`game.lua:806`), which is the other half of why getting behind him disarms him.
+    /// And when he is present the breath comes from **his mouth**, aimed a random couple
+    /// of blocks around his starting row, rather than from the screen edge
+    /// (`fire.lua:4-16`).
+    fn update_fire_breath(&mut self, dt: f32, ctx: &mut Context) {
+        if let Some(start) = self.level.fire_start
+            && self.player.x >= start as f32 * TILE_SIZE
+        {
+            self.fire_started = true;
+        }
+        if !self.fire_started {
+            return;
+        }
+        // Whoever is breathing has to be in a state to do it.
+        let bowser = self
+            .enemies
+            .iter()
+            .find(|e| e.enemy_type == EnemyType::Bowser)
+            .map(|e| (e.x, e.y, e.spawn_y, e.backing_off, e.state));
+        if let Some((.., backing_off, state)) = bowser
+            && (backing_off || state != EnemyState::Walking)
+        {
+            return;
+        }
+        self.fire_timer += dt;
+        while self.fire_timer > self.fire_delay {
+            self.fire_timer -= self.fire_delay;
+            // `math.random(4)` — whole seconds, 1..=4, not tenths like the others.
+            self.fire_delay = self.rng.range(1, 4) as f32;
+            let (x, y, target) = match bowser {
+                Some((bx, by, spawn_y, ..)) => (
+                    bx - 0.75 * TILE_SIZE,
+                    by + 0.25 * TILE_SIZE,
+                    spawn_y - (self.rng.range(1, 3) as f32 - 2.0 / 16.0) * TILE_SIZE,
+                ),
+                // No Bowser: it comes in from the right edge at a random height in the
+                // lower half, which is how the fire corridors without him work.
+                None => {
+                    let row = self.rng.range(8, 10) as f32;
+                    let y = row * TILE_SIZE;
+                    (self.camera.x + self.vw, y, y)
+                }
+            };
+            self.enemies.push(Enemy::fire(x, y, target));
+            ctx.audio.play("fire");
         }
     }
 
@@ -764,6 +827,9 @@ impl Mari0Game {
 
         // ── Enemies ──
         self.update_enemies(dt, ctx);
+        // After the enemies, not before: the gate reads Bowser's `backing_off`, and a
+        // frame of staleness there lets one breath out the instant you get behind him.
+        self.update_fire_breath(dt, ctx);
 
         // ── Gel ──
         // Before the cubes and the lab so paint laid this frame is what everything else
@@ -994,6 +1060,9 @@ impl Game for Mari0Game {
             platforms_spawned: Vec::new(),
             platform_spawners: Vec::new(),
             rng: Rng::new(1),
+            fire_started: false,
+            fire_timer: 0.0,
+            fire_delay: 1.0,
             flying_fish_zone: false,
             flying_fish_timer: 0.0,
             flying_fish_delay: FLYING_FISH_MIN,
@@ -1025,6 +1094,9 @@ impl Game for Mari0Game {
             tex_hammer_bro: t("hammer_bro"),
             tex_hammer: t("hammer"),
             tex_squid: t("squid"),
+            tex_bowser: t("bowser"),
+            tex_fire: t("fire"),
+            tex_decoys: t("decoys"),
             tex_platform: t("platform"),
             tex_platform_bonus: t("platform_bonus"),
             tex_spikey: t("spikey"),

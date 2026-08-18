@@ -57,6 +57,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) bullet_bill_zone: bool,
     /// Is the `flyingfishstart`…`flyingfishend` stretch currently throwing fish?
     pub(crate) flying_fish_zone: bool,
+    /// Has `firestart` been passed? One-way, so once true it stays true.
+    pub(crate) fire_started: bool,
     /// Moving platforms in the world right now.
     pub(crate) platforms: Vec<PlatformView>,
     /// Maze progress, for the looping castles. `null` in levels without spans.
@@ -175,6 +177,9 @@ pub(crate) struct EnemyView {
     pub(crate) cycle_timer: f32,
     /// Squid only: which beat of its three-part cycle it is on.
     pub(crate) squid_phase: SquidPhase,
+    /// Bowser only: fireball hits left, and whether the player has got behind him.
+    pub(crate) hp: u32,
+    pub(crate) backing_off: bool,
 }
 
 #[cfg(feature = "vdp")]
@@ -514,6 +519,8 @@ impl Mari0Game {
                     death_timer: e.death_timer,
                     cycle_timer: e.cycle_timer,
                     squid_phase: e.squid_phase,
+                    hp: e.hp,
+                    backing_off: e.backing_off,
                 })
                 .collect(),
             coins: self
@@ -560,6 +567,7 @@ impl Mari0Game {
             lakito_retired: self.lakito_retired,
             bullet_bill_zone: self.bullet_bill_zone,
             flying_fish_zone: self.flying_fish_zone,
+            fire_started: self.fire_started,
             platforms: self
                 .platforms
                 .iter()
@@ -857,6 +865,8 @@ impl Mari0Game {
             "bullet_bill" => EnemyType::BulletBill,
             "hammer_bro" => EnemyType::HammerBro,
             "squid" => EnemyType::Squid,
+            "bowser" => EnemyType::Bowser,
+            "fire" => EnemyType::Fire,
             "flying_fish" => EnemyType::FlyingFish,
             "hammer" => EnemyType::Hammer,
             "bullet_bill_cannon" => EnemyType::BulletBillCannon,
@@ -867,6 +877,21 @@ impl Mari0Game {
         // A bill needs its own constructor: the generic one below hands out the
         // walking speed of 2 blocks/s, and a bullet bill that crawls is not a bullet
         // bill. Its age is also load-bearing, since that's what expires it.
+        // Bowser carries state the generic constructor below knows nothing about: five
+        // hit points, the leg of his pace, and the world number that decides whether he
+        // throws hammers. Spawned without them he is a Bowser with zero HP.
+        if etype == EnemyType::Bowser {
+            let mut b = Enemy::from_spawn(&crate::world::EnemySpawnPoint {
+                enemy_type: EnemyType::Bowser,
+                x: p.x,
+                y: p.y + BOWSER_H,
+                facing_right: p.facing_right,
+                segment: self.current.world,
+            });
+            b.y = p.y;
+            self.enemies.push(b);
+            return Ok(serde_json::json!({"status": "ok", "enemy_count": self.enemies.len()}));
+        }
         if etype == EnemyType::BulletBill {
             let dir = if p.facing_right { 1.0 } else { -1.0 };
             self.enemies.push(Enemy::bullet_bill(p.x, p.y, dir));
@@ -896,6 +921,9 @@ impl Mari0Game {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            hp: 0,
+            target_x: 0.0,
+            backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
             ignore_tiles: false,

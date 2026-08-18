@@ -147,6 +147,11 @@ pub(crate) struct Level {
     /// turns it off again.
     pub(crate) bullet_bill_start: Option<i32>,
     pub(crate) bullet_bill_end: Option<i32>,
+    /// Column past which Bowser (or the level itself) starts breathing fire.
+    ///
+    /// A **one-way** latch, unlike the bullet-bill and flying-fish pairs: there is no
+    /// `fireend` entity, and `mario.lua:973` only ever sets it true.
+    pub(crate) fire_start: Option<i32>,
     /// The stretch in which flying fish leap out of the water. Same shape as the bullet
     /// bill pair, and the same two-way latch on the player's x (`mario.lua:977-983`).
     pub(crate) flying_fish_start: Option<i32>,
@@ -431,6 +436,17 @@ pub(crate) const START_PACK: &str = "smb";
 /// while this `Level` is the shape the gameplay code already consumes. Keeping the
 /// two separate means the parser could be finished and tested against all 73
 /// shipped levels without destabilising the game loop.
+/// The world number a level's filename names, for the handful of rules that care.
+///
+/// Only Bowser does: he throws hammers from world 6 on (`bowser.lua:49`). `M-1`, the
+/// minus world, has no numeric world and no Bowser, so it falls back to 1.
+fn world_of(name: &str) -> u32 {
+    name.split('-')
+        .next()
+        .and_then(|w| w.parse().ok())
+        .unwrap_or(1)
+}
+
 pub(crate) fn load_level(pack: &str, name: &str) -> Level {
     let parsed = level::load(pack, name)
         .unwrap_or_else(|| panic!("no such level {pack}/{name}"))
@@ -572,6 +588,15 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
                 y: py,
                 facing_right: false,
                 segment: 0,
+            }),
+            // Bowser. `segment` carries the world number, which is what decides
+            // whether he throws hammers (`bowser.lua:49` — world 6 and up).
+            level::EntityKind::Bowser => enemy_spawns.push(EnemySpawnPoint {
+                enemy_type: EnemyType::Bowser,
+                x: px,
+                y: py,
+                facing_right: false,
+                segment: world_of(name),
             }),
             // A squid starts facing left and drifting down.
             level::EntityKind::Squid => enemy_spawns.push(EnemySpawnPoint {
@@ -785,6 +810,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         lakito_end: parsed.markers.lakito_end.map(|c| c as i32),
         bullet_bill_start: parsed.markers.bullet_bill_start.map(|c| c as i32),
         bullet_bill_end: parsed.markers.bullet_bill_end.map(|c| c as i32),
+        fire_start: parsed.markers.fire_start.map(|c| c as i32),
         flying_fish_start: parsed.markers.flying_fish_start.map(|c| c as i32),
         flying_fish_end: parsed.markers.flying_fish_end.map(|c| c as i32),
         portal_holes: HashSet::new(),

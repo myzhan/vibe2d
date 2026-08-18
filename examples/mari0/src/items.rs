@@ -4,7 +4,7 @@ use vibe2d::prelude::*;
 
 use crate::constants::*;
 use crate::effects::*;
-use crate::enemies::{EnemyState, enemy_height};
+use crate::enemies::{EnemyState, EnemyType, enemy_height};
 use crate::game::Mari0Game;
 use crate::physics::*;
 use crate::portal::{PortalBody, portal_carry};
@@ -669,6 +669,16 @@ impl Mari0Game {
             self.fireballs[fi].explode_timer = 0.0;
         }
         for &ei in &enemy_kills {
+            // Bowser is the one thing a single fireball doesn't finish: five hits, and
+            // the earlier four do nothing visible at all (`bowser.lua:176-181`). No
+            // flash, no knockback — which is why he reads as invulnerable until the
+            // fifth one drops him.
+            if self.enemies[ei].enemy_type == EnemyType::Bowser {
+                self.enemies[ei].hp = self.enemies[ei].hp.saturating_sub(1);
+                if self.enemies[ei].hp > 0 {
+                    continue;
+                }
+            }
             // Fire kills pay a flat per-kind rate, not the stomp combo ladder.
             self.score += self.enemies[ei].enemy_type.fire_points();
             self.enemies[ei].shotted();

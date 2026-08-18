@@ -131,6 +131,46 @@ pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
 /// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
 pub(crate) const LAKITO_SCORE: u32 = 200;
 
+// ── Bowser (variables.lua:107-118) ──
+/// Pacing speed while advancing on the player.
+pub(crate) const BOWSER_SPEED_FORWARDS: f32 = 0.875 * TILE_SIZE;
+/// …and while retreating, which is **more than twice as fast**. Walk past him and he
+/// scrambles backwards quicker than he ever comes at you.
+pub(crate) const BOWSER_SPEED_BACKWARDS: f32 = 1.875 * TILE_SIZE;
+pub(crate) const BOWSER_JUMP_FORCE: f32 = 7.0 * TILE_SIZE;
+pub(crate) const BOWSER_JUMP_DELAY: f32 = 1.0;
+/// A tenth of the world's gravity — his hops float, and it's why he lands so slowly.
+pub(crate) const BOWSER_GRAVITY: f32 = 10.9 * TILE_SIZE;
+pub(crate) const BOWSER_FALL_SPEED: f32 = 8.25 * TILE_SIZE;
+pub(crate) const BOWSER_ANIM_SPEED: f32 = 0.5;
+/// Five fireballs, and only fireballs.
+pub(crate) const BOWSER_HEALTH: u32 = 5;
+pub(crate) const BOWSER_SCORE: u32 = 5000;
+/// He throws hammers only from world 6 on (`bowser.lua:49`).
+pub(crate) const BOWSER_HAMMER_WORLD: u32 = 6;
+/// Gaps between his hammers — ten tenths and four long ones, drawn uniformly
+/// (`bowserhammertable`), so hammers come in bursts with pauses between.
+pub(crate) const BOWSER_HAMMER_TABLE: [f32; 14] = [
+    0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.5, 1.0, 2.0, 1.0,
+];
+/// His patrol turns around at `startx - 1 - rand(2)` and `startx - 7 - rand(2)`, so
+/// the beat is roughly six blocks wide and never quite the same twice.
+pub(crate) const BOWSER_TURN_NEAR: f32 = 1.0 * TILE_SIZE;
+pub(crate) const BOWSER_TURN_FAR: f32 = 7.0 * TILE_SIZE;
+/// His body, 30x28 px — the only thing in the game bigger than big Mario.
+pub(crate) const BOWSER_W: f32 = 30.0 / 16.0 * TILE_SIZE;
+pub(crate) const BOWSER_H: f32 = 28.0 / 16.0 * TILE_SIZE;
+
+// ── Bowser's fire breath (variables.lua:259-261) ──
+pub(crate) const FIRE_SPEED: f32 = 4.69 * TILE_SIZE;
+/// It drifts vertically towards the height it was aimed at, rather than travelling
+/// straight — which is what makes ducking under one unreliable.
+pub(crate) const FIRE_VER_SPEED: f32 = 2.0 * TILE_SIZE;
+pub(crate) const FIRE_ANIM_DELAY: f32 = 0.05;
+/// A breath is 24x8 px, so a block and a half wide and half a block tall.
+pub(crate) const FIRE_W: f32 = 24.0 / 16.0 * TILE_SIZE;
+pub(crate) const FIRE_H: f32 = 8.0 / 16.0 * TILE_SIZE;
+
 // ── Squid, the bloober (variables.lua:253-257) ──
 /// Sink rate, both while idling and while settling after a lunge. Slow — it *drifts*.
 pub(crate) const SQUID_FALL_SPEED: f32 = 0.9 * TILE_SIZE;

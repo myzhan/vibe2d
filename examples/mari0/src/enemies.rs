@@ -73,6 +73,12 @@ pub(crate) enum EnemyType {
     /// A flying fish, leaping out of the water on the player's own horizontal speed
     /// plus a random nudge. Ignores terrain; stomping one kills it.
     FlyingFish,
+    /// Bowser. Nearly two blocks square, five fireballs to kill, and he retreats
+    /// faster than he advances.
+    Bowser,
+    /// One breath of Bowser's fire — or of a `firestart` zone's, which uses the same
+    /// object with no Bowser attached.
+    Fire,
     /// The cannon, which is a timer rather than a creature.
     ///
     /// It lives in the enemy list only to inherit the lazy per-column reveal and the
@@ -119,6 +125,8 @@ impl EnemyType {
                 | EnemyType::SpikeyFall
                 | EnemyType::Hammer
                 | EnemyType::Squid
+                | EnemyType::Bowser
+                | EnemyType::Fire
         )
     }
 
@@ -145,6 +153,7 @@ impl EnemyType {
                 | EnemyType::Hammer
                 | EnemyType::Squid
                 | EnemyType::FlyingFish
+                | EnemyType::Fire
         )
     }
 
@@ -168,6 +177,7 @@ impl EnemyType {
             EnemyType::SpikeyFall => SPIKEY_FALL_GRAVITY,
             EnemyType::HammerBro => HAMMERBRO_GRAVITY,
             EnemyType::Hammer => HAMMER_GRAVITY,
+            EnemyType::Bowser => BOWSER_GRAVITY,
             _ => GRAVITY,
         }
     }
@@ -205,6 +215,7 @@ impl EnemyType {
                 | EnemyType::UpFire
                 | EnemyType::BulletBillCannon
                 | EnemyType::Hammer
+                | EnemyType::Fire
         )
     }
 
@@ -227,6 +238,7 @@ impl EnemyType {
         match self {
             EnemyType::Goomba | EnemyType::Spikey | EnemyType::SpikeyFall => 100,
             EnemyType::HammerBro => 1000,
+            EnemyType::Bowser => BOWSER_SCORE,
             _ => 200,
         }
     }
@@ -332,6 +344,13 @@ pub(crate) struct Enemy {
     pub(crate) fire_delay: f32,
     /// Hammer bro: seconds since his last hop between floors.
     pub(crate) jump_timer: f32,
+    /// Bowser: fireball hits left before he goes down. Nothing else has hit points.
+    pub(crate) hp: u32,
+    /// Bowser: the end of the current leg of his pace, re-drawn at each turn.
+    pub(crate) target_x: f32,
+    /// Bowser: is the player behind him? Then he is scrambling backwards, and while he
+    /// is he neither breathes fire nor throws hammers.
+    pub(crate) backing_off: bool,
     /// Squid: which beat of its cycle it is on.
     pub(crate) squid_phase: SquidPhase,
     /// Squid: where the current beat began — the x a lunge started from, or the y a
@@ -364,7 +383,11 @@ pub(crate) struct Enemy {
 /// Koopa-likes stand 24px tall (48 at 2x) while walking but shrink to a shell; a
 /// piranha plant is shorter than a block; everything else is one small-Mario tall.
 pub(crate) fn enemy_height(enemy_type: EnemyType, state: EnemyState) -> f32 {
-    if enemy_type.is_koopa_like() && state == EnemyState::Walking {
+    if enemy_type == EnemyType::Bowser {
+        BOWSER_H
+    } else if enemy_type == EnemyType::Fire {
+        FIRE_H
+    } else if enemy_type.is_koopa_like() && state == EnemyState::Walking {
         48.0
     } else if enemy_type == EnemyType::Plant {
         PLANT_HEIGHT
@@ -385,7 +408,7 @@ pub(crate) fn plant_rest_y(spawn_y: f32) -> f32 {
 
 impl Enemy {
     /// Instantiate one spawn point.
-    fn from_spawn(sp: &EnemySpawnPoint) -> Self {
+    pub(crate) fn from_spawn(sp: &EnemySpawnPoint) -> Self {
         let h = enemy_height(sp.enemy_type, EnemyState::Walking);
         // Spawn coordinates name the cell the enemy stands *on*, so a taller
         // enemy has to be lifted by its own height to rest on that surface. Two
@@ -423,6 +446,21 @@ impl Enemy {
             death_timer: 0.0,
             flipped_death: false,
             spawn_y: y,
+            // Bowser's five hit points, and the leg of his pace he starts on. `segment`
+            // carries the world number for him, since that is what decides whether he
+            // throws hammers at all.
+            hp: if sp.enemy_type == EnemyType::Bowser {
+                BOWSER_HEALTH
+            } else {
+                0
+            },
+            target_x: if sp.enemy_type == EnemyType::Bowser {
+                // `newtargetx("right")` at birth (`bowser.lua:58`).
+                x - BOWSER_TURN_NEAR - TILE_SIZE
+            } else {
+                0.0
+            },
+            backing_off: false,
             // A hammer bro's throw countdown. The original picks between 0.6 and 1.6 at
             // birth; a fixed first gap keeps `from_spawn` free of the RNG, and every
             // gap after this one is drawn properly.
@@ -497,6 +535,9 @@ impl Enemy {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            hp: 0,
+            target_x: 0.0,
+            backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
             ignore_tiles: false,
@@ -533,8 +574,47 @@ impl Enemy {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            hp: 0,
+            target_x: 0.0,
+            backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
+            ignore_tiles: true,
+            drop_from_y: None,
+        }
+    }
+
+    /// One breath of fire.
+    ///
+    /// `spawn_y` is the height it is *aimed* at, which it drifts towards rather than
+    /// flying straight to — Bowser aims a random couple of blocks around his own
+    /// starting row (`fire.lua:11`), so a volley fans out vertically.
+    pub(crate) fn fire(x: f32, y: f32, target_y: f32) -> Self {
+        Enemy {
+            x,
+            y,
+            vx: -FIRE_SPEED,
+            vy: 0.0,
+            enemy_type: EnemyType::Fire,
+            state: EnemyState::Walking,
+            facing_right: false,
+            on_ground: false,
+            anim_timer: 0.0,
+            death_timer: 0.0,
+            flipped_death: false,
+            spawn_y: target_y,
+            cycle_timer: 0.0,
+            spawn_x: x,
+            angle_deg: 0.0,
+            segment: 0,
+            hp: 0,
+            target_x: 0.0,
+            backing_off: false,
+            squid_phase: SquidPhase::Idle,
+            beat_from: 0.0,
+            fire_delay: 0.0,
+            portaled: false,
+            jump_timer: 0.0,
             ignore_tiles: true,
             drop_from_y: None,
         }
@@ -565,6 +645,9 @@ impl Enemy {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            hp: 0,
+            target_x: 0.0,
+            backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
             ignore_tiles: true,
@@ -595,6 +678,9 @@ impl Enemy {
             fire_delay: 0.0,
             portaled: false,
             jump_timer: 0.0,
+            hp: 0,
+            target_x: 0.0,
+            backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
             ignore_tiles: false,
@@ -891,6 +977,19 @@ impl Mari0Game {
                         enemy.x += enemy.vx * dt;
                         enemy.y += enemy.vy * dt;
                     }
+                    EnemyType::Fire => {
+                        // Sideways at a constant speed, but *drifting* vertically
+                        // towards the height it was aimed at (`fire.lua:68-79`) — which
+                        // is what makes ducking under one unreliable, since it comes
+                        // down to meet you.
+                        enemy.x += enemy.vx * dt;
+                        let target = enemy.spawn_y;
+                        if enemy.y > target {
+                            enemy.y = (enemy.y - FIRE_VER_SPEED * dt).max(target);
+                        } else if enemy.y < target {
+                            enemy.y = (enemy.y + FIRE_VER_SPEED * dt).min(target);
+                        }
+                    }
                     EnemyType::Hammer => {
                         // A ballistic arc that ignores terrain (`mask[2]`), so it can
                         // be thrown across a gap or down through the floor you are
@@ -993,6 +1092,61 @@ impl Mari0Game {
             match enemy.state {
                 EnemyState::Walking | EnemyState::ShellMoving => {
                     enemy.anim_timer += dt;
+
+                    if enemy.enemy_type == EnemyType::Bowser {
+                        // **The retreat is the whole fight.** If the player has got
+                        // past him he turns and scrambles backwards at more than twice
+                        // his advancing speed (`bowser.lua:139-142`), and while
+                        // `backwards` is set he neither breathes nor throws — so
+                        // getting behind him is not just an escape, it disarms him.
+                        enemy.backing_off = self.player.x > enemy.x + BOWSER_W / 2.0;
+                        if enemy.backing_off {
+                            enemy.facing_right = false;
+                            enemy.vx = BOWSER_SPEED_BACKWARDS;
+                            enemy.jump_timer = 0.0;
+                        } else {
+                            enemy.facing_right = false;
+                            // Pace towards the current target, then draw a new one on
+                            // the other side. Both ends are randomised, so he never
+                            // paces the same beat twice.
+                            if enemy.x < enemy.target_x {
+                                enemy.vx = BOWSER_SPEED_FORWARDS;
+                                if enemy.x + enemy.vx * dt >= enemy.target_x {
+                                    enemy.target_x = enemy.spawn_x
+                                        - BOWSER_TURN_FAR
+                                        - rng.range(1, 2) as f32 * TILE_SIZE;
+                                }
+                            } else {
+                                enemy.vx = -BOWSER_SPEED_FORWARDS;
+                                if enemy.x + enemy.vx * dt <= enemy.target_x {
+                                    enemy.target_x = enemy.spawn_x
+                                        - BOWSER_TURN_NEAR
+                                        - rng.range(1, 2) as f32 * TILE_SIZE;
+                                }
+                            }
+                            // Hops on a fixed cadence while he has the player in front
+                            // of him, and only while grounded.
+                            enemy.jump_timer += dt;
+                            if enemy.jump_timer > BOWSER_JUMP_DELAY && enemy.on_ground {
+                                enemy.vy = -BOWSER_JUMP_FORCE;
+                                enemy.jump_timer -= BOWSER_JUMP_DELAY;
+                            }
+                            // Hammers, from world 6 on. `hp` doubles as the "does this
+                            // one throw" flag via the level it was built for.
+                            if enemy.segment >= BOWSER_HAMMER_WORLD {
+                                enemy.cycle_timer += dt;
+                                while enemy.cycle_timer > enemy.fire_delay {
+                                    enemy.cycle_timer -= enemy.fire_delay;
+                                    thrown.push(Enemy::hammer(enemy.x, enemy.y, -1.0));
+                                    let i = rng.range(0, BOWSER_HAMMER_TABLE.len() as i32 - 1);
+                                    enemy.fire_delay = BOWSER_HAMMER_TABLE[i as usize];
+                                }
+                            }
+                        }
+                        // His fall speed is capped for the animation's sake
+                        // (`bowser.lua:74`), which is also why he drops so slowly.
+                        enemy.vy = enemy.vy.min(BOWSER_FALL_SPEED);
+                    }
 
                     if enemy.enemy_type == EnemyType::HammerBro {
                         // Faces whichever way the player is, every frame, independent
@@ -1985,6 +2139,64 @@ mod tests {
         // And the drop-through distance is what picks the next floor rather than the
         // one after it.
         assert_eq!(HAMMERBRO_DROP_THROUGH, 2.0 * TILE_SIZE);
+    }
+
+    /// Bowser is the only thing in the game with hit points, and the only thing a
+    /// single fireball doesn't finish.
+    #[test]
+    fn only_bowser_has_hit_points() {
+        let sp = crate::world::EnemySpawnPoint {
+            enemy_type: EnemyType::Bowser,
+            x: 100.0 * TILE_SIZE,
+            y: 9.0 * TILE_SIZE,
+            facing_right: false,
+            segment: 1,
+        };
+        let b = Enemy::from_spawn(&sp);
+        assert_eq!(b.hp, BOWSER_HEALTH);
+        assert!(!b.backing_off);
+        // His first target is on the near side of his pace (`newtargetx("right")`).
+        assert!(b.target_x < b.x, "he starts by pacing towards the player");
+        // Everyone else has none, which is what makes the "one hit" path the default.
+        for kind in [
+            EnemyType::Goomba,
+            EnemyType::HammerBro,
+            EnemyType::Squid,
+            EnemyType::BulletBill,
+        ] {
+            let other = Enemy::from_spawn(&crate::world::EnemySpawnPoint {
+                enemy_type: kind,
+                ..sp
+            });
+            assert_eq!(other.hp, 0, "{kind:?}");
+        }
+    }
+
+    /// He retreats faster than he advances, which is the whole shape of the fight.
+    #[test]
+    fn bowser_runs_away_faster_than_he_comes_at_you() {
+        const { assert!(BOWSER_SPEED_BACKWARDS > 2.0 * BOWSER_SPEED_FORWARDS) };
+        // And he is lighter than anything else that falls.
+        assert_eq!(EnemyType::Bowser.gravity(), BOWSER_GRAVITY);
+        const { assert!(BOWSER_GRAVITY < GRAVITY / 4.0) };
+        // Neither he nor his breath can be landed on.
+        assert!(!EnemyType::Bowser.stompable());
+        assert!(!EnemyType::Fire.stompable());
+        assert!(EnemyType::Fire.indestructible());
+        assert_eq!(EnemyType::Bowser.fire_points(), BOWSER_SCORE);
+    }
+
+    /// He is the biggest hitbox in the game — bigger than big Mario.
+    #[test]
+    fn bowser_is_the_biggest_thing_on_screen() {
+        assert_eq!(
+            enemy_height(EnemyType::Bowser, EnemyState::Walking),
+            BOWSER_H
+        );
+        const { assert!(BOWSER_H > PLAYER_BIG_H / 2.0) };
+        const { assert!(BOWSER_W > PLAYER_SMALL_W) };
+        // His breath is wide and flat, the opposite shape.
+        const { assert!(FIRE_W > FIRE_H) };
     }
 
     /// A squid can't be stomped, and a flying fish can.

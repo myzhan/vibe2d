@@ -25,6 +25,13 @@ fn lakito_dst(hitbox: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// Bowser's sprite is a 32x32 cell for a 30x28 hitbox — so nearly the same, but the
+/// two share a bottom edge like everything else that overhangs.
+fn bowser_dst(hitbox: [f32; 4]) -> [f32; 4] {
+    const SPRITE: f32 = 32.0 * 2.0;
+    [hitbox[0], hitbox[1] + hitbox[3] - SPRITE, SPRITE, SPRITE]
+}
+
 /// A hammer bro is more than twice as tall as his hitbox.
 ///
 /// The cell is 16x34 for a 12/16-block box, and the extra is all head and hammer —
@@ -256,7 +263,12 @@ impl Mari0Game {
             let ex = enemy.x - cam_x;
             let ey = enemy.y;
             let eh = enemy_height(enemy.enemy_type, enemy.state);
-            let dst = [ex, ey, PLAYER_SMALL_W, eh];
+            let ew = if enemy.enemy_type == EnemyType::Bowser {
+                BOWSER_W
+            } else {
+                PLAYER_SMALL_W
+            };
+            let dst = [ex, ey, ew, eh];
             match enemy.state {
                 EnemyState::Dead => {
                     if enemy.flipped_death {
@@ -309,6 +321,31 @@ impl Mari0Game {
                                     enemy.facing_right,
                                     true,
                                 );
+                            }
+                            // **The false Bowser.** In worlds 1-7 the thing you just
+                            // killed turns into a different enemy on the way down
+                            // (`bowser.lua:196-199`) — the joke being that it was a
+                            // painted goomba all along. World 8 is the real one and
+                            // keeps his own sprite.
+                            EnemyType::Bowser => {
+                                let world = self.current.world;
+                                if world <= 7 {
+                                    screen.draw_sprite_region_flipped(
+                                        self.tex_decoys,
+                                        decoy_uv(world),
+                                        bowser_dst(dst),
+                                        false,
+                                        true,
+                                    );
+                                } else {
+                                    screen.draw_sprite_region_flipped(
+                                        self.tex_bowser,
+                                        bowser_uv(0, false),
+                                        bowser_dst(dst),
+                                        false,
+                                        true,
+                                    );
+                                }
                             }
                             _ => {
                                 let src = koopa_uv(0, 0);
@@ -398,6 +435,30 @@ impl Mari0Game {
                                 hammer_bro_dst(dst),
                                 enemy.facing_right,
                                 false,
+                            );
+                        }
+                        EnemyType::Bowser => {
+                            let walk = (enemy.anim_timer / BOWSER_ANIM_SPEED) as u32 % 2;
+                            // Mouth open for the last half second before a breath —
+                            // and never while he is backing away, since he can't
+                            // breathe then anyway.
+                            let breathing = !enemy.backing_off
+                                && self.fire_started
+                                && self.fire_timer > self.fire_delay - 0.5;
+                            screen.draw_sprite_region_flipped(
+                                self.tex_bowser,
+                                bowser_uv(walk, breathing),
+                                bowser_dst(dst),
+                                enemy.facing_right,
+                                false,
+                            );
+                        }
+                        EnemyType::Fire => {
+                            let frame = ((enemy.anim_timer / FIRE_ANIM_DELAY) as u32) % 2;
+                            screen.draw_sprite_region(
+                                self.tex_fire,
+                                fire_uv(frame),
+                                [ex, ey, FIRE_W, FIRE_H],
                             );
                         }
                         EnemyType::Squid => {

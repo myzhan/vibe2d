@@ -110,6 +110,35 @@ pub(crate) fn hammer_uv(frame: u32) -> [f32; 4] {
     [(frame % 4) as f32 * 0.25, 0.0, 0.25, 0.25]
 }
 
+/// Bowser frame. `bowser.png` is 64x64: 32x32 cells, two columns (the walk) by two
+/// rows — the **second row is mouth-open**, shown for the half second before he
+/// breathes (`bowser.lua:128-135`).
+pub(crate) fn bowser_uv(walk: u32, breathing: bool) -> [f32; 4] {
+    [
+        (walk % 2) as f32 * 0.5,
+        if breathing { 0.5 } else { 0.0 },
+        0.5,
+        0.5,
+    ]
+}
+
+/// One breath of fire. `fire.png` is 48x8: two 24x8 frames.
+pub(crate) fn fire_uv(frame: u32) -> [f32; 4] {
+    [(frame % 2) as f32 * 0.5, 0.0, 0.5, 1.0]
+}
+
+/// The "false Bowser" underneath. `decoys.png` is 64x256: one 32x32 cell per world,
+/// revealed when the Bowser of worlds 1-7 goes down (`bowser.lua:196-199`) — the joke
+/// being that he was a painted goomba all along.
+pub(crate) fn decoy_uv(world: u32) -> [f32; 4] {
+    [
+        0.0,
+        (world.clamp(1, 8) - 1) as f32 * 32.0 / 256.0,
+        0.5,
+        32.0 / 256.0,
+    ]
+}
+
 /// Squid frame. `squid.png` is 32x32: two 16x16 frames — arms up while it drifts and
 /// lunges, arms spread while it sinks.
 pub(crate) fn squid_uv(frame: u32) -> [f32; 4] {
