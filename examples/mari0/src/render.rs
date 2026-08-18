@@ -180,6 +180,14 @@ impl Mari0Game {
             }
         }
 
+        // ── Springs ──
+        // Drawn from the *bottom up*: the body compresses, so its top edge is what
+        // moves and its base stays on the cell.
+        for s in &self.springs {
+            let [x, y, w, h] = s.rect();
+            screen.draw_sprite_region(self.tex_spring, spring_uv(s.frame()), [x - cam_x, y, w, h]);
+        }
+
         // ── Moving platforms ──
         // Before the lab and the actors: they're scenery you stand on, and Mario has
         // to draw in front of one he is riding.

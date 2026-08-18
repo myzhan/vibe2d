@@ -138,6 +138,11 @@ pub(crate) struct Level {
     /// `x±2` cluster rule too.
     pub(crate) platform_spawns: Vec<PlatformSpawnPoint>,
     pub(crate) platform_spawns_by_cell: HashMap<(i32, i32), Vec<usize>>,
+    /// Springs, placed at load. They never move, so unlike the platforms there is no
+    /// reveal to schedule — but their collision box *changes shape* as they compress,
+    /// so they get a published list of their own for the same reason the platforms do.
+    pub(crate) springs: Vec<(i32, i32)>,
+    pub(crate) spring_rects: Vec<SolidRect>,
     /// Elevator-shaft spawners, built at load rather than revealed.
     pub(crate) platform_spawners: Vec<crate::platform::PlatformSpawner>,
     /// The stretch in which bullet bills rain in from the right edge, as columns.
@@ -807,6 +812,13 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         platform_spawns,
         platform_spawns_by_cell,
         platform_spawners,
+        springs: parsed
+            .markers
+            .springs
+            .iter()
+            .map(|(x, y)| (*x as i32, *y as i32))
+            .collect(),
+        spring_rects: Vec::new(),
         lakito_end: parsed.markers.lakito_end.map(|c| c as i32),
         bullet_bill_start: parsed.markers.bullet_bill_start.map(|c| c as i32),
         bullet_bill_end: parsed.markers.bullet_bill_end.map(|c| c as i32),

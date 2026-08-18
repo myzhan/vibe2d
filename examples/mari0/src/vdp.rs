@@ -61,6 +61,10 @@ pub(crate) struct Mari0Inspect {
     pub(crate) fire_started: bool,
     /// Moving platforms in the world right now.
     pub(crate) platforms: Vec<PlatformView>,
+    /// Springs, with their live (compressing) collision boxes.
+    pub(crate) springs: Vec<SpringView>,
+    /// Is Mario mid-launch on a spring, and has he charged it?
+    pub(crate) spring_ride: Option<SpringRideView>,
     /// Maze progress, for the looping castles. `null` in levels without spans.
     pub(crate) maze: Option<MazeView>,
     /// The lab signal network. Empty outside the lab mappack.
@@ -193,6 +197,23 @@ pub(crate) struct PlatformView {
     pub(crate) kind: crate::platform::PlatformKind,
     pub(crate) vx: f32,
     pub(crate) vy: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct SpringView {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) w: f32,
+    pub(crate) h: f32,
+    pub(crate) frame: usize,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct SpringRideView {
+    pub(crate) timer: f32,
+    pub(crate) charged: bool,
 }
 
 #[cfg(feature = "vdp")]
@@ -568,6 +589,24 @@ impl Mari0Game {
             bullet_bill_zone: self.bullet_bill_zone,
             flying_fish_zone: self.flying_fish_zone,
             fire_started: self.fire_started,
+            springs: self
+                .springs
+                .iter()
+                .map(|s| {
+                    let [x, y, w, h] = s.rect();
+                    SpringView {
+                        x,
+                        y,
+                        w,
+                        h,
+                        frame: s.frame(),
+                    }
+                })
+                .collect(),
+            spring_ride: self.spring_ride.map(|r| SpringRideView {
+                timer: r.timer,
+                charged: r.charged,
+            }),
             platforms: self
                 .platforms
                 .iter()

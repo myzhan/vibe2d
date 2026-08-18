@@ -154,6 +154,7 @@ fn solids(level: &Level, body: Body) -> impl Iterator<Item = &SolidRect> {
         .solid_rects
         .iter()
         .chain(level.platform_rects.iter())
+        .chain(level.spring_rects.iter())
         .filter(move |s| body != Body::Cube || !s.cubes_pass)
 }
 

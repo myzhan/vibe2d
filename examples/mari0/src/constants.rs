@@ -131,6 +131,21 @@ pub(crate) const GOOMBA_ANIM_SPEED: f32 = 0.2;
 /// Points for downing lakitu (`firepoints["lakito"]`, `variables.lua:36`).
 pub(crate) const LAKITO_SCORE: u32 = 200;
 
+// ── Springs (variables.lua:335-339) ──
+/// How long the compression lasts. Also the window in which holding jump charges it.
+pub(crate) const SPRING_TIME: f32 = 0.2;
+/// Launch speed with the jump button held during the compression — nearly double.
+pub(crate) const SPRING_HIGH_FORCE: f32 = 41.0 * TILE_SIZE;
+/// …and without it.
+pub(crate) const SPRING_FORCE: f32 = 24.0 * TILE_SIZE;
+/// How far down the spring's surface has sunk at each of its three frames
+/// (`springytable`), in blocks. Mario's height is driven straight off this, so he rides
+/// the animation rather than being animated to match it.
+pub(crate) const SPRING_Y_TABLE: [f32; 3] = [0.0, 0.5, 1.0];
+/// A spring stands 31/16 blocks tall in a one-block column.
+pub(crate) const SPRING_H: f32 = 31.0 / 16.0 * TILE_SIZE;
+pub(crate) const SPRING_W: f32 = TILE_SIZE;
+
 // ── Bowser (variables.lua:107-118) ──
 /// Pacing speed while advancing on the player.
 pub(crate) const BOWSER_SPEED_FORWARDS: f32 = 0.875 * TILE_SIZE;

@@ -139,6 +139,17 @@ pub(crate) fn decoy_uv(world: u32) -> [f32; 4] {
     ]
 }
 
+/// Spring frame. `spring.png` is 48x124 — three 16x31 columns of compression, and the
+/// rows are the spritesets.
+pub(crate) fn spring_uv(frame: usize) -> [f32; 4] {
+    [
+        (frame % 3) as f32 * 16.0 / 48.0,
+        0.0,
+        16.0 / 48.0,
+        31.0 / 124.0,
+    ]
+}
+
 /// Squid frame. `squid.png` is 32x32: two 16x16 frames — arms up while it drifts and
 /// lunges, arms spread while it sinks.
 pub(crate) fn squid_uv(frame: u32) -> [f32; 4] {

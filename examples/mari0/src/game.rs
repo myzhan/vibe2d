@@ -113,6 +113,9 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// Springs, and the ride in progress if Mario is on one.
+    pub(crate) springs: Vec<crate::spring::Spring>,
+    pub(crate) spring_ride: Option<crate::spring::SpringRide>,
     /// Moving platforms currently in the world, and which of the level's are still
     /// waiting for the camera.
     pub(crate) platforms: Vec<crate::platform::Platform>,
@@ -181,6 +184,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_hammer_bro: TextureId,
     pub(crate) tex_hammer: TextureId,
     pub(crate) tex_squid: TextureId,
+    pub(crate) tex_spring: TextureId,
     pub(crate) tex_bowser: TextureId,
     pub(crate) tex_fire: TextureId,
     pub(crate) tex_decoys: TextureId,
@@ -344,6 +348,12 @@ impl Mari0Game {
         };
         self.enemies.clear();
         self.platforms.clear();
+        self.springs = level
+            .springs
+            .iter()
+            .map(|(x, y)| crate::spring::Spring::new(*x, *y))
+            .collect();
+        self.spring_ride = None;
         self.platforms_spawned = vec![false; level.platform_spawns.len()];
         self.platform_spawners = level.platform_spawners.clone();
         self.lakito_retired = false;
@@ -691,6 +701,17 @@ impl Mari0Game {
             self.player.x + self.player.vx * dt,
             self.player.y + self.player.vy * dt,
         );
+
+        // ── Springs ──
+        // A spring seizes the player for two tenths of a second, so it has to come
+        // before the resolver — otherwise the same frame both parks him on the surface
+        // and then collides him off it. Like the pipe it is a state that owns him, but
+        // a short one, and the jump button still counts: pressing it during the ride is
+        // what charges the launch.
+        if self.update_springs(dt, jump_pressed) {
+            self.update_visual_timers(dt);
+            return;
+        }
 
         // ── Move & collide ──
         // Kept from before the resolver zeroes them: a blue-gel bounce is computed from
@@ -1056,6 +1077,8 @@ impl Game for Mari0Game {
             checkpoint: None,
             checkpoints_passed: 0,
             lakito_retired: false,
+            springs: Vec::new(),
+            spring_ride: None,
             platforms: Vec::new(),
             platforms_spawned: Vec::new(),
             platform_spawners: Vec::new(),
@@ -1094,6 +1117,7 @@ impl Game for Mari0Game {
             tex_hammer_bro: t("hammer_bro"),
             tex_hammer: t("hammer"),
             tex_squid: t("squid"),
+            tex_spring: t("spring"),
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),
             tex_decoys: t("decoys"),
