@@ -1298,6 +1298,12 @@ impl Mari0Game {
                     );
                     let (fw, fl) = self.furthest_in(pack);
                     screen.draw_text_centered(font, &format!("furthest {fw}-{fl}"), 252.0);
+                    // Which loadout the mouse buttons will carry.
+                    let gun = match self.player_type {
+                        crate::player::PlayerType::Portal => "PORTAL GUN",
+                        crate::player::PlayerType::GelCannon => "GEL CANNON",
+                    };
+                    screen.draw_text_centered(font, &format!("[F] {gun}"), 274.0);
                     screen.draw_text_centered(
                         font,
                         &format!("high score {:06}", self.high_score),

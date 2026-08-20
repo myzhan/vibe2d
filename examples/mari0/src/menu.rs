@@ -13,6 +13,7 @@
 use vibe2d::prelude::*;
 
 use crate::game::{GameState, Mari0Game};
+use crate::player::PlayerType;
 use crate::level;
 
 /// The mappacks the build ships with, in menu order.
@@ -160,6 +161,15 @@ impl Mari0Game {
             // on screen instead; walking to it is two keys.
             self.menu.world = 1;
             self.menu.level = 1;
+        }
+        // The gel cannon. In the original this is one of `playertypelist`'s three
+        // entries on the same menu (`menu.lua:1867-1885`); here it is a toggle, because
+        // the third entry — `minecraft` — is a whole separate mode and is not ported.
+        if input.is_action_just_pressed("fire") {
+            self.player_type = match self.player_type {
+                PlayerType::Portal => PlayerType::GelCannon,
+                PlayerType::GelCannon => PlayerType::Portal,
+            };
         }
         if input.is_action_just_pressed("jump") {
             self.start_selected();

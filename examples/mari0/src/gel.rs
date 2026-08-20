@@ -116,6 +116,29 @@ impl Mari0Game {
     }
 
     /// Emit blobs from every gel dispenser in the level.
+    /// Spray one blob from the gel cannon, along the crosshair.
+    ///
+    /// The muzzle is offset from the player's centre and the blob leaves at
+    /// [`GEL_CANNON_SPEED`] — six times a dispenser's downward push, which is what lets
+    /// you paint a wall across the room rather than the floor at your feet
+    /// (`mario.lua:3137-3145`).
+    pub(crate) fn shoot_gel(&mut self, gel: crate::level::Gel) {
+        let (sin, cos) = self.crosshair_angle.sin_cos();
+        // Same three-step splat cycle the dispensers use, for the same reason: a replay
+        // has to come out the same way twice.
+        let frame = self.gel_frame;
+        self.gel_frame = (self.gel_frame + 1) % 3;
+        self.gel_blobs.push(GelBlob {
+            x: self.player.center_x() + 8.0 / 16.0 * TILE_SIZE - GEL_SIZE,
+            y: self.player.center_y() + 6.0 / 16.0 * TILE_SIZE - GEL_SIZE,
+            vx: cos * GEL_CANNON_SPEED,
+            vy: sin * GEL_CANNON_SPEED,
+            gel,
+            age: 0.0,
+            frame,
+        });
+    }
+
     fn dispense_gel(&mut self, dt: f32) {
         for index in 0..self.lab.elements.len() {
             if self.lab.elements[index].kind != LabKind::GelDispenser {

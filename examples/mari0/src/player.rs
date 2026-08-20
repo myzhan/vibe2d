@@ -57,6 +57,21 @@ impl Orientation {
     }
 }
 
+/// Which loadout the player is carrying.
+///
+/// `playertypelist` has three entries (`variables.lua:7`) and the third, `minecraft`, is
+/// a separate mode with its own tileset and block-breaking — not ported. These two are
+/// the ones that only change what the mouse does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
+pub(crate) enum PlayerType {
+    /// The portal gun. What every level is designed around.
+    Portal,
+    /// The gel cannon: no portals at all, but unlimited blue and orange paint.
+    GelCannon,
+}
+
 pub(crate) struct Player {
     pub(crate) x: f32,
     pub(crate) y: f32,

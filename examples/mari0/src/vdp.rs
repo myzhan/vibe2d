@@ -26,6 +26,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) state: GameState,
     /// Is the update frozen? The original's pause menu amounts to the same thing.
     pub(crate) paused: bool,
+    /// Which loadout the mouse buttons carry: `portal` or `gel_cannon`.
+    pub(crate) player_type: PlayerType,
     pub(crate) player: PlayerView,
     pub(crate) portals: PortalsView,
     pub(crate) projectiles: Vec<ProjectileView>,
@@ -532,6 +534,12 @@ pub(crate) struct SetPlayerSize {
 
 #[cfg(feature = "vdp")]
 #[derive(serde::Deserialize)]
+pub(crate) struct SetPlayerType {
+    pub(crate) player_type: String,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
 pub(crate) struct SetStar {
     pub(crate) seconds: f32,
 }
@@ -617,6 +625,7 @@ impl Mari0Game {
         let view = Mari0Inspect {
             state: self.state,
             paused: self.paused,
+            player_type: self.player_type,
             player: PlayerView {
                 x: self.player.x,
                 y: self.player.y,
@@ -988,6 +997,20 @@ impl Mari0Game {
         }
         Ok(serde_json::json!({"x": self.player.x, "y": self.player.y,
             "vx": self.player.vx, "vy": self.player.vy}))
+    }
+
+    /// Switch loadout. In the game this is a menu toggle; a test needs it directly.
+    #[vdp("game.setPlayerType")]
+    pub(crate) fn vdp_set_player_type(
+        &mut self,
+        p: SetPlayerType,
+    ) -> Result<serde_json::Value, String> {
+        self.player_type = match p.player_type.as_str() {
+            "portal" => PlayerType::Portal,
+            "gel_cannon" | "gelcannon" => PlayerType::GelCannon,
+            other => return Err(format!("Unknown player type: {other}")),
+        };
+        Ok(serde_json::json!({"player_type": p.player_type}))
     }
 
     #[vdp("game.setPlayerSize")]

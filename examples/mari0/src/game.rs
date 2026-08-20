@@ -82,6 +82,11 @@ pub(crate) struct Mari0Game {
     pub(crate) lab: Lab,
     /// Weighted cubes. Bodies, not lab elements — see `cube.rs`.
     pub(crate) cubes: Vec<crate::cube::Cube>,
+    /// Which loadout the player carries. Chosen in the menu; the gel cannon replaces the
+    /// portal gun rather than supplementing it.
+    pub(crate) player_type: PlayerType,
+    /// Cooldown between gel shots, so holding the button sprays rather than firing once.
+    pub(crate) gel_cannon_timer: f32,
     /// Is the game paused? Freezes the whole update, as the original's pause menu does
     /// by returning from the top of `game_update` (`game.lua:143-146`).
     pub(crate) paused: bool,
@@ -1015,16 +1020,39 @@ impl Mari0Game {
         self.player.invincible_timer = (self.player.invincible_timer - dt).max(0.0);
         self.star_timer = (self.star_timer - dt).max(0.0);
 
-        // ── Fire portals ──
-        if fire_blue && self.player.portal_cooldown <= 0.0 {
-            self.fire_projectile(0);
-            self.player.portal_cooldown = PORTAL_GUN_DELAY;
-            ctx.audio.play("shot");
-        }
-        if fire_orange && self.player.portal_cooldown <= 0.0 {
-            self.fire_projectile(1);
-            self.player.portal_cooldown = PORTAL_GUN_DELAY;
-            ctx.audio.play("shot");
+        // ── The mouse: portals, or paint ──
+        // The gel cannon is a whole different loadout, not a second weapon: with it
+        // selected the portal gun is simply gone and the two buttons spray blue and
+        // orange (`game.lua:341-355`). It also fires on *held* buttons rather than
+        // presses, which is what makes it a spray at one shot every 0.05s.
+        match self.player_type {
+            PlayerType::Portal => {
+                if fire_blue && self.player.portal_cooldown <= 0.0 {
+                    self.fire_projectile(0);
+                    self.player.portal_cooldown = PORTAL_GUN_DELAY;
+                    ctx.audio.play("shot");
+                }
+                if fire_orange && self.player.portal_cooldown <= 0.0 {
+                    self.fire_projectile(1);
+                    self.player.portal_cooldown = PORTAL_GUN_DELAY;
+                    ctx.audio.play("shot");
+                }
+            }
+            PlayerType::GelCannon => {
+                self.gel_cannon_timer = (self.gel_cannon_timer - dt).max(0.0);
+                let blue = input.is_action_pressed("portal_blue");
+                let orange = input.is_action_pressed("portal_orange");
+                if self.gel_cannon_timer <= 0.0 && (blue || orange) {
+                    // Blue wins if both are down, matching the original's if/elseif.
+                    let gel = if blue {
+                        crate::level::Gel::Blue
+                    } else {
+                        crate::level::Gel::Orange
+                    };
+                    self.shoot_gel(gel);
+                    self.gel_cannon_timer = GEL_CANNON_DELAY;
+                }
+            }
         }
 
         // ── Fireballs ──
@@ -1318,6 +1346,8 @@ impl Game for Mari0Game {
             maze: MazeState::default(),
             lab: Lab::default(),
             cubes: Vec::new(),
+            player_type: PlayerType::Portal,
+            gel_cannon_timer: 0.0,
             paused: false,
             menu: crate::menu::MenuCursor::default(),
             storage: Storage::load("mari0"),

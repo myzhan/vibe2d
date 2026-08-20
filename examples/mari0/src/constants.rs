@@ -27,6 +27,12 @@ pub(crate) const FRICTION: f32 = 448.0; // 14 blocks/s^2
 pub(crate) const MAX_Y_SPEED: f32 = 3200.0; // terminal velocity
 pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 
+// ── The gel cannon (variables.lua:392-393) ──
+/// One of the three `playertypelist` loadouts. Picked in the menu, and it replaces the
+/// portal gun outright: left click sprays blue, right click orange.
+pub(crate) const GEL_CANNON_DELAY: f32 = 0.05;
+pub(crate) const GEL_CANNON_SPEED: f32 = 30.0 * TILE_SIZE;
+
 // ── The flagpole ending (variables.lua:322-333) ──
 /// How long the slide down the pole takes, and how far it covers. The flag comes down
 /// over exactly the same span, so the two move together.
