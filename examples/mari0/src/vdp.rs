@@ -67,6 +67,13 @@ pub(crate) struct Mari0Inspect {
     pub(crate) springs: Vec<SpringView>,
     /// Is Mario mid-launch on a spring, and has he charged it?
     pub(crate) spring_ride: Option<SpringRideView>,
+    /// Vines growing in the world. Empty until a vine block is hit — or already
+    /// populated on frame one, in a `bonusstage`.
+    pub(crate) vines: Vec<VineView>,
+    /// What a vine is doing to Mario, or `null`.
+    pub(crate) vine: Option<VineStateView>,
+    /// Is this a coin room reached by vine? Changes what a pit does.
+    pub(crate) bonusstage: bool,
     /// Maze progress, for the looping castles. `null` in levels without spans.
     pub(crate) maze: Option<MazeView>,
     /// The lab signal network. Empty outside the lab mappack.
@@ -227,6 +234,48 @@ pub(crate) struct SpringRideView {
     pub(crate) charged: bool,
 }
 
+/// A vine, with the box you can actually hold and the scissor it is drawn through.
+///
+/// `clip_bottom` is exposed for the same reason `pipe_clip` is: whether the tip is
+/// hidden inside its brick is otherwise only checkable by eyeballing a screenshot.
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct VineView {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) w: f32,
+    pub(crate) h: f32,
+    /// How far up it still has to grow, and whether it is done.
+    pub(crate) limit: f32,
+    pub(crate) grown: bool,
+    /// Sublevel the top of it leads to. 0 for the bonus-stage intro vine, which
+    /// leads nowhere — you have already arrived.
+    pub(crate) dest: u32,
+    pub(crate) clip_bottom: f32,
+    pub(crate) stems: i32,
+}
+
+/// What the vine is doing to Mario, flattened so a test can read one field.
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct VineStateView {
+    /// `grip`, `leaving` or `intro`.
+    pub(crate) phase: &'static str,
+    /// Which side he is hanging on. Only set while gripping.
+    pub(crate) side: Option<crate::vine::VineSide>,
+    /// Which of the two climbing frames is showing, 1 or 2.
+    pub(crate) climb_frame: u32,
+    /// Does he still have the controls? False for both cut-scenes, which is also what
+    /// decides whether the clock is running.
+    pub(crate) has_control: bool,
+    /// Sublevel a `leaving` trip is bound for.
+    pub(crate) dest: Option<u32>,
+    /// Seconds into the bonus-stage intro, and which of its three beats it is on.
+    pub(crate) intro_timer: Option<f32>,
+    pub(crate) intro_climbing: Option<bool>,
+    pub(crate) intro_dropping_off: Option<bool>,
+}
+
 #[cfg(feature = "vdp")]
 #[derive(serde::Serialize)]
 pub(crate) struct CoinView {
@@ -382,6 +431,7 @@ pub(crate) fn block_content_kind(c: &BlockContent) -> &'static str {
         BlockContent::Mushroom => "mushroom",
         BlockContent::Star => "star",
         BlockContent::OneUp => "1up",
+        BlockContent::Vine(_) => "vine",
     }
 }
 
@@ -623,6 +673,51 @@ impl Mari0Game {
                 timer: r.timer,
                 charged: r.charged,
             }),
+            vines: self
+                .vines
+                .iter()
+                .map(|v| {
+                    let [x, y, w, h] = v.rect();
+                    VineView {
+                        x,
+                        y,
+                        w,
+                        h,
+                        limit: v.limit,
+                        grown: v.grown(),
+                        dest: v.dest,
+                        clip_bottom: v.clip_bottom(),
+                        stems: v.stem_count(),
+                    }
+                })
+                .collect(),
+            vine: self.vine.map(|s| {
+                let (phase, side, dest, intro) = match s {
+                    crate::vine::VineState::Grip { side, .. } => {
+                        ("grip", Some(side), None, None)
+                    }
+                    crate::vine::VineState::Leaving { dest, .. } => {
+                        ("leaving", None, Some(dest), None)
+                    }
+                    crate::vine::VineState::Intro {
+                        timer,
+                        climbing,
+                        dropping_off,
+                        ..
+                    } => ("intro", None, None, Some((timer, climbing, dropping_off))),
+                };
+                VineStateView {
+                    phase,
+                    side,
+                    climb_frame: self.player.climb_frame,
+                    has_control: self.vine_has_control(),
+                    dest,
+                    intro_timer: intro.map(|i| i.0),
+                    intro_climbing: intro.map(|i| i.1),
+                    intro_dropping_off: intro.map(|i| i.2),
+                }
+            }),
+            bonusstage: self.level.bonusstage,
             platforms: self
                 .platforms
                 .iter()

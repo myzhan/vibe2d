@@ -10,6 +10,8 @@ pub(crate) enum PlayerAnim {
     Run,
     Jump,
     Fall,
+    /// Holding a vine. Two frames, picked by [`Player::climb_frame`].
+    Climb,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -62,6 +64,9 @@ pub(crate) struct Player {
     pub(crate) is_jumping: bool,
     pub(crate) anim_state: PlayerAnim,
     pub(crate) run_frame: f32,
+    /// Which of the two climbing frames is showing, 1 or 2. Only read while
+    /// `anim_state` is [`PlayerAnim::Climb`]; the vine drives it.
+    pub(crate) climb_frame: u32,
     pub(crate) invincible_timer: f32,
     pub(crate) portal_cooldown: f32,
     pub(crate) teleport_cooldown: f32,
@@ -83,6 +88,7 @@ impl Player {
             is_jumping: false,
             anim_state: PlayerAnim::Idle,
             run_frame: 0.0,
+            climb_frame: 2,
             invincible_timer: 0.0,
             portal_cooldown: 0.0,
             teleport_cooldown: 0.0,

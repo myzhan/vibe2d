@@ -125,6 +125,13 @@ pub(crate) struct Mari0Game {
     /// Springs, and the ride in progress if Mario is on one.
     pub(crate) springs: Vec<crate::spring::Spring>,
     pub(crate) spring_ride: Option<crate::spring::SpringRide>,
+    /// Vines growing in the world. Unlike springs these are not placed at load: a vine
+    /// exists only once its block has been hit — except in a `bonusstage`, which opens
+    /// with one already on its way up.
+    pub(crate) vines: Vec<crate::vine::Vine>,
+    /// What the vine is doing to Mario: holding him, carrying him out of the level, or
+    /// climbing him into a bonus room. `None` most of the time.
+    pub(crate) vine: Option<crate::vine::VineState>,
     /// Moving platforms currently in the world, and which of the level's are still
     /// waiting for the camera.
     pub(crate) platforms: Vec<crate::platform::Platform>,
@@ -194,6 +201,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_hammer: TextureId,
     pub(crate) tex_squid: TextureId,
     pub(crate) tex_spring: TextureId,
+    pub(crate) tex_vine: TextureId,
     pub(crate) tex_bowser: TextureId,
     pub(crate) tex_fire: TextureId,
     pub(crate) tex_decoys: TextureId,
@@ -427,6 +435,16 @@ impl Mari0Game {
         self.music_phase = MusicPhase::Normal;
         self.warning_started_at = None;
         self.music_restart = true;
+
+        // A bonus room does not start with Mario standing in it — it starts with him
+        // below the floor, climbing in on a vine (`game.lua:2139-2141`). Last, because
+        // it moves the player and the camera has to follow him there.
+        self.vines.clear();
+        self.vine = None;
+        if self.level.bonusstage {
+            self.start_vine_intro();
+            self.camera = Camera { x: 0.0 };
+        }
     }
 
     /// Note the highest checkpoint the player has walked past.
@@ -639,6 +657,33 @@ impl Mari0Game {
         let fire_ball = input.is_action_just_pressed("fire");
         let sprint = input.is_action_pressed("fire"); // hold shift/F to sprint
 
+        // ── Vines ──
+        // A vine owns the player the way a pipe does, but not equally. *Climbing* one
+        // leaves the controls live, and the clock follows the controls in the original
+        // (`game.lua:189-196` stops it for any player whose `controlsenabled` is false),
+        // so a climb burns time and its two cut-scene halves — the bonus-stage intro
+        // and the ride out of the top of the level — do not.
+        //
+        // The side-hop is bound to the *press*, not the hold: the first tap swings him
+        // round the stem and only the second lets go, which needs edges to tell apart.
+        if self.update_vine(
+            ctx,
+            dt,
+            input.is_action_pressed("climb_up"),
+            input.is_action_pressed("crouch"),
+            input.is_action_just_pressed("move_left"),
+            input.is_action_just_pressed("move_right"),
+        ) {
+            self.update_visual_timers(dt);
+            if self.vine_has_control() {
+                self.update_enemies(dt, ctx);
+                if self.tick_clock(ctx, dt) {
+                    self.die(ctx);
+                }
+            }
+            return;
+        }
+
         // Aiming: right stick when it's deflected, mouse otherwise.
         //
         // The stick wins only while actually pushed, so a plugged-in controller
@@ -827,9 +872,22 @@ impl Mari0Game {
             }
         }
 
+        // ── Grabbing a vine ──
+        // After the move, where the original's collision pass would have reported the
+        // overlap, and after the block hit — so the frame you headbutt the brick is also
+        // the frame the vine exists, even though it has no height yet to catch you.
+        self.check_vine_grab();
+
         // ── Pit death ──
+        // Except in a bonus room, where the pit is the door: you ride the platform to
+        // the end, drop off it and land back in the level that sent you
+        // (`mario.lua:2603-2607`). Nothing else about a bonus stage gets you out.
         if self.player.y > (self.level.height as f32) * TILE_SIZE + 100.0 {
-            self.die(ctx);
+            if self.level.bonusstage {
+                self.leave_bonus_stage();
+            } else {
+                self.die(ctx);
+            }
             return;
         }
 
@@ -962,7 +1020,14 @@ impl Mari0Game {
         }
 
         // ── Animation ──
-        if !self.player.on_ground {
+        // Not while holding a vine. A grab is only detected *after* the move, so the
+        // frame Mario catches one still reaches here — and this would overwrite the
+        // climbing pose he was just put into with "falling", making the first frame of
+        // every climb flicker. The original never gets this far: `mario:update` returns
+        // from inside its vine branch (`mario.lua:856`).
+        if self.vine.is_some() {
+            // leave `anim_state` where the vine put it
+        } else if !self.player.on_ground {
             self.player.anim_state = if self.player.vy < 0.0 {
                 PlayerAnim::Jump
             } else {
@@ -1113,6 +1178,8 @@ impl Game for Mari0Game {
             coin_spin: 0.0,
             springs: Vec::new(),
             spring_ride: None,
+            vines: Vec::new(),
+            vine: None,
             platforms: Vec::new(),
             platforms_spawned: Vec::new(),
             platform_spawners: Vec::new(),
@@ -1152,6 +1219,7 @@ impl Game for Mari0Game {
             tex_hammer: t("hammer"),
             tex_squid: t("squid"),
             tex_spring: t("spring"),
+            tex_vine: t("vine"),
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),
             tex_decoys: t("decoys"),

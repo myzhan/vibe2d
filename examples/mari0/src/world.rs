@@ -81,6 +81,10 @@ pub(crate) struct Level {
     /// sublevel to come back to on death, so dying in 1-2_1 doesn't dump you back
     /// in the stub (`mario.lua:2891-2893`).
     pub(crate) intermission: bool,
+    /// A coin room reached by vine. Two things follow from the flag: the level opens
+    /// with the `vinestart` climb-in animation, and a pit is the *exit* rather than a
+    /// death (`game.lua:2139-2141`, `mario.lua:2603-2607`).
+    pub(crate) bonusstage: bool,
 
     // ── Maze spans (the looping castles) ────────────────────────────
     /// First and last column of each maze span. **Mutable at runtime**: splicing a
@@ -493,6 +497,13 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         };
         block_contents.insert((*y, *x), content);
     }
+    // Vines are parsed into their own marker list rather than `block_contents` — the
+    // original keeps them out of `entitylist`'s item branch too — but at runtime a vine
+    // *is* what a block holds, so it joins the same map here and `hit_block` finds it
+    // the same way it finds a mushroom.
+    for (x, y, dest) in &parsed.markers.vines {
+        block_contents.insert((*y, *x), BlockContent::Vine(*dest as u32));
+    }
     // A question block with no stated contents holds a single coin.
     for row in 0..height {
         for col in 0..width {
@@ -802,6 +813,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         warp_pipes,
         checkpoints,
         intermission: parsed.meta.intermission,
+        bonusstage: parsed.meta.bonusstage,
         maze_starts: parsed
             .markers
             .maze_starts
@@ -957,5 +969,98 @@ mod tests {
             assert_eq!(lv.width, 24, "{name} should be the 24-wide stub");
             assert!(!lv.pipes.is_empty(), "{name} should hold the pipe onward");
         }
+    }
+
+    /// The five vine blocks in the game, and where each leads.
+    ///
+    /// Cell and destination both, because a vine that parses but points at the wrong
+    /// sublevel is a bug you only find by playing five separate levels to the middle.
+    /// Note every one of them is in a *brick*, not a question block — 4-2_1's is tile
+    /// 49, which is why `hit_block` has to dispatch on the tile's properties.
+    #[test]
+    fn the_five_vines_are_where_they_should_be_and_lead_where_they_should() {
+        let cases = [
+            ("2-1", 83usize, 5usize, 1u32),
+            ("3-1", 131, 5, 1),
+            ("4-2_1", 64, 5, 2),
+            ("5-2", 85, 5, 2),
+            ("6-2", 81, 5, 3),
+        ];
+        for (name, col, row, dest) in cases {
+            let lv = load_level("smb", name);
+            assert_eq!(
+                lv.block_contents.get(&(row, col)),
+                Some(&BlockContent::Vine(dest)),
+                "{name} should hold a vine to sublevel {dest} at ({col}, {row})"
+            );
+            assert!(
+                crate::level::tiles::props(lv.tiles[row][col] as u16).breakable(),
+                "{name}'s vine is in a brick, and a brick has to bounce for it to sprout"
+            );
+        }
+        // And nowhere else: a sixth vine would mean the entity table has shifted.
+        let total: usize = level::LEVELS
+            .iter()
+            .map(|(pack, name, _)| {
+                load_level(pack, name)
+                    .block_contents
+                    .values()
+                    .filter(|c| matches!(c, BlockContent::Vine(_)))
+                    .count()
+            })
+            .sum();
+        assert_eq!(total, 5, "the whole game has exactly five vines");
+    }
+
+    /// Every vine leads to a `bonusstage`, and every `bonusstage` is reached by a vine.
+    ///
+    /// The two halves have to line up or a room is unreachable — or, worse, reachable
+    /// without the intro that puts Mario inside it, leaving him under the floor.
+    #[test]
+    fn vines_and_bonus_stages_are_the_same_five_rooms() {
+        let mut reached = Vec::new();
+        for (pack, name, _) in level::LEVELS {
+            let lv = load_level(pack, name);
+            for content in lv.block_contents.values() {
+                if let BlockContent::Vine(dest) = content {
+                    let target = level_id_of(pack, name).with_sublevel(*dest);
+                    assert!(
+                        target.exists(),
+                        "{name}'s vine leads to missing level {}",
+                        target.name()
+                    );
+                    let room = load_level(pack, &target.name());
+                    assert!(
+                        room.bonusstage,
+                        "{} is reached by vine so it must be a bonusstage",
+                        target.name()
+                    );
+                    reached.push(target.name());
+                }
+            }
+        }
+        let mut bonus: Vec<String> = level::LEVELS
+            .iter()
+            .filter(|(pack, name, _)| load_level(pack, name).bonusstage)
+            .map(|(_, name, _)| name.to_string())
+            .collect();
+        bonus.sort();
+        reached.sort();
+        assert_eq!(
+            reached, bonus,
+            "every bonus room must be reachable by exactly one vine"
+        );
+    }
+
+    /// Parse a level's own name back into the id that hosts it, so a test can ask what
+    /// its sublevels are called.
+    fn level_id_of(pack: &str, name: &str) -> LevelId {
+        let base = name.split('_').next().unwrap_or(name);
+        let (world, level) = base.split_once('-').expect("W-L");
+        LevelId::new(
+            pack,
+            world.parse().unwrap_or(1),
+            level.parse().unwrap_or(1),
+        )
     }
 }

@@ -150,6 +150,21 @@ pub(crate) fn spring_uv(frame: usize) -> [f32; 4] {
     ]
 }
 
+/// Vine piece. `vine.png` is 32x64: two 16x16 columns — the curled tip and a length of
+/// stem — and one row per spriteset (`main.lua:373-378`).
+///
+/// A vine is drawn as one tip with as many stems as it is tall stacked below it, so
+/// these two cells are the whole sheet a vine of any length needs.
+pub(crate) fn vine_uv(spriteset: u8, stem: bool) -> [f32; 4] {
+    let row = (spriteset.clamp(1, 4) - 1) as f32;
+    [
+        if stem { 0.5 } else { 0.0 },
+        row * 16.0 / 64.0,
+        0.5,
+        16.0 / 64.0,
+    ]
+}
+
 /// Squid frame. `squid.png` is 32x32: two 16x16 frames — arms up while it drifts and
 /// lunges, arms spread while it sinks.
 pub(crate) fn squid_uv(frame: u32) -> [f32; 4] {

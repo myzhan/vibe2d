@@ -35,6 +35,7 @@ assets:
     hammer: "assets/mari0/hammer.png"
     squid: "assets/mari0/squid.png"
     spring: "assets/mari0/spring.png"
+    vine: "assets/mari0/vine.png"
     bowser: "assets/mari0/bowser.png"
     fire: "assets/mari0/fire.png"
     decoys: "assets/mari0/decoys.png"
@@ -109,6 +110,16 @@ assets:
     levelend: "assets/sounds/levelend.ogg"
     scorering: "assets/sounds/scorering.ogg"
     shot: "assets/sounds/shot.ogg"
+    vine: "assets/sounds/vine.ogg"
+
+    # These five were being asked for by name (`ctx.audio.play("pipe")` and
+    # friends) without ever being declared here, so every pipe, every castle
+    # ending and every firebar was silent. The .ogg files were always present.
+    pipe: "assets/sounds/pipe.ogg"
+    fire: "assets/sounds/fire.ogg"
+    bridgebreak: "assets/sounds/bridgebreak.ogg"
+    bowserfall: "assets/sounds/bowserfall.ogg"
+    castleend: "assets/sounds/castleend.ogg"
 
     # Level music. Each theme has a `-fast` twin, played from zero once the clock
     # drops below 99 — see `src/music.rs`. `starmusic` doubles as the bonus-stage
@@ -150,6 +161,13 @@ input:
       keys: ["Down", "S"]
       gamepad_buttons: ["DPadDown"]
       gamepad_axes: ["LeftStickDown"]
+    # Climbing a vine. Its own action rather than a reuse of `jump`, because up and
+    # down have to be independent of the jump button while hanging on one — and `use`
+    # already has Up, which is harmless: there is nothing to use on a vine.
+    climb_up:
+      keys: ["Up", "W"]
+      gamepad_buttons: ["DPadUp"]
+      gamepad_axes: ["LeftStickUp"]
     # The portal gun goes on the triggers: they're analogue, so they read as the
     # two "weapons" a Portal player expects, and they leave the face buttons free.
     portal_blue:

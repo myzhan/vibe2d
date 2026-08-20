@@ -94,6 +94,42 @@ impl Mari0Game {
         }
     }
 
+    /// Draw every vine: one curled tip with a column of stem stacked below it.
+    ///
+    /// The scissor is the reason this is its own function. A vine's body starts *inside*
+    /// the brick it came from, so `vine:draw` wraps the whole thing in
+    /// `setScissor(0, 0, width, (coy - 1.5) * 16)` — half a block above the brick's top
+    /// face. Without it the tip sits visibly on top of a brick it has not emerged from,
+    /// and the first half block of stem draws over the brick's own art.
+    ///
+    /// The sprite is offset a quarter block left of the collision box and 5/8 of one up
+    /// (`x - 1/16 - (1-width)/2`, `y - 0.5 - 2/16`), which is why the stem you see is
+    /// wider than the stem you can hold.
+    fn draw_vines(&self, screen: &mut Screen, cam_x: f32) {
+        for v in &self.vines {
+            let sx = v.x - 0.25 * TILE_SIZE - cam_x;
+            let tip_y = v.y - 0.625 * TILE_SIZE;
+            let clip_h = v.clip_bottom().max(0.0);
+            if clip_h <= 0.0 {
+                continue;
+            }
+            screen.clipped(0.0, 0.0, self.vw, clip_h, |screen| {
+                screen.draw_sprite_region(
+                    self.tex_vine,
+                    vine_uv(self.level.spriteset, false),
+                    [sx, tip_y, TILE_SIZE, TILE_SIZE],
+                );
+                for i in 1..=v.stem_count() {
+                    screen.draw_sprite_region(
+                        self.tex_vine,
+                        vine_uv(self.level.spriteset, true),
+                        [sx, tip_y + i as f32 * TILE_SIZE, TILE_SIZE, TILE_SIZE],
+                    );
+                }
+            });
+        }
+    }
+
     /// The spinning coin icon beside the counter.
     ///
     /// Its sheet is 5x8 cells, not 16x16 — the HUD is the one place
@@ -202,6 +238,12 @@ impl Mari0Game {
             let [x, y, w, h] = s.rect();
             screen.draw_sprite_region(self.tex_spring, spring_uv(s.frame()), [x - cam_x, y, w, h]);
         }
+
+        // ── Vines ──
+        // After the tiles and before the actors, which is the original's order too
+        // (`game.lua:1061` against the object sweep at `:1228`) — so Mario hangs in
+        // front of the stem he is holding.
+        self.draw_vines(screen, cam_x);
 
         // ── Moving platforms ──
         // Before the lab and the actors: they're scenery you stand on, and Mario has
@@ -719,9 +761,23 @@ impl Mari0Game {
                     3
                 };
 
+                // Climbing overrides the aim on both axes. The original *assigns*
+                // `pointingangle = ±pi/2` when Mario takes hold of a vine
+                // (`mario.lua:2316-2320`) — its angles run from straight up, so ±pi/2 is
+                // horizontal, hence the gun-level row — and the sign is what decides the
+                // flip. He faces the stem he is holding.
+                let climbing = self.player.anim_state == PlayerAnim::Climb;
+                let angle_row = if climbing { 2 } else { angle_row };
                 // Player faces mouse direction (mari0: pointingangle > 0 → face left)
-                let face_right = self.crosshair_angle.cos() >= 0.0;
+                let face_right = if climbing {
+                    self.player.facing_right
+                } else {
+                    self.crosshair_angle.cos() >= 0.0
+                };
 
+                // Columns 7 and 8 of the sheet, the two climbing frames
+                // (`marioclimb`, `main.lua:544-546`).
+                let climb_col = 6 + self.player.climb_frame.clamp(1, 2);
                 let src = if self.player.is_big {
                     match self.player.anim_state {
                         PlayerAnim::Idle => mario_big_uv(0, angle_row),
@@ -730,6 +786,7 @@ impl Mari0Game {
                             mario_big_uv(1 + frame, angle_row)
                         }
                         PlayerAnim::Jump | PlayerAnim::Fall => mario_big_uv(5, angle_row),
+                        PlayerAnim::Climb => mario_big_uv(climb_col, angle_row),
                     }
                 } else {
                     match self.player.anim_state {
@@ -739,6 +796,7 @@ impl Mari0Game {
                             mario_uv(1 + frame, angle_row)
                         }
                         PlayerAnim::Jump | PlayerAnim::Fall => mario_uv(5, angle_row),
+                        PlayerAnim::Climb => mario_uv(climb_col, angle_row),
                     }
                 };
                 let px = self.player.x - cam_x;

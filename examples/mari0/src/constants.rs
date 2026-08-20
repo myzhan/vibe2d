@@ -146,6 +146,42 @@ pub(crate) const SPRING_Y_TABLE: [f32; 3] = [0.0, 0.5, 1.0];
 pub(crate) const SPRING_H: f32 = 31.0 / 16.0 * TILE_SIZE;
 pub(crate) const SPRING_W: f32 = TILE_SIZE;
 
+// ── Vines (variables.lua:287-297) ──
+/// How fast a vine grows out of its block, 2.13 blocks/s.
+pub(crate) const VINE_SPEED: f32 = 2.13 * TILE_SIZE;
+/// How fast Mario climbs *up* one.
+pub(crate) const VINE_MOVE_SPEED: f32 = 3.21 * TILE_SIZE;
+/// Sliding down is exactly twice as fast (`vinemovespeed*2`).
+pub(crate) const VINE_MOVE_DOWN_SPEED: f32 = 2.0 * VINE_MOVE_SPEED;
+/// Seconds per climbing frame going up, and going down — the descent flickers twice
+/// as fast because the delay is halved, not because there are more frames.
+pub(crate) const VINE_FRAME_DELAY: f32 = 0.15;
+pub(crate) const VINE_FRAME_DELAY_DOWN: f32 = VINE_FRAME_DELAY / 2.0;
+/// Climb until Mario's head is this far from the top of the level and he leaves it
+/// entirely — the trip into the bonus room starts here, not at the vine's own tip.
+pub(crate) const VINE_ANIM_START: f32 = 4.0 * TILE_SIZE;
+/// The bonus-stage intro's numbers. The vine grows this far before Mario starts
+/// after it, which at `VINE_SPEED` is `VINE_ANIM_MARIO_START` seconds of him just
+/// standing there — by which point the vine has already stopped, so what you see is
+/// a fully grown vine being climbed.
+pub(crate) const VINE_ANIM_GROW_HEIGHT: f32 = 6.0 * TILE_SIZE;
+pub(crate) const VINE_ANIM_MARIO_START: f32 = 6.0 / 2.13;
+/// He stops this far short of where the vine grew to, and lets go half a second later.
+pub(crate) const VINE_ANIM_STOP: f32 = 1.75 * TILE_SIZE;
+pub(crate) const VINE_ANIM_DROP_DELAY: f32 = 0.5;
+/// The grabbable box is 10/16 of a block wide, narrower than the sprite.
+pub(crate) const VINE_W: f32 = 10.0 / 16.0 * TILE_SIZE;
+/// The box's bottom sits this far *above* the bottom edge of the block the vine came
+/// out of, so the last stretch of sprite by the block is decoration you cannot hold.
+pub(crate) const VINE_FOOT: f32 = 1.7 * TILE_SIZE;
+/// The bonus-stage intro's vine and Mario both start on this row — one below a
+/// 15-row level, which is why he is out of sight when the room fades in.
+pub(crate) const VINE_INTRO_START_Y: f32 = 15.0 * TILE_SIZE;
+/// …and in this column, the one every bonus room leaves a hole in its floor for.
+pub(crate) const VINE_INTRO_COL: i32 = 4;
+/// How far up that vine grows, `limit = 9+1/16` (`vine.lua:10`).
+pub(crate) const VINE_INTRO_LIMIT: f32 = (9.0 + 1.0 / 16.0) * TILE_SIZE;
+
 // ── The castle ending (variables.lua:346-353) ──
 /// How long the chain hangs there after the axe is taken, before the bridge starts to go.
 pub(crate) const CASTLE_CHAIN_DISAPPEAR: f32 = 0.38;

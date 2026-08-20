@@ -9,13 +9,16 @@ use crate::game::Mari0Game;
 use crate::physics::*;
 use crate::portal::{PortalBody, portal_carry};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum BlockContent {
     Coin,
     MultiCoin(u32),
     Mushroom,
     Star,
     OneUp,
+    /// A vine, and the sublevel climbing it leads to. Entity 14, in exactly five
+    /// blocks in the whole game — see `vine.rs`.
+    Vine(u32),
     // Note: there is intentionally no `FireFlower` variant. In SMB the
     // FireFlower is *produced* dynamically when a big Mario hits a
     // `Mushroom` block (see the `BlockContent::Mushroom` arm in the block
@@ -33,6 +36,18 @@ pub(crate) enum ItemType {
     #[cfg_attr(feature = "vdp", serde(rename = "1up"))]
     OneUp,
     FireFlower,
+}
+
+/// The three kinds of block a hit can land on, resolved from the tile's properties.
+///
+/// A question block and a hidden one run the same code in the original and differ only
+/// in the used-block art they leave behind, but keeping them apart here is what lets a
+/// hidden block stay silent when it holds nothing.
+#[derive(Clone, Copy, PartialEq)]
+enum BlockKind {
+    Question,
+    Hidden,
+    Brick,
 }
 
 pub(crate) struct Fireball {
@@ -63,8 +78,55 @@ impl Mari0Game {
         let bx = col as f32 * TILE_SIZE;
         let by = row as f32 * TILE_SIZE;
 
-        match tile {
-            SMB_QUESTION => {
+        // Which of the three kinds of block this is comes from the tile's *properties*,
+        // not its id. There are three breakable ids across the spritesets (7, 49, 122)
+        // and two coinblock ids (8, 115), and only 7, 8 and 115 used to be named here —
+        // which left tile 49 completely inert. It is the underground brick, used 1591
+        // times in the shipped levels against tile 7's 365, so most of the bricks in the
+        // game could not be broken and nothing inside one ever came out. 4-2_1's vine
+        // is in one. The original dispatches on `tilequads[…].breakable` and `.coinblock`
+        // for exactly this reason (`mario.lua:2377`, `:2416`).
+        let props = crate::level::tiles::props(tile as u16);
+        // `invisible` is checked with `coinblock`, never alone: empty sky carries the
+        // invisible flag too, and a hidden block differs from a question block only in
+        // which used-block art it turns into.
+        let kind = if props.coinblock() && props.invisible() {
+            BlockKind::Hidden
+        } else if props.coinblock() {
+            BlockKind::Question
+        } else if props.breakable() {
+            BlockKind::Brick
+        } else {
+            return;
+        };
+
+        // A vine does the same thing out of any block that bounces, so it is settled
+        // before the per-kind arms: the block turns used, the vine sound plays instead
+        // of the item one, and the beanstalk starts growing (`mario.lua:2390-2393`).
+        //
+        // The original defers the spawn to the end of the bounce
+        // (`blockbouncecontent` → `item()`, `game.lua:296`), which this port does not
+        // model for any item; a vine emerging from behind the block is clipped by its
+        // own scissor for the first half block anyway, so the difference is invisible.
+        if let Some(BlockContent::Vine(dest)) = self.level.block_contents.get(&key).copied() {
+            self.level.tiles[row][col] =
+                crate::level::tiles::used_block_tile(self.level.spriteset, props.invisible())
+                    as u32;
+            self.level.block_contents.remove(&key);
+            self.vines
+                .push(crate::vine::Vine::from_block(col as i32, row as i32, dest));
+            self.block_bounces.push(BlockBounce {
+                col: col as i32,
+                row: row as i32,
+                timer: 0.0,
+            });
+            ctx.audio.play("blockhit");
+            ctx.audio.play("vine");
+            return;
+        }
+
+        match kind {
+            BlockKind::Question => {
                 let content = self
                     .level
                     .block_contents
@@ -72,6 +134,8 @@ impl Mari0Game {
                     .copied()
                     .unwrap_or(BlockContent::Coin);
                 match content {
+                    // Settled above, before the kinds were told apart.
+                    BlockContent::Vine(_) => unreachable!("vines return early"),
                     BlockContent::Coin => {
                         // Turn question block into used block
                         self.level.tiles[row][col] = self.used_block_tile();
@@ -166,10 +230,12 @@ impl Mari0Game {
                 });
                 ctx.audio.play("blockhit");
             }
-            SMB_BRICK => {
+            BlockKind::Brick => {
                 if let Some(content) = self.level.block_contents.get(&key).copied() {
                     // Brick with content
                     match content {
+                        // Settled above, before the kinds were told apart.
+                        BlockContent::Vine(_) => unreachable!("vines return early"),
                         BlockContent::MultiCoin(remaining) => {
                             self.level
                                 .multi_coin_timers
@@ -299,9 +365,10 @@ impl Mari0Game {
                     ctx.audio.play("blockhit");
                 }
             }
-            SMB_HIDDEN_BLOCK => {
+            BlockKind::Hidden => {
                 if let Some(content) = self.level.block_contents.get(&key).copied() {
-                    self.level.tiles[row][col] = self.used_block_tile();
+                    self.level.tiles[row][col] =
+                        crate::level::tiles::used_block_tile(self.level.spriteset, true) as u32;
                     self.level.block_contents.remove(&key);
                     match content {
                         BlockContent::Mushroom | BlockContent::Star | BlockContent::OneUp => {
@@ -355,7 +422,6 @@ impl Mari0Game {
                     ctx.audio.play("blockhit");
                 }
             }
-            _ => {}
         }
     }
 

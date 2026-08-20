@@ -32,6 +32,7 @@ mod portal;
 mod portal_math;
 mod render;
 mod spring;
+mod vine;
 mod world;
 
 #[cfg(feature = "vdp")]

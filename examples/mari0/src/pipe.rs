@@ -232,7 +232,12 @@ impl Mari0Game {
     }
 
     /// Load whatever the pipe led to and set up the arrival.
-    fn travel_to(&mut self, target: PipeTarget) {
+    ///
+    /// Not private to pipes: a vine leads into a sublevel and falling out of a bonus
+    /// stage leads back out of one, and both want the same `pipespawn` pairing this
+    /// does — otherwise the return trip from 2-1_1 would drop you at 2-1's start
+    /// instead of at the pipe on column 162.
+    pub(crate) fn travel_to(&mut self, target: PipeTarget) {
         let from_sublevel = self.current.sublevel;
         match target {
             PipeTarget::None => {}
