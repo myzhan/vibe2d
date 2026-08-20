@@ -69,6 +69,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) spring_ride: Option<SpringRideView>,
     /// Seesaw rigs. Nine in the game, over three levels.
     pub(crate) seesaws: Vec<SeesawView>,
+    /// Bubbles Mario has breathed out, `[x, y]` in world pixels. Water levels only.
+    pub(crate) bubbles: Vec<[f32; 2]>,
     /// Vines growing in the world. Empty until a vine block is hit — or already
     /// populated on frame one, in a `bonusstage`.
     pub(crate) vines: Vec<VineView>,
@@ -114,6 +116,8 @@ pub(crate) struct PlayerView {
     pub(crate) is_fire: bool,
     pub(crate) is_jumping: bool,
     pub(crate) anim_state: PlayerAnim,
+    /// Is a big Mario crouched? His box is halved while so.
+    pub(crate) ducking: bool,
     pub(crate) portal_cooldown: f32,
     pub(crate) teleport_cooldown: f32,
     pub(crate) invincible_timer: f32,
@@ -432,6 +436,8 @@ pub(crate) struct LevelView {
     /// The level's checkpoint columns, so a test knows where to walk to.
     pub(crate) checkpoints: Vec<[i32; 2]>,
     pub(crate) intermission: bool,
+    /// Swaps the player's whole movement model for the swimming one.
+    pub(crate) underwater: bool,
     pub(crate) background: u8,
     pub(crate) time_limit: f32,
 }
@@ -600,6 +606,7 @@ impl Mari0Game {
                 is_fire: self.player.is_fire,
                 is_jumping: self.player.is_jumping,
                 anim_state: self.player.anim_state,
+                ducking: self.player.ducking,
                 portal_cooldown: self.player.portal_cooldown,
                 teleport_cooldown: self.player.teleport_cooldown,
                 invincible_timer: self.player.invincible_timer,
@@ -669,6 +676,7 @@ impl Mari0Game {
                     .map(|(c, r)| [*c, *r])
                     .collect(),
                 intermission: self.level.intermission,
+                underwater: self.level.underwater,
                 background: self.level.background,
                 time_limit: self.level.time_limit,
             },
@@ -710,6 +718,7 @@ impl Mari0Game {
                 timer: r.timer,
                 charged: r.charged,
             }),
+            bubbles: self.bubbles.iter().map(|b| [b.x, b.y]).collect(),
             seesaws: self
                 .seesaws
                 .iter()

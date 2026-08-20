@@ -38,3 +38,15 @@ pub(crate) struct BrickDebris {
     pub(crate) vy: f32,
     pub(crate) timer: f32,
 }
+
+/// A bubble out of Mario's mouth, in a water level.
+///
+/// Purely decorative, and the only reason it is worth the twenty lines is that without
+/// them a water level reads as a blue room rather than as water. It rises at
+/// [`BUBBLE_SPEED`] with a speed that wanders inside ±[`BUBBLE_MARGIN`], and pops at the
+/// surface (`bubble.lua`).
+pub(crate) struct Bubble {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) vy: f32,
+}

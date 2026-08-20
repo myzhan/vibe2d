@@ -332,6 +332,14 @@ impl Mari0Game {
             screen.draw_sprite_region(self.tex_spring, spring_uv(s.frame()), [x - cam_x, y, w, h]);
         }
 
+        // ── Bubbles ──
+        // Behind the actors, like every other bit of water decoration. `bubble.png` is
+        // 4x4, drawn at 2x with its own centre as the origin (`bubble.lua:31`).
+        for b in &self.bubbles {
+            const S: f32 = 4.0 * 2.0;
+            screen.draw_sprite(self.tex_bubble, b.x - cam_x - S / 2.0, b.y - S / 2.0, S, S);
+        }
+
         // ── Vines ──
         // After the tiles and before the actors, which is the original's order too
         // (`game.lua:1061` against the object sweep at `:1228`) — so Mario hangs in
@@ -870,8 +878,11 @@ impl Mari0Game {
                 };
 
                 // Columns 7 and 8 of the sheet, the two climbing frames
-                // (`marioclimb`, `main.lua:544-546`).
+                // (`marioclimb`, `main.lua:544-546`); 9 and 10 are the swimming pair
+                // (`marioswim`, `:548-550`) and 13 is the big-only crouch
+                // (`bigmarioduck`, `:600`).
                 let climb_col = 6 + self.player.climb_frame.clamp(1, 2);
+                let swim_col = 8 + (self.player.swim_phase.floor() as u32).clamp(1, 2);
                 let src = if self.player.is_big {
                     match self.player.anim_state {
                         PlayerAnim::Idle => mario_big_uv(0, angle_row),
@@ -881,6 +892,8 @@ impl Mari0Game {
                         }
                         PlayerAnim::Jump | PlayerAnim::Fall => mario_big_uv(5, angle_row),
                         PlayerAnim::Climb => mario_big_uv(climb_col, angle_row),
+                        PlayerAnim::Swim => mario_big_uv(swim_col, angle_row),
+                        PlayerAnim::Duck => mario_big_uv(13, angle_row),
                     }
                 } else {
                     match self.player.anim_state {
@@ -891,6 +904,11 @@ impl Mari0Game {
                         }
                         PlayerAnim::Jump | PlayerAnim::Fall => mario_uv(5, angle_row),
                         PlayerAnim::Climb => mario_uv(climb_col, angle_row),
+                        PlayerAnim::Swim => mario_uv(swim_col, angle_row),
+                        // A small Mario has no crouch, so this is unreachable — but
+                        // falling back on `idle` beats sampling column 13 of a sheet
+                        // that has no such cell.
+                        PlayerAnim::Duck => mario_uv(0, angle_row),
                     }
                 };
                 let px = self.player.x - cam_x;

@@ -12,6 +12,13 @@ pub(crate) enum PlayerAnim {
     Fall,
     /// Holding a vine. Two frames, picked by [`Player::climb_frame`].
     Climb,
+    /// Mid-stroke or sinking, in a water level. Two frames, picked by
+    /// [`Player::swim_frame`]. Walking on the sea floor is still `Run` — the original
+    /// only swaps in the swimming sprite while `jumping` or `falling`
+    /// (`mario.lua:1516`).
+    Swim,
+    /// A big Mario crouching. Not reachable while small.
+    Duck,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -67,6 +74,14 @@ pub(crate) struct Player {
     /// Which of the two climbing frames is showing, 1 or 2. Only read while
     /// `anim_state` is [`PlayerAnim::Climb`]; the vine drives it.
     pub(crate) climb_frame: u32,
+    /// Stroke animation phase, in the original's own units: it lives in `[1, 3)` and the
+    /// frame is its floor, so it is 1 or 2 and never 0 (`mario.lua:126`, `:1356-1360`).
+    pub(crate) swim_phase: f32,
+    /// Is a big Mario crouching? Halves his box — see [`Player::set_ducking`].
+    pub(crate) ducking: bool,
+    /// Seconds until the next bubble, and which of the two intervals is in use.
+    pub(crate) bubble_timer: f32,
+    pub(crate) bubble_index: usize,
     pub(crate) invincible_timer: f32,
     pub(crate) portal_cooldown: f32,
     pub(crate) teleport_cooldown: f32,
@@ -89,6 +104,10 @@ impl Player {
             anim_state: PlayerAnim::Idle,
             run_frame: 0.0,
             climb_frame: 2,
+            swim_phase: 1.0,
+            ducking: false,
+            bubble_timer: 0.0,
+            bubble_index: 0,
             invincible_timer: 0.0,
             portal_cooldown: 0.0,
             teleport_cooldown: 0.0,
@@ -105,7 +124,34 @@ impl Player {
         self.y + self.height
     }
 
+    /// Crouch or stand up, keeping his feet where they are.
+    ///
+    /// The box halves and its top drops by the same amount (`mario.lua:2865-2878`), so
+    /// the ground under him does not move. Ignored unless he is big, since there is no
+    /// small-Mario crouch at all.
+    ///
+    /// Standing up is refused rather than deferred if there is no room — the original
+    /// never checks, because the only way to be crouched under a ceiling is to have
+    /// walked there crouched, and it cannot walk while crouched. `caller_has_room` lets
+    /// the caller do the check where it has the level to hand.
+    pub(crate) fn set_ducking(&mut self, ducking: bool) {
+        if !self.is_big || self.ducking == ducking {
+            return;
+        }
+        self.ducking = ducking;
+        if ducking {
+            self.y += PLAYER_BIG_H - DUCK_HEIGHT;
+            self.height = DUCK_HEIGHT;
+        } else {
+            self.y -= PLAYER_BIG_H - DUCK_HEIGHT;
+            self.height = PLAYER_BIG_H;
+        }
+    }
+
     pub(crate) fn set_size(&mut self, big: bool) {
+        // A size change while crouched would leave the box the wrong height for good, so
+        // stand him up first (`mario:shrink` does exactly this, `mario.lua:1667-1669`).
+        self.set_ducking(false);
         let was_big = self.is_big;
         self.is_big = big;
         if big {

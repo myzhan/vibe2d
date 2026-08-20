@@ -27,6 +27,49 @@ pub(crate) const FRICTION: f32 = 448.0; // 14 blocks/s^2
 pub(crate) const MAX_Y_SPEED: f32 = 3200.0; // terminal velocity
 pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 
+// ── Underwater (variables.lua:51-73) ──
+// Six levels are flagged `underwater` — 2-2_1, 5-2_1, 6-2_2, 7-2_1, 8-4_1 and M-1 —
+// and in them the player runs an entirely separate movement function
+// (`mario:underwatermovement`). Land physics in a water level is not merely wrong, it is
+// unplayable: 2-2_1's terrain expects you to *float* over obstacles a land jump cannot
+// clear, and a measured run gets 10 columns into 192 before it sticks.
+/// Gravity while sinking, 9 blocks/s² against the land's 80. This is the float.
+pub(crate) const UW_GRAVITY: f32 = 9.0 * TILE_SIZE;
+/// …and while rising, 12. **Higher** than the sinking figure, which is the reverse of
+/// the land pair (30 rising against 80 falling): a stroke shoots you up and is checked
+/// quickly, then you drift back down slowly.
+pub(crate) const UW_GRAVITY_JUMPING: f32 = 12.0 * TILE_SIZE;
+/// One stroke, 5.9 blocks/s. `uwjumpforceadd` is 0, so unlike a land jump your speed
+/// makes no difference to it.
+pub(crate) const UW_JUMP_FORCE: f32 = 5.9 * TILE_SIZE;
+/// Walking on the sea floor, 3.6 blocks/s — barely over half the land walk.
+pub(crate) const UW_MAX_WALK_SPEED: f32 = 3.6 * TILE_SIZE;
+/// Swimming, 5 blocks/s. **Faster than walking**, which is why the floor is not the
+/// quick way anywhere and is the reason this cannot share the land limits.
+pub(crate) const UW_MAX_AIR_SPEED: f32 = 5.0 * TILE_SIZE;
+pub(crate) const UW_WALK_ACCEL: f32 = 8.0 * TILE_SIZE;
+pub(crate) const UW_WALK_ACCEL_AIR: f32 = 8.0 * TILE_SIZE;
+/// The surface. Rise so your feet are above this and you are pushed back down: you can
+/// swim up to the waterline but never out of it (`mario.lua:1499-1501`).
+pub(crate) const UW_MAX_HEIGHT: f32 = 2.5 * TILE_SIZE;
+pub(crate) const UW_PUSH_DOWN_SPEED: f32 = 3.0 * TILE_SIZE;
+/// Stroke animation: two frames stepped at the run animation's own rate.
+pub(crate) const UW_SWIM_ANIM_SPEED: f32 = 10.0;
+
+// ── Bubbles (variables.lua:70-73) ──
+/// Mario breathes out every 1.2 or 1.6 seconds, alternating.
+pub(crate) const BUBBLE_TIMES: [f32; 2] = [1.2, 1.6];
+/// They rise at 2.3 blocks/s with a wandering ±0.5, and pop at the waterline.
+pub(crate) const BUBBLE_SPEED: f32 = 2.3 * TILE_SIZE;
+pub(crate) const BUBBLE_MARGIN: f32 = 0.5 * TILE_SIZE;
+pub(crate) const BUBBLE_MAX_Y: f32 = 2.5 * TILE_SIZE;
+
+// ── Ducking (mario.lua:2865-2878) ──
+/// Crouching halves a big Mario's box and drops its top by the same amount, so his feet
+/// stay put. Only a big Mario standing still on the ground can do it, and growing,
+/// shrinking or taking a stroke underwater all cancel it.
+pub(crate) const DUCK_HEIGHT: f32 = PLAYER_BIG_H / 2.0;
+
 // Portal
 pub(crate) const PORTAL_GUN_DELAY: f32 = 0.2;
 pub(crate) const PROJECTILE_SPEED: f32 = 800.0;

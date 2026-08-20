@@ -81,6 +81,8 @@ pub(crate) struct Level {
     /// sublevel to come back to on death, so dying in 1-2_1 doesn't dump you back
     /// in the stub (`mario.lua:2891-2893`).
     pub(crate) intermission: bool,
+    /// Swap the player's whole movement model for the swimming one. Six levels.
+    pub(crate) underwater: bool,
     /// A coin room reached by vine. Two things follow from the flag: the level opens
     /// with the `vinestart` climb-in animation, and a pit is the *exit* rather than a
     /// death (`game.lua:2139-2141`, `mario.lua:2603-2607`).
@@ -816,6 +818,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         warp_pipes,
         checkpoints,
         intermission: parsed.meta.intermission,
+        underwater: parsed.meta.underwater,
         bonusstage: parsed.meta.bonusstage,
         maze_starts: parsed
             .markers

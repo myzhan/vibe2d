@@ -68,6 +68,8 @@ pub(crate) struct Mari0Game {
     pub(crate) brick_debris: Vec<BrickDebris>,
     pub(crate) items: Vec<Item>,
     pub(crate) fireballs: Vec<Fireball>,
+    /// Bubbles Mario has breathed out. Only ever non-empty in a water level.
+    pub(crate) bubbles: Vec<Bubble>,
     pub(crate) star_timer: f32, // player star invincibility timer
 
     /// The pipe trip in progress, if any. While set, the player has no control.
@@ -206,6 +208,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_spring: TextureId,
     pub(crate) tex_vine: TextureId,
     pub(crate) tex_seesaw: TextureId,
+    pub(crate) tex_bubble: TextureId,
     pub(crate) tex_bowser: TextureId,
     pub(crate) tex_fire: TextureId,
     pub(crate) tex_decoys: TextureId,
@@ -416,6 +419,7 @@ impl Mari0Game {
         self.brick_debris.clear();
         self.items.clear();
         self.fireballs.clear();
+        self.bubbles.clear();
         self.star_timer = 0.0;
         self.pipe = None;
         self.maze = MazeState::for_level(level.maze_starts.len());
@@ -665,6 +669,7 @@ impl Mari0Game {
         let fire_orange = input.is_action_just_pressed("portal_orange");
         let fire_ball = input.is_action_just_pressed("fire");
         let sprint = input.is_action_pressed("fire"); // hold shift/F to sprint
+        let crouch_held = input.is_action_pressed("crouch");
 
         // ── Vines ──
         // A vine owns the player the way a pipe does, but not equally. *Climbing* one
@@ -712,13 +717,45 @@ impl Mari0Game {
                 (world_my - self.player.center_y()).atan2(world_mx - self.player.center_x());
         }
 
+        // ── Ducking ──
+        // Only a big Mario standing still on the ground, and it is a *toggle held*: let
+        // go of down and he stands straight back up (`mario.lua:949-957`). Before the
+        // movement, because a crouched Mario cannot walk.
+        if self.player.on_ground && !self.player.is_jumping && self.player.is_big {
+            let want = crouch_held && !self.level.underwater;
+            if want != self.player.ducking {
+                // Standing up needs headroom. The original never checks — it cannot walk
+                // while crouched, so it can only ever be crouched somewhere it stood up
+                // from — but a portal or a light bridge can put a ceiling over him after
+                // the fact, and growing into it would push him through the floor.
+                if want
+                    || crate::physics::rect_is_clear(
+                        &self.level,
+                        self.player.x,
+                        self.player.y - (PLAYER_BIG_H - DUCK_HEIGHT),
+                        self.player.width,
+                        PLAYER_BIG_H,
+                    )
+                {
+                    self.player.set_ducking(want);
+                }
+            }
+        }
+
         // ── Horizontal movement (sprint = higher accel & max speed) ──
-        // The limits are looked up per frame rather than read from the constants,
-        // because orange gel replaces them for exactly as long as you are standing on
-        // it — see `gel::ground_speed_limits`.
-        let (max_walk, max_run, walk_accel, run_accel) = self.ground_speed_limits();
+        // The limits are looked up per frame rather than read from the constants, because
+        // orange gel replaces them for as long as you stand on it and water replaces them
+        // outright — see `gel::speed_limits`.
+        let (max_walk, max_run, walk_accel, run_accel) = self.speed_limits();
         let accel = if sprint { run_accel } else { walk_accel };
         let max_speed = if sprint { max_run } else { max_walk };
+        // A crouched Mario is rooted: the original's ground branches are all guarded on
+        // `ducking == false`, so he keeps whatever speed he had and loses it to friction.
+        let (move_left, move_right) = if self.player.ducking {
+            (false, false)
+        } else {
+            (move_left, move_right)
+        };
         if move_right {
             self.player.vx += accel * dt;
             self.player.facing_right = true;
@@ -741,8 +778,20 @@ impl Mari0Game {
             self.player.vx = slowed * self.player.vx.signum();
         }
 
-        // ── Jump (higher when sprinting, like original SMB) ──
-        if jump_just && self.player.on_ground {
+        // ── Jump, or a swimming stroke ──
+        // Underwater the jump has **no ground check at all** (`mario.lua:1579-1589`):
+        // every press is a stroke, wherever you are, and that is what swimming *is*. It
+        // also cancels a crouch, and the force is flat — `uwjumpforceadd` is 0, so your
+        // speed makes no difference to it the way it does on land.
+        if jump_just && self.level.underwater {
+            self.player.set_ducking(false);
+            self.player.vy = -UW_JUMP_FORCE;
+            self.player.is_jumping = true;
+            self.player.on_ground = false;
+            self.combo_index = 0;
+            self.combo_active = false;
+            ctx.audio.play("swim");
+        } else if jump_just && self.player.on_ground {
             self.player.vy = if sprint {
                 JUMP_VELOCITY_RUN
             } else {
@@ -763,13 +812,27 @@ impl Mari0Game {
         }
 
         // ── Gravity ──
-        let grav = if self.player.is_jumping && self.player.vy < 0.0 {
-            GRAVITY_JUMPING
-        } else {
-            GRAVITY
+        // Water reverses the usual relationship between the two figures. On land the
+        // rising gravity is the *smaller* one (30 against 80) so a held jump floats;
+        // underwater it is the larger (12 against 9), so a stroke is checked quickly and
+        // the sink that follows is slow. That asymmetry is the whole feel of swimming.
+        let rising = self.player.is_jumping && self.player.vy < 0.0;
+        let grav = match (self.level.underwater, rising) {
+            (true, true) => UW_GRAVITY_JUMPING,
+            (true, false) => UW_GRAVITY,
+            (false, true) => GRAVITY_JUMPING,
+            (false, false) => GRAVITY,
         };
         self.player.vy += grav * dt;
         self.player.vy = self.player.vy.min(MAX_Y_SPEED);
+
+        // ── The surface ──
+        // Rise until your *feet* clear the waterline and you are shoved back down. You
+        // can swim up to it and never out of it, which is what keeps a water level a
+        // closed box (`mario.lua:1499-1501`).
+        if self.level.underwater && self.player.bottom() < UW_MAX_HEIGHT {
+            self.player.vy = UW_PUSH_DOWN_SPEED;
+        }
 
         // ── Portal entry (swept), before the move ──
         // The two swept tests need where the player is *about* to be: a body moving
@@ -1025,6 +1088,9 @@ impl Mari0Game {
         self.bump_bonus_platforms();
         self.update_plates_and_grills(ctx, dt);
 
+        // ── Bubbles ──
+        self.update_bubbles(dt);
+
         // ── Timer and low-time music ──
         if self.tick_clock(ctx, dt) {
             self.die(ctx);
@@ -1039,6 +1105,17 @@ impl Mari0Game {
         // from inside its vine branch (`mario.lua:856`).
         if self.vine.is_some() {
             // leave `anim_state` where the vine put it
+        } else if self.player.ducking {
+            self.player.anim_state = PlayerAnim::Duck;
+        } else if !self.player.on_ground && self.level.underwater {
+            // The swimming sprite is only used off the ground; walking the sea floor
+            // still runs (`mario.lua:1516` gates it on jumping/falling). The phase lives
+            // in `[1, 3)` so its floor is 1 or 2 and never 0.
+            self.player.anim_state = PlayerAnim::Swim;
+            self.player.swim_phase += UW_SWIM_ANIM_SPEED * dt;
+            while self.player.swim_phase >= 3.0 {
+                self.player.swim_phase -= 2.0;
+            }
         } else if !self.player.on_ground {
             self.player.anim_state = if self.player.vy < 0.0 {
                 PlayerAnim::Jump
@@ -1111,6 +1188,35 @@ impl Mari0Game {
         for timer in self.level.multi_coin_timers.values_mut() {
             *timer -= dt;
         }
+    }
+
+    /// Breathe out, and drift what has already been breathed out upward.
+    ///
+    /// The wander is a cycle rather than the original's `math.random`, for the same
+    /// reason the cannon delays are: a replay has to come out the same way twice. It
+    /// alternates between the two intervals instead of picking one at random too.
+    fn update_bubbles(&mut self, dt: f32) {
+        if self.level.underwater {
+            self.player.bubble_timer += dt;
+            while self.player.bubble_timer > BUBBLE_TIMES[self.player.bubble_index] {
+                self.player.bubble_timer -= BUBBLE_TIMES[self.player.bubble_index];
+                self.player.bubble_index = (self.player.bubble_index + 1) % BUBBLE_TIMES.len();
+                // Out of his mouth, which is up and forward of his box origin.
+                self.bubbles.push(Bubble {
+                    x: self.player.x + 8.0 / 12.0 * TILE_SIZE,
+                    y: self.player.y + 2.0 / 12.0 * TILE_SIZE,
+                    vy: -BUBBLE_SPEED,
+                });
+            }
+        }
+        for (i, b) in self.bubbles.iter_mut().enumerate() {
+            // Deterministic stand-in for the original's random walk: each bubble wanders
+            // on its own phase, so a column of them does not rise in lockstep.
+            let phase = (self.coin_spin * 3.0 + i as f32 * 1.7).sin();
+            b.vy = -BUBBLE_SPEED + phase * BUBBLE_MARGIN;
+            b.y += b.vy * dt;
+        }
+        self.bubbles.retain(|b| b.y >= BUBBLE_MAX_Y);
     }
 
     pub(crate) fn die(&mut self, ctx: &mut Context) {
@@ -1193,6 +1299,7 @@ impl Game for Mari0Game {
             seesaws: Vec::new(),
             vines: Vec::new(),
             vine: None,
+            bubbles: Vec::new(),
             platforms: Vec::new(),
             platforms_spawned: Vec::new(),
             platform_spawners: Vec::new(),
@@ -1234,6 +1341,7 @@ impl Game for Mari0Game {
             tex_spring: t("spring"),
             tex_vine: t("vine"),
             tex_seesaw: t("seesaw"),
+            tex_bubble: t("bubble"),
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),
             tex_decoys: t("decoys"),

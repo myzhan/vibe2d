@@ -216,13 +216,36 @@ impl Mari0Game {
         self.level.paint_gel(cell, face, gel);
     }
 
-    /// The orange gel's speed limits, if the player is standing on some.
+    /// This frame's horizontal limits: `(max_walk, max_run, walk_accel, run_accel)`.
     ///
-    /// Returns `(max_walk, max_run, walk_accel, run_accel)`. Orange is a *local*
-    /// override for the frame, which is why leaving it doesn't clamp your speed — you
-    /// keep it and lose it to friction (`mario.lua:1058-1080`).
-    pub(crate) fn ground_speed_limits(&self) -> (f32, f32, f32, f32) {
+    /// Two things override the defaults. Orange gel is a *local* override for the frame,
+    /// which is why leaving it doesn't clamp your speed — you keep it and lose it to
+    /// friction (`mario.lua:1058-1080`). Water replaces them outright, and unlike
+    /// everywhere else on land the **airborne** limit is the higher of the two: swimming
+    /// does 5 blocks/s where walking the sea floor does 3.6, so the floor is never the
+    /// quick way anywhere.
+    ///
+    /// Water also has no run: `mario:underwatermovement` never reads the run key, so
+    /// `max_run` is the walk figure and holding sprint does nothing.
+    pub(crate) fn speed_limits(&self) -> (f32, f32, f32, f32) {
         let normal = (MAX_WALK_SPEED, MAX_RUN_SPEED, WALK_ACCEL, RUN_ACCEL);
+        if self.level.underwater {
+            return if self.player.on_ground {
+                (
+                    UW_MAX_WALK_SPEED,
+                    UW_MAX_WALK_SPEED,
+                    UW_WALK_ACCEL,
+                    UW_WALK_ACCEL,
+                )
+            } else {
+                (
+                    UW_MAX_AIR_SPEED,
+                    UW_MAX_AIR_SPEED,
+                    UW_WALK_ACCEL_AIR,
+                    UW_WALK_ACCEL_AIR,
+                )
+            };
+        }
         if !self.player.on_ground {
             return normal;
         }

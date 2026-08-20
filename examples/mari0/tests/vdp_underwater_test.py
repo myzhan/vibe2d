@@ -212,8 +212,11 @@ async def run(ws):
     check("走过第 8 列之后区间打开", s["flying_fish_zone"] is True)
     await rpc(ws, "game.setStar", {"seconds": 999})
     seen = []
-    for _ in range(60):
-        await step(ws, 10)
+    # 同样是 600 帧，但采样密 3 倍。一条鱼待在「靠底且上升」这个判定带里只有 4 帧左右
+    # （48px 的带，出生速度下每帧走 ~11px），原来每 10 帧才看一眼，大部分鱼就这么漏掉了 ——
+    # 于是这一项会随机不过。
+    for _ in range(200):
+        await step(ws, 3)
         s = await snap(ws)
         cam = s["camera_x"]
         for e in of_type(s, "flying_fish"):
