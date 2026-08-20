@@ -146,6 +146,35 @@ pub(crate) const SPRING_Y_TABLE: [f32; 3] = [0.0, 0.5, 1.0];
 pub(crate) const SPRING_H: f32 = 31.0 / 16.0 * TILE_SIZE;
 pub(crate) const SPRING_W: f32 = TILE_SIZE;
 
+// ── Seesaws (variables.lua:136-138) ──
+/// How hard one rider pulls, in blocks/s² **per unit of imbalance**. The speed
+/// accumulates for as long as the sides are unequal, so a seesaw never reaches a
+/// terminal velocity — it just runs out of rope.
+pub(crate) const SEESAW_SPEED: f32 = 4.0 * TILE_SIZE;
+/// What the rig falls at once the rope gives, and it is over seven times `SEESAW_SPEED`
+/// — the collapse is meant to be unsurvivable if you are still standing on it.
+pub(crate) const SEESAW_GRAVITY: f32 = 30.0 * TILE_SIZE;
+/// Bleeds speed off, but only while the imbalance does *not* support the current
+/// direction. Equal to `SEESAW_SPEED`, so stepping off exactly cancels your own pull.
+pub(crate) const SEESAW_FRICTION: f32 = 4.0 * TILE_SIZE;
+/// How close to the surface counts as riding, ±0.1 of a block
+/// (`seesawplatform.lua:46`). The same figure the moving platforms use.
+pub(crate) const SEESAW_RIDE_TOLERANCE: f32 = 0.1 * TILE_SIZE;
+/// A seesaw platform hangs 17/16 of a block *above* the point it is slung from — 2/16
+/// higher than a moving platform's 15/16 (`seesawplatform.lua:10` against
+/// `platform.lua:12`).
+///
+/// Negative, and measured from the beam rather than from a cell corner: unlike
+/// [`PLATFORM_CELL_DROP`] this is not folded together with a `+1` for the cell, because
+/// the rope lengths are added to the beam's own height. Writing it in that other form is
+/// a two-block error, and it shows up as the pair's total drop no longer matching the
+/// rope.
+pub(crate) const SEESAW_PLATFORM_DROP: f32 = -17.0 / 16.0 * TILE_SIZE;
+/// Slack in the rope: with one platform hauled up to the beam the other hangs
+/// `dist1 + dist2` minus this (`seesaw.lua:73`), which is what keeps the pair's total
+/// drop constant.
+pub(crate) const SEESAW_ROPE_SLACK: f32 = (2.0 + 2.0 / 16.0) * TILE_SIZE;
+
 // ── Vines (variables.lua:287-297) ──
 /// How fast a vine grows out of its block, 2.13 blocks/s.
 pub(crate) const VINE_SPEED: f32 = 2.13 * TILE_SIZE;

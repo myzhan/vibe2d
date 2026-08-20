@@ -67,6 +67,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) springs: Vec<SpringView>,
     /// Is Mario mid-launch on a spring, and has he charged it?
     pub(crate) spring_ride: Option<SpringRideView>,
+    /// Seesaw rigs. Nine in the game, over three levels.
+    pub(crate) seesaws: Vec<SeesawView>,
     /// Vines growing in the world. Empty until a vine block is hit — or already
     /// populated on frame one, in a `bonusstage`.
     pub(crate) vines: Vec<VineView>,
@@ -232,6 +234,41 @@ pub(crate) struct SpringView {
 pub(crate) struct SpringRideView {
     pub(crate) timer: f32,
     pub(crate) charged: bool,
+}
+
+/// One end of a seesaw: the box you stand on, its speed, and how many riders it counted.
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct SeesawPlatformView {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) w: f32,
+    pub(crate) h: f32,
+    pub(crate) vy: f32,
+    /// Riders counted last frame — the figure the rig is actually acting on.
+    pub(crate) riders: u32,
+    /// How far below the beam it hangs, in pixels. Also the length of rope drawn.
+    pub(crate) drop: f32,
+    pub(crate) gone: bool,
+}
+
+/// A whole rig. `rope` is the pair's shared length: the two `drop`s always sum to it.
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct SeesawView {
+    pub(crate) col: i32,
+    pub(crate) row: i32,
+    /// Which of the nine `seesawtype` entries this is, 1-based.
+    pub(crate) kind: u16,
+    pub(crate) range: f32,
+    pub(crate) dist1: f32,
+    pub(crate) dist2: f32,
+    pub(crate) rope: f32,
+    pub(crate) anchor_y: f32,
+    pub(crate) left: SeesawPlatformView,
+    pub(crate) right: SeesawPlatformView,
+    /// Which side's rope gave, or `null` while the rig is intact.
+    pub(crate) falloff: Option<crate::seesaw::SeesawSide>,
 }
 
 /// A vine, with the box you can actually hold and the scissor it is drawn through.
@@ -673,6 +710,39 @@ impl Mari0Game {
                 timer: r.timer,
                 charged: r.charged,
             }),
+            seesaws: self
+                .seesaws
+                .iter()
+                .map(|s| {
+                    let view = |side| {
+                        let p = s.platform(side);
+                        let [x, y, w, h] = p.rect();
+                        SeesawPlatformView {
+                            x,
+                            y,
+                            w,
+                            h,
+                            vy: p.vy,
+                            riders: p.riders,
+                            drop: s.drop_of(side),
+                            gone: p.gone,
+                        }
+                    };
+                    SeesawView {
+                        col: s.col,
+                        row: s.row,
+                        kind: s.kind,
+                        range: s.range,
+                        dist1: s.dist1,
+                        dist2: s.dist2,
+                        rope: s.rope(),
+                        anchor_y: s.anchor_y(),
+                        left: view(crate::seesaw::SeesawSide::Left),
+                        right: view(crate::seesaw::SeesawSide::Right),
+                        falloff: s.falloff,
+                    }
+                })
+                .collect(),
             vines: self
                 .vines
                 .iter()

@@ -31,6 +31,7 @@ mod player;
 mod portal;
 mod portal_math;
 mod render;
+mod seesaw;
 mod spring;
 mod vine;
 mod world;

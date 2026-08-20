@@ -287,6 +287,13 @@ async def run(ws):
     # 光给 world/level 进不去。每个都在第 16 或 17 列、第 10 行。
     await rpc(ws, "game.setLevel", {"pack": "smb", "world": 2, "level": 1, "sublevel": 1})
     await step(ws)
+    # 奖励房是 `bonusstage`，开场有一段 4.6 秒的 `vinestart` 动画：人从地板底下爬藤
+    # 进场，这期间控制权和物理都被藤接管，顶砖/顶平台一律不生效。等它放完再测。
+    for _ in range(400):
+        s = await snap(ws)
+        if s.get("vine") is None:
+            break
+        await step(ws)
     await rpc(ws, "game.setPlayerPos", {"x": 8 * TILE_SIZE, "y": 10 * TILE_SIZE})
     await step(ws, 25)
     await rpc(ws, "game.setStar", {"seconds": 999})

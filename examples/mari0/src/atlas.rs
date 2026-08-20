@@ -150,6 +150,16 @@ pub(crate) fn spring_uv(frame: usize) -> [f32; 4] {
     ]
 }
 
+/// Seesaw piece. `seesaw.png` is 64x16 — four 16x16 cells in a row, and unlike most of
+/// these sheets there is no spriteset dimension (`main.lua:342-345`).
+///
+/// In order: the left pulley, the right pulley, a length of rope, and a length of beam.
+/// The two pulleys are halves of one wheel, which is why they are separate cells rather
+/// than one mirrored sprite.
+pub(crate) fn seesaw_uv(cell: u32) -> [f32; 4] {
+    [(cell % 4) as f32 * 16.0 / 64.0, 0.0, 16.0 / 64.0, 1.0]
+}
+
 /// Vine piece. `vine.png` is 32x64: two 16x16 columns — the curled tip and a length of
 /// stem — and one row per spriteset (`main.lua:373-378`).
 ///

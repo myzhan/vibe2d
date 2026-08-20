@@ -147,6 +147,9 @@ pub(crate) struct Level {
     /// so they get a published list of their own for the same reason the platforms do.
     pub(crate) springs: Vec<(i32, i32)>,
     pub(crate) spring_rects: Vec<SolidRect>,
+    /// Seesaw rigs: cell → type, 1..=9. Nine in the whole game, and the shipped levels
+    /// use each type exactly once.
+    pub(crate) seesaws: Vec<(i32, i32, u16)>,
     /// Elevator-shaft spawners, built at load rather than revealed.
     pub(crate) platform_spawners: Vec<crate::platform::PlatformSpawner>,
     /// The stretch in which bullet bills rain in from the right edge, as columns.
@@ -834,6 +837,12 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
             .map(|(x, y)| (*x as i32, *y as i32))
             .collect(),
         spring_rects: Vec::new(),
+        seesaws: parsed
+            .markers
+            .seesaws
+            .iter()
+            .map(|(x, y, t)| (*x as i32, *y as i32, *t))
+            .collect(),
         lakito_end: parsed.markers.lakito_end.map(|c| c as i32),
         bullet_bill_start: parsed.markers.bullet_bill_start.map(|c| c as i32),
         bullet_bill_end: parsed.markers.bullet_bill_end.map(|c| c as i32),
@@ -969,6 +978,43 @@ mod tests {
             assert_eq!(lv.width, 24, "{name} should be the 24-wide stub");
             assert!(!lv.pipes.is_empty(), "{name} should hold the pipe onward");
         }
+    }
+
+    /// The nine seesaws, and the fact that they use each of the nine types exactly once.
+    ///
+    /// That one-to-one match is the reason a wrong entry in `SEESAW_TYPES` cannot be
+    /// caught by playing a single level: every rig in the game is the only user of its
+    /// own numbers.
+    #[test]
+    fn the_nine_seesaws_use_each_type_exactly_once() {
+        let cases = [
+            ("3-3", vec![(82, 1u16), (137, 2)]),
+            ("4-3", vec![(49, 3), (81, 4), (92, 5), (103, 6)]),
+            ("6-3", vec![(71, 7), (79, 8), (127, 9)]),
+        ];
+        let mut seen = Vec::new();
+        for (name, expected) in &cases {
+            let lv = load_level("smb", name);
+            let mut got: Vec<(i32, u16)> = lv.seesaws.iter().map(|(x, _, t)| (*x, *t)).collect();
+            got.sort();
+            let want: Vec<(i32, u16)> = expected.clone();
+            assert_eq!(&got, &want, "{name}'s seesaws");
+            // All nine sit on the same row, which is what puts them at the top of the
+            // screen with their platforms swinging below.
+            for (_, row, _) in &lv.seesaws {
+                assert_eq!(*row, 2, "{name}: every seesaw is on row 2");
+            }
+            seen.extend(got.iter().map(|(_, t)| *t));
+        }
+        seen.sort();
+        assert_eq!(seen, (1..=9u16).collect::<Vec<_>>());
+
+        // And nowhere else in the game.
+        let total: usize = level::LEVELS
+            .iter()
+            .map(|(pack, name, _)| load_level(pack, name).seesaws.len())
+            .sum();
+        assert_eq!(total, 9);
     }
 
     /// The five vine blocks in the game, and where each leads.

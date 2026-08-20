@@ -203,6 +203,11 @@ pub struct Markers {
     /// Spring placements. Not enemies and not lab elements: a spring is scenery you
     /// bounce off, built at load.
     pub springs: Vec<(usize, usize)>,
+    /// Seesaw rigs: position → which of the nine types (`seesawtype`, 1-based).
+    ///
+    /// Built at load like the springs and the platform spawners, not revealed by the
+    /// camera — the original creates them in the parsing loop (`game.lua:2417`).
+    pub seesaws: Vec<(usize, usize, u16)>,
     /// Elevator-shaft spawners: `(x, y, is_up, width_in_blocks)`.
     ///
     /// Not enemies and not lab elements: the original builds these in the parsing
@@ -553,6 +558,8 @@ fn collect_marker(m: &mut Markers, x: usize, y: usize, cell: &Cell) {
         }
         Drain | Remove => {}
         Spring => m.springs.push((x, y)),
+        // The type argument picks one of nine rigs; 1 if unstated (`seesaw.lua:20`).
+        Seesaw => m.seesaws.push((x, y, arg.unwrap_or(1))),
         PlatformSpawnerUp | PlatformSpawnerDown => {
             m.platform_spawners
                 .push((x, y, kind == PlatformSpawnerUp, cell.argf))

@@ -125,6 +125,9 @@ pub(crate) struct Mari0Game {
     /// Springs, and the ride in progress if Mario is on one.
     pub(crate) springs: Vec<crate::spring::Spring>,
     pub(crate) spring_ride: Option<crate::spring::SpringRide>,
+    /// Seesaw rigs. Built at load like the springs, because the original creates them in
+    /// its parsing loop rather than revealing them with the camera.
+    pub(crate) seesaws: Vec<crate::seesaw::Seesaw>,
     /// Vines growing in the world. Unlike springs these are not placed at load: a vine
     /// exists only once its block has been hit — except in a `bonusstage`, which opens
     /// with one already on its way up.
@@ -202,6 +205,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_squid: TextureId,
     pub(crate) tex_spring: TextureId,
     pub(crate) tex_vine: TextureId,
+    pub(crate) tex_seesaw: TextureId,
     pub(crate) tex_bowser: TextureId,
     pub(crate) tex_fire: TextureId,
     pub(crate) tex_decoys: TextureId,
@@ -372,6 +376,11 @@ impl Mari0Game {
             .map(|(x, y)| crate::spring::Spring::new(*x, *y))
             .collect();
         self.spring_ride = None;
+        self.seesaws = level
+            .seesaws
+            .iter()
+            .map(|(x, y, kind)| crate::seesaw::Seesaw::new(*x, *y, *kind))
+            .collect();
         self.castle = None;
         self.platforms_spawned = vec![false; level.platform_spawns.len()];
         self.platform_spawners = level.platform_spawners.clone();
@@ -1010,6 +1019,9 @@ impl Mari0Game {
         self.update_maze();
         self.update_lab(ctx, dt, input.is_action_just_pressed("use"));
         self.update_platforms(dt);
+        // After the platforms, and it *extends* their rect list rather than replacing
+        // it — `update_platforms` rebuilds that wholesale every frame.
+        self.update_seesaws(dt);
         self.bump_bonus_platforms();
         self.update_plates_and_grills(ctx, dt);
 
@@ -1178,6 +1190,7 @@ impl Game for Mari0Game {
             coin_spin: 0.0,
             springs: Vec::new(),
             spring_ride: None,
+            seesaws: Vec::new(),
             vines: Vec::new(),
             vine: None,
             platforms: Vec::new(),
@@ -1220,6 +1233,7 @@ impl Game for Mari0Game {
             tex_squid: t("squid"),
             tex_spring: t("spring"),
             tex_vine: t("vine"),
+            tex_seesaw: t("seesaw"),
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),
             tex_decoys: t("decoys"),

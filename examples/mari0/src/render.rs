@@ -94,6 +94,99 @@ impl Mari0Game {
         }
     }
 
+    /// Draw every seesaw: two pulleys, the beam between them, the two ropes, and the
+    /// platforms hanging on the ends.
+    ///
+    /// The ropes are the interesting part, and they need the original's scissor. Rope is
+    /// drawn as whole 16px segments stacked downward, so a platform hanging 3.4 blocks
+    /// down needs 4 of them — one too many. `seesaw:draw` clips the column to exactly
+    /// how far the platform has dropped, which is what makes the rope end *at* the
+    /// platform instead of poking through it.
+    ///
+    /// Once the rig has given, the side that dropped away draws its rope at full length
+    /// instead: it is no longer holding anything, so there is nothing to clip it to.
+    fn draw_seesaws(&self, screen: &mut Screen, cam_x: f32) {
+        for s in &self.seesaws {
+            // The beam and pulleys sit half a block above the placement row
+            // (`self.y - 1.5` against an entity at `self.y - 1`).
+            let beam_y = (s.row as f32 - 0.5) * TILE_SIZE;
+            let left_x = s.col as f32 * TILE_SIZE - cam_x;
+            let right_x = left_x + s.range * TILE_SIZE;
+            let cell = |x: f32, y: f32| [x, y, TILE_SIZE, TILE_SIZE];
+
+            screen.draw_sprite_region(self.tex_seesaw, seesaw_uv(0), cell(left_x, beam_y));
+            // `range - 1` middle pieces: the two pulleys already cover the ends.
+            for i in 1..s.range as i32 {
+                screen.draw_sprite_region(
+                    self.tex_seesaw,
+                    seesaw_uv(3),
+                    cell(left_x + i as f32 * TILE_SIZE, beam_y),
+                );
+            }
+            screen.draw_sprite_region(self.tex_seesaw, seesaw_uv(1), cell(right_x, beam_y));
+
+            for (side, x) in [
+                (crate::seesaw::SeesawSide::Left, left_x),
+                (crate::seesaw::SeesawSide::Right, right_x),
+            ] {
+                let dropped = s.drop_of(side);
+                let full = s.falloff == Some(side);
+                if !full && dropped < 0.0 {
+                    continue;
+                }
+                // The clip starts a block below the beam, where the first rope segment
+                // does, and runs as far as the platform has fallen.
+                let length = if full {
+                    (s.dist1 + s.dist2 - 2.0) * TILE_SIZE
+                } else {
+                    dropped
+                };
+                let segments = (length / TILE_SIZE).ceil() as i32;
+                let draw_rope = |screen: &mut Screen| {
+                    for i in 1..=segments {
+                        screen.draw_sprite_region(
+                            self.tex_seesaw,
+                            seesaw_uv(2),
+                            cell(x, beam_y + i as f32 * TILE_SIZE),
+                        );
+                    }
+                };
+                if full {
+                    draw_rope(screen);
+                } else {
+                    screen.clipped(x, beam_y + TILE_SIZE, TILE_SIZE, length, draw_rope);
+                }
+            }
+
+            for p in [&s.left, &s.right] {
+                if p.gone {
+                    continue;
+                }
+                // Same art and the same segment-per-block rule as a moving platform,
+                // including the extra piece at the right edge of a 1.5-wide one.
+                let whole = (p.w / TILE_SIZE).floor() as i32;
+                for i in 0..whole {
+                    screen.draw_sprite(
+                        self.tex_platform,
+                        p.x + i as f32 * TILE_SIZE - cam_x,
+                        p.y,
+                        TILE_SIZE,
+                        PLATFORM_HEIGHT,
+                    );
+                }
+                if p.w % TILE_SIZE != 0.0 {
+                    screen.draw_sprite(
+                        self.tex_platform,
+                        p.x + p.w - TILE_SIZE - cam_x,
+                        p.y,
+                        TILE_SIZE,
+                        PLATFORM_HEIGHT,
+                    );
+                }
+            }
+        }
+    }
+
     /// Draw every vine: one curled tip with a column of stem stacked below it.
     ///
     /// The scissor is the reason this is its own function. A vine's body starts *inside*
@@ -249,6 +342,7 @@ impl Mari0Game {
         // Before the lab and the actors: they're scenery you stand on, and Mario has
         // to draw in front of one he is riding.
         self.draw_platforms(screen, cam_x);
+        self.draw_seesaws(screen, cam_x);
 
         // ── The lab: buttons, doors, indicators, beams and bridges ──
         // After the tiles, since every one of them is mounted on a wall, and before the
