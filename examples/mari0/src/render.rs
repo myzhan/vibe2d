@@ -94,6 +94,21 @@ impl Mari0Game {
         }
     }
 
+    /// The spinning coin icon beside the counter.
+    ///
+    /// Its sheet is 5x8 cells, not 16x16 — the HUD is the one place
+    /// `coinanimation.png` belongs, and using it for world coins is what drew six
+    /// little rings where a single coin should be.
+    fn draw_coin_icon(&self, screen: &mut Screen) {
+        const ICON_W: f32 = 5.0 * 2.0;
+        const ICON_H: f32 = 8.0 * 2.0;
+        screen.draw_sprite_region(
+            self.tex_coin_anim,
+            coin_hud_uv(coin_spin_frame(self.coin_spin)),
+            [168.0, 20.0, ICON_W, ICON_H],
+        );
+    }
+
     /// Draw one tile, from whichever of the two sheets owns its id.
     ///
     /// The lab tiles are ids 133..220 on a second sheet. Sending those to the SMB
@@ -213,12 +228,14 @@ impl Mari0Game {
         }
 
         // ── Coins ──
-        let coin_frame = ((self.time_remaining * 4.0) as u32) % 2;
-        let coin_src = coin_frame_uv(coin_frame);
+        // One counter for every coin on screen, so they spin in unison as they do in
+        // the original. Driven off the clock rather than a frame counter because the
+        // clock is what the original's own counter is stepped by.
+        let coin_src = coin_uv(coin_spin_frame(self.coin_spin));
         for coin in &self.level.coins {
             if !coin.collected {
                 let x = coin.x - cam_x;
-                screen.draw_sprite_region(self.tex_coin_anim, coin_src, [x, coin.y, 16.0, 16.0]);
+                screen.draw_sprite_region(self.tex_coin, coin_src, [x, coin.y, 32.0, 32.0]);
             }
         }
 
@@ -645,8 +662,7 @@ impl Mari0Game {
         }
 
         // ── Coin popups ──
-        let coin_frame = ((self.time_remaining * 8.0) as u32) % 2;
-        let coin_src = coin_frame_uv(coin_frame);
+        let coin_src = coin_uv(coin_spin_frame(self.coin_spin));
         for popup in &self.coin_popups {
             let cx = popup.x - cam_x + 8.0; // center 16px coin in 32px tile
             let cy = popup.y + 8.0;
@@ -657,12 +673,7 @@ impl Mari0Game {
                 b: 1.0,
                 a: alpha,
             };
-            screen.draw_sprite_region_tinted(
-                self.tex_coin_anim,
-                coin_src,
-                [cx, cy, 16.0, 16.0],
-                color,
-            );
+            screen.draw_sprite_region_tinted(self.tex_coin, coin_src, [cx, cy, 16.0, 16.0], color);
         }
 
         // ── Brick debris ──
@@ -1048,6 +1059,7 @@ impl Mari0Game {
                 if let Some(font) = hud_font {
                     screen.draw_text(font, "MARIO", 24.0, 8.0);
                     screen.draw_text(font, &format!("{:06}", self.score), 24.0, 20.0);
+                    self.draw_coin_icon(screen);
                     screen.draw_text(font, &format!("x{:02}", self.coins), 180.0, 20.0);
                     screen.draw_text(font, "WORLD", 312.0, 8.0);
                     screen.draw_text(font, &self.current.name(), 320.0, 20.0);
@@ -1094,6 +1106,7 @@ impl Mari0Game {
                 if let Some(font) = hud_font {
                     screen.draw_text(font, "MARIO", 24.0, 8.0);
                     screen.draw_text(font, &format!("{:06}", self.score), 24.0, 20.0);
+                    self.draw_coin_icon(screen);
                     screen.draw_text(font, &format!("x{:02}", self.coins), 180.0, 20.0);
                     screen.draw_text(font, "WORLD", 312.0, 8.0);
                     screen.draw_text(font, &self.current.name(), 320.0, 20.0);
@@ -1110,6 +1123,7 @@ impl Mari0Game {
                 if let Some(font) = hud_font {
                     screen.draw_text(font, "MARIO", 24.0, 8.0);
                     screen.draw_text(font, &format!("{:06}", self.score), 24.0, 20.0);
+                    self.draw_coin_icon(screen);
                     screen.draw_text(font, &format!("x{:02}", self.coins), 180.0, 20.0);
                     screen.draw_text(font, "WORLD", 312.0, 8.0);
                     screen.draw_text(font, &self.current.name(), 320.0, 20.0);
@@ -1131,6 +1145,7 @@ impl Mari0Game {
                 if let Some(font) = hud_font {
                     screen.draw_text(font, "MARIO", 24.0, 8.0);
                     screen.draw_text(font, &format!("{:06}", self.score), 24.0, 20.0);
+                    self.draw_coin_icon(screen);
                     screen.draw_text(font, &format!("x{:02}", self.coins), 180.0, 20.0);
                     screen.draw_text(font, "WORLD", 312.0, 8.0);
                     screen.draw_text(font, &self.current.name(), 320.0, 20.0);

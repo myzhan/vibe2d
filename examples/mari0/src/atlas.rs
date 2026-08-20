@@ -191,9 +191,44 @@ pub(crate) fn koopa_uv(col: u32, row: u32) -> [f32; 4] {
     ]
 }
 
-/// Get UV rect for coin animation frame (16×32, 2 vertical frames)
-pub(crate) fn coin_frame_uv(frame: u32) -> [f32; 4] {
-    [0.0, (frame * 16) as f32 / 32.0, 1.0, 16.0 / 32.0]
+/// A collectible coin's frame. `coin.png` is 64x64 with **16x16** cells: four columns
+/// of animation by four rows of spriteset (`main.lua:311`).
+///
+/// Not to be confused with `coinanimation.png`, which is 16x32 of **5x8** cells and is
+/// the tiny HUD icon (`game.lua:1030`). Feeding a 16x16 region of *that* sheet to a
+/// coin is what put six little rings on screen where one coin belonged — a 16x16 window
+/// onto 5x8 cells shows a 3x2 grid of them.
+pub(crate) fn coin_uv(frame: u32) -> [f32; 4] {
+    [
+        (frame % 3) as f32 * 16.0 / 64.0,
+        0.0,
+        16.0 / 64.0,
+        16.0 / 64.0,
+    ]
+}
+
+/// The HUD's little coin icon. `coinanimation.png` is 16x32 of **5x8** cells
+/// (`main.lua:291`) — three columns of animation by four rows of spriteset. It is only
+/// ever drawn beside the coin counter (`game.lua:1030`), never in the world.
+pub(crate) fn coin_hud_uv(frame: u32) -> [f32; 4] {
+    [(frame % 3) as f32 * 5.0 / 16.0, 0.0, 5.0 / 16.0, 8.0 / 32.0]
+}
+
+/// Which frame the shared coin spin is on, from a time in seconds.
+///
+/// The original runs one global counter for every coin on screen so they spin in
+/// unison (`game.lua:149-160`): `coinanimation += dt*6.75`, wrapping by 5, and then the
+/// frame is **ping-ponged** — floor 1,2,3,4,5 maps to frames 1,2,3,2,1. So it is three
+/// pictures played out and back (wide, narrow, edge-on, narrow), not a two-frame
+/// alternation, and a full spin takes 5/6.75 ≈ 0.74s.
+pub(crate) fn coin_spin_frame(seconds: f32) -> u32 {
+    // Same wrap as the original: the counter lives in 1..6 and steps back by 5.
+    let t = 1.0 + (seconds * 6.75) % 5.0;
+    match t.floor() as u32 {
+        4 => 1,
+        5 => 0,
+        n => n.saturating_sub(1).min(2),
+    }
 }
 
 /// Get UV rect for entity in entities.png (170×170, 17px cells, 16px sprites)
@@ -219,4 +254,71 @@ pub(crate) fn flower_frame_uv(frame: u32) -> [f32; 4] {
 /// Get UV rect for fireball explosion in fireball.png (80×16, frames at offset 32, 16×16)
 pub(crate) fn fireball_explode_uv(frame: u32) -> [f32; 4] {
     [(32 + frame * 16) as f32 / 80.0, 0.0, 16.0 / 80.0, 1.0]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The coin spin is a three-frame **ping-pong**, not a two-frame alternation.
+    ///
+    /// `game.lua:154-160` maps the counter's floor 1,2,3,4,5 onto frames 1,2,3,2,1 —
+    /// wide, narrow, edge-on, narrow, wide. Getting this wrong is subtle on screen but
+    /// it is the difference between a coin spinning and a coin flickering.
+    #[test]
+    fn the_coin_spin_goes_out_and_back() {
+        // One full cycle is 5 counter units at 6.75 units/s.
+        let period = 5.0 / 6.75;
+        let seen: Vec<u32> = (0..40)
+            .map(|i| coin_spin_frame(period * i as f32 / 40.0))
+            .collect();
+        assert_eq!(
+            seen.iter().copied().max(),
+            Some(2),
+            "all three frames should appear: {seen:?}"
+        );
+        assert_eq!(seen[0], 0, "a cycle opens on the wide frame");
+        // Ping-pong: frame 2 is reached once and only in the middle, never at an end.
+        let peak = seen.iter().position(|f| *f == 2).unwrap();
+        assert!(
+            peak > 0 && peak < seen.len() - 1,
+            "edge-on is the middle of the cycle: {seen:?}"
+        );
+        assert_eq!(
+            *seen.last().unwrap(),
+            0,
+            "and it closes back on the wide frame: {seen:?}"
+        );
+        // It repeats. Sampled off the frame boundaries: *on* a boundary the counter
+        // lands exactly on an integer and which side of it you get is down to float
+        // rounding — arbitrary in the original too, since it steps an accumulator.
+        for i in 0..10 {
+            let t = period * (i as f32 + 0.5) / 10.0;
+            assert_eq!(coin_spin_frame(t), coin_spin_frame(t + period), "at t={t}");
+        }
+    }
+
+    /// The two coin sheets have different cell sizes, and mixing them is what put six
+    /// little rings on screen where one coin belonged.
+    #[test]
+    fn the_two_coin_sheets_are_addressed_differently() {
+        // World coin: 16x16 out of 64x64, so a quarter of the sheet each way.
+        let [x, y, w, h] = coin_uv(0);
+        assert_eq!((x, y), (0.0, 0.0));
+        assert_eq!((w, h), (0.25, 0.25));
+        // Three columns — the sheet's fourth is empty — and it wraps rather than
+        // sampling that empty column.
+        assert_eq!(coin_uv(3), coin_uv(0));
+        assert!(coin_uv(2)[0] + coin_uv(2)[2] <= 48.0 / 64.0);
+
+        // HUD icon: 5x8 out of 16x32. In *pixels* that is a much smaller cell, but the
+        // sheet is smaller too, so as UV fractions it comes out wider — which is
+        // exactly the trap. Compare the pixel sizes the fractions imply.
+        let [hx, hy, hw, hh] = coin_hud_uv(0);
+        assert_eq!((hx, hy), (0.0, 0.0));
+        assert_eq!((hw * 16.0, hh * 32.0), (5.0, 8.0), "5x8 px out of 16x32");
+        assert_eq!((w * 64.0, h * 64.0), (16.0, 16.0), "16x16 px out of 64x64");
+        // Three columns on this one, not four.
+        assert_eq!(coin_hud_uv(3), coin_hud_uv(0));
+    }
 }

@@ -43,6 +43,7 @@ assets:
     spikey: "assets/mari0/spikey.png"
     cheep_red: "assets/mari0/cheepcheep.png"
     cheep_white: "assets/mari0/cheepcheep.png"
+    coin: "assets/mari0/coin.png"
     coin_anim: "assets/mari0/coinanimation.png"
     portal: "assets/mari0/portal.png"
     portal_v: "assets/mari0/portal_v.png"

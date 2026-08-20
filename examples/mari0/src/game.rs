@@ -113,6 +113,13 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// The shared coin-spin phase, in seconds.
+    ///
+    /// One counter for every coin in the level, because the original has one
+    /// (`coinanimation`, `game.lua:149`) — coins spin in unison, they don't each keep
+    /// their own phase. Separate from the clock so it keeps turning in levels with no
+    /// time limit.
+    pub(crate) coin_spin: f32,
     /// Springs, and the ride in progress if Mario is on one.
     pub(crate) springs: Vec<crate::spring::Spring>,
     pub(crate) spring_ride: Option<crate::spring::SpringRide>,
@@ -193,6 +200,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_spikey: TextureId,
     pub(crate) tex_cheep_red: TextureId,
     pub(crate) tex_cheep_white: TextureId,
+    pub(crate) tex_coin: TextureId,
     pub(crate) tex_coin_anim: TextureId,
     pub(crate) tex_entities: TextureId,
     pub(crate) tex_star: TextureId,
@@ -579,6 +587,7 @@ impl Mari0Game {
     /// Kept separate from the rest of the update so a pipe transition — which
     /// suspends input, physics and the clock — can still let the portals shimmer.
     fn update_visual_timers(&mut self, dt: f32) {
+        self.coin_spin += dt;
         self.aim_dot_timer += dt;
         const AIM_DOTS_CYCLE: f32 = 0.8;
         if self.aim_dot_timer >= AIM_DOTS_CYCLE {
@@ -1077,6 +1086,7 @@ impl Game for Mari0Game {
             checkpoint: None,
             checkpoints_passed: 0,
             lakito_retired: false,
+            coin_spin: 0.0,
             springs: Vec::new(),
             spring_ride: None,
             platforms: Vec::new(),
@@ -1126,6 +1136,7 @@ impl Game for Mari0Game {
             tex_spikey: t("spikey"),
             tex_cheep_red: t("cheep_red"),
             tex_cheep_white: t("cheep_white"),
+            tex_coin: t("coin"),
             tex_coin_anim: t("coin_anim"),
             tex_entities: t("entities"),
             tex_star: t("star"),
