@@ -113,6 +113,8 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// The axe ending in progress, if the player has taken the axe.
+    pub(crate) castle: Option<crate::castle::CastleEnding>,
     /// The shared coin-spin phase, in seconds.
     ///
     /// One counter for every coin in the level, because the original has one
@@ -362,6 +364,7 @@ impl Mari0Game {
             .map(|(x, y)| crate::spring::Spring::new(*x, *y))
             .collect();
         self.spring_ride = None;
+        self.castle = None;
         self.platforms_spawned = vec![false; level.platform_spawns.len()];
         self.platform_spawners = level.platform_spawners.clone();
         self.lakito_retired = false;
@@ -608,6 +611,21 @@ impl Mari0Game {
         // Nothing below may run in that case, so this returns rather than branching.
         if self.update_pipe(dt) {
             self.update_visual_timers(dt);
+            return;
+        }
+
+        // ── The castle ending ──
+        // Owns the player like a pipe does, and for longer: from the axe until Bowser
+        // is in the lava nothing moves at all, and even after Mario is released the
+        // input stays disabled while he walks to the toad.
+        if self.update_castle(dt, ctx) {
+            self.update_visual_timers(dt);
+            self.update_enemies(dt, ctx);
+            // The camera still follows him to the toad; without this the last walk
+            // happens off the right of a frozen view.
+            let target_x = self.player.center_x() - self.vw / 3.0;
+            let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);
+            self.camera.x = target_x.max(self.camera.x).clamp(0.0, max_camera);
             return;
         }
 
@@ -897,6 +915,11 @@ impl Mari0Game {
             }
         }
 
+        // ── The axe ending ──
+        // Checked before the flagpole because a castle has no flagpole at all: these
+        // are the two mutually exclusive ways a level ends.
+        self.check_axe(ctx);
+
         // ── Flag/level complete ──
         // Still triggered by reaching the pole's column rather than by the original's
         // grab-and-slide animation, but the *payout* is now the real one: height on the
@@ -1086,6 +1109,7 @@ impl Game for Mari0Game {
             checkpoint: None,
             checkpoints_passed: 0,
             lakito_retired: false,
+            castle: None,
             coin_spin: 0.0,
             springs: Vec::new(),
             spring_ride: None,

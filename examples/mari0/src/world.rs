@@ -161,6 +161,9 @@ pub(crate) struct Level {
     /// bill pair, and the same two-way latch on the player's x (`mario.lua:977-983`).
     pub(crate) flying_fish_start: Option<i32>,
     pub(crate) flying_fish_end: Option<i32>,
+    /// The axe's cell, if this level has one. The castle ending's trigger and the
+    /// anchor for the bridge sweep.
+    pub(crate) axe: Option<(usize, usize)>,
     /// Column past which lakitu gives up and drifts away, if this level has one.
     ///
     /// A single column rather than a cell: the marker is "place anywhere — defines a
@@ -822,6 +825,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         lakito_end: parsed.markers.lakito_end.map(|c| c as i32),
         bullet_bill_start: parsed.markers.bullet_bill_start.map(|c| c as i32),
         bullet_bill_end: parsed.markers.bullet_bill_end.map(|c| c as i32),
+        axe: parsed.markers.axe,
         fire_start: parsed.markers.fire_start.map(|c| c as i32),
         flying_fish_start: parsed.markers.flying_fish_start.map(|c| c as i32),
         flying_fish_end: parsed.markers.flying_fish_end.map(|c| c as i32),

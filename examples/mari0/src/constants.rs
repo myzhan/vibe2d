@@ -146,6 +146,27 @@ pub(crate) const SPRING_Y_TABLE: [f32; 3] = [0.0, 0.5, 1.0];
 pub(crate) const SPRING_H: f32 = 31.0 / 16.0 * TILE_SIZE;
 pub(crate) const SPRING_W: f32 = TILE_SIZE;
 
+// ── The castle ending (variables.lua:346-353) ──
+/// How long the chain hangs there after the axe is taken, before the bridge starts to go.
+pub(crate) const CASTLE_CHAIN_DISAPPEAR: f32 = 0.38;
+/// Gap between bridge tiles vanishing, and between the chain and the first tile.
+pub(crate) const CASTLE_BRIDGE_DELAY: f32 = 0.06;
+/// When Mario is released, **measured from Bowser's fall** rather than from the axe —
+/// the timer is reset once at the fall (`mario.lua:517`).
+pub(crate) const CASTLE_MARIO_MOVE: f32 = 1.07;
+/// Fixed speed he runs at once released; there is no input during the sequence.
+pub(crate) const CASTLE_MARIO_SPEED: f32 = 4.27 * TILE_SIZE;
+/// He stops this many blocks short of the level's right edge, where the toad stands.
+pub(crate) const CASTLE_STOP_FROM_END: f32 = 8.0;
+/// When the next level begins (`castleanimationnextlevel`).
+pub(crate) const CASTLE_NEXT_LEVEL: f32 = 9.47;
+/// Bowser's death drop is **heavier than his own gravity** — 27.5 against 10.9
+/// (`mario.lua:512`), so he plummets rather than floating down as he does when hopping.
+pub(crate) const CASTLE_BOWSER_FALL_GRAVITY: f32 = 27.5 * TILE_SIZE;
+/// The two tile ids the sequence names: the bridge deck and the chain that holds it.
+pub(crate) const CASTLE_BRIDGE_TILE: u32 = 11;
+pub(crate) const CASTLE_CHAIN_TILE: u32 = 10;
+
 // ── Bowser (variables.lua:107-118) ──
 /// Pacing speed while advancing on the player.
 pub(crate) const BOWSER_SPEED_FORWARDS: f32 = 0.875 * TILE_SIZE;

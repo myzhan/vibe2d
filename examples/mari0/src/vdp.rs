@@ -59,6 +59,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) flying_fish_zone: bool,
     /// Has `firestart` been passed? One-way, so once true it stays true.
     pub(crate) fire_started: bool,
+    /// The axe ending, if it is running: which beat and how far into it.
+    pub(crate) castle: Option<CastleView>,
     /// Moving platforms in the world right now.
     pub(crate) platforms: Vec<PlatformView>,
     /// Springs, with their live (compressing) collision boxes.
@@ -197,6 +199,15 @@ pub(crate) struct PlatformView {
     pub(crate) kind: crate::platform::PlatformKind,
     pub(crate) vx: f32,
     pub(crate) vy: f32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct CastleView {
+    pub(crate) phase: crate::castle::CastlePhase,
+    pub(crate) timer: f32,
+    /// The next bridge cell the sweep will take, as `[col, row]`.
+    pub(crate) bridge: [i32; 2],
 }
 
 #[cfg(feature = "vdp")]
@@ -589,6 +600,11 @@ impl Mari0Game {
             bullet_bill_zone: self.bullet_bill_zone,
             flying_fish_zone: self.flying_fish_zone,
             fire_started: self.fire_started,
+            castle: self.castle.map(|c| CastleView {
+                phase: c.phase,
+                timer: c.timer,
+                bridge: [c.bridge.0, c.bridge.1],
+            }),
             springs: self
                 .springs
                 .iter()
@@ -962,6 +978,7 @@ impl Mari0Game {
             jump_timer: 0.0,
             hp: 0,
             target_x: 0.0,
+            falling_to_lava: false,
             backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,

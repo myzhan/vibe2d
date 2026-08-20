@@ -219,6 +219,24 @@ impl EnemyType {
         )
     }
 
+    /// Is this kind thrown away once it scrolls off the left of the screen?
+    ///
+    /// The original marks most things `autodelete` and pointedly does **not** mark
+    /// Bowser, lakitu or the plants. Bowser is the one that matters: he paces around
+    /// column 121-128 of a castle while the axe is at 141, so by the time the player
+    /// reaches the axe the camera has left him more than 200px behind. Cull him and the
+    /// bridge collapses onto nothing — the entire axe ending becomes unreachable in
+    /// normal play, which is exactly what happened here.
+    ///
+    /// Lakitu is already handled separately (he has to survive falling out of the world
+    /// to make his 16-second return), and the plants never move.
+    pub(crate) fn autodelete(self) -> bool {
+        !matches!(
+            self,
+            EnemyType::Bowser | EnemyType::Lakito | EnemyType::Plant
+        )
+    }
+
     /// Not a creature at all: no hitbox, no sprite, cannot hurt or be hurt.
     ///
     /// Only the bullet-bill cannon. It rides in the enemy list for the lazy reveal and
@@ -348,6 +366,11 @@ pub(crate) struct Enemy {
     pub(crate) hp: u32,
     /// Bowser: the end of the current leg of his pace, re-drawn at each turn.
     pub(crate) target_x: f32,
+    /// Bowser: is he dropping into the lava at the end of the level?
+    ///
+    /// Suppresses everything — pacing, hopping, hammers, fire — and swaps his gravity
+    /// for the much heavier [`CASTLE_BOWSER_FALL_GRAVITY`]. Nothing brings him back.
+    pub(crate) falling_to_lava: bool,
     /// Bowser: is the player behind him? Then he is scrambling backwards, and while he
     /// is he neither breathes fire nor throws hammers.
     pub(crate) backing_off: bool,
@@ -460,6 +483,7 @@ impl Enemy {
             } else {
                 0.0
             },
+            falling_to_lava: false,
             backing_off: false,
             // A hammer bro's throw countdown. The original picks between 0.6 and 1.6 at
             // birth; a fixed first gap keeps `from_spawn` free of the RNG, and every
@@ -537,6 +561,7 @@ impl Enemy {
             jump_timer: 0.0,
             hp: 0,
             target_x: 0.0,
+            falling_to_lava: false,
             backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
@@ -576,6 +601,7 @@ impl Enemy {
             jump_timer: 0.0,
             hp: 0,
             target_x: 0.0,
+            falling_to_lava: false,
             backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
@@ -609,6 +635,7 @@ impl Enemy {
             segment: 0,
             hp: 0,
             target_x: 0.0,
+            falling_to_lava: false,
             backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
@@ -647,6 +674,7 @@ impl Enemy {
             jump_timer: 0.0,
             hp: 0,
             target_x: 0.0,
+            falling_to_lava: false,
             backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
@@ -680,6 +708,7 @@ impl Enemy {
             jump_timer: 0.0,
             hp: 0,
             target_x: 0.0,
+            falling_to_lava: false,
             backing_off: false,
             squid_phase: SquidPhase::Idle,
             beat_from: 0.0,
@@ -1093,6 +1122,14 @@ impl Mari0Game {
                 EnemyState::Walking | EnemyState::ShellMoving => {
                     enemy.anim_timer += dt;
 
+                    if enemy.enemy_type == EnemyType::Bowser && enemy.falling_to_lava {
+                        // Dropping into the lava: no pacing, no hops, no weapons, and a
+                        // gravity nearly three times his own.
+                        enemy.vx = 0.0;
+                        enemy.vy += CASTLE_BOWSER_FALL_GRAVITY * dt;
+                        enemy.y += enemy.vy * dt;
+                        continue;
+                    }
                     if enemy.enemy_type == EnemyType::Bowser {
                         // **The retreat is the whole fight.** If the player has got
                         // past him he turns and scrambles backwards at more than twice
@@ -1521,7 +1558,11 @@ impl Mari0Game {
             }
             // Scrolled well off the left edge. It does not come back: the
             // spawn record is never cleared, exactly as `enemiesspawned` isn't.
-            if e.x < cam_x - 200.0 {
+            //
+            // Except for the kinds the original leaves un-`autodelete`d — see
+            // `EnemyType::autodelete`. Bowser has to still be there when you reach the
+            // axe, twenty columns further on.
+            if e.x < cam_x - 200.0 && e.enemy_type.autodelete() {
                 return false;
             }
             true
