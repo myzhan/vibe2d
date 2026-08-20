@@ -125,6 +125,58 @@ impl Mari0Game {
         ]
     }
 
+    /// Spawn and drift the dust coming out of the open portals.
+    ///
+    /// The wander is a deterministic function of the particle's index and the shared
+    /// animation clock rather than `math.random`, for the same reason every other
+    /// randomness in this port is: a replay has to come out the same way twice. The plume
+    /// still reads as a plume.
+    pub(crate) fn update_portal_particles(&mut self, dt: f32) {
+        self.portal_particle_timer += dt;
+        while self.portal_particle_timer > PORTAL_PARTICLE_TIME {
+            self.portal_particle_timer -= PORTAL_PARTICLE_TIME;
+            for index in 0..2 {
+                let Some(portal) = &self.portals[index] else {
+                    continue;
+                };
+                if !portal.active {
+                    continue;
+                }
+                let facing = portal.anchor.facing;
+                let (cx, cy) = portal.centre();
+                let (vx, vy) = match facing {
+                    crate::player::Orientation::Left => (-PORTAL_PARTICLE_SPEED, 0.0),
+                    crate::player::Orientation::Right => (PORTAL_PARTICLE_SPEED, 0.0),
+                    crate::player::Orientation::Up => (0.0, -PORTAL_PARTICLE_SPEED),
+                    crate::player::Orientation::Down => (0.0, PORTAL_PARTICLE_SPEED),
+                };
+                self.portal_particles.push(crate::effects::PortalParticle {
+                    x: cx,
+                    y: cy,
+                    vx,
+                    vy,
+                    timer: 0.0,
+                    portal: index,
+                    facing_up: facing == crate::player::Orientation::Up,
+                });
+            }
+        }
+        for (i, p) in self.portal_particles.iter_mut().enumerate() {
+            p.timer += dt;
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            let phase = self.coin_spin * 7.0 + i as f32 * 2.3;
+            p.vx += phase.sin() * PORTAL_PARTICLE_WANDER * dt * 60.0;
+            p.vy += phase.cos() * PORTAL_PARTICLE_WANDER * dt * 60.0;
+            // A floor portal's plume never rains back into it.
+            if p.facing_up && p.vy > 0.0 {
+                p.vy = 0.0;
+            }
+        }
+        self.portal_particles
+            .retain(|p| p.timer < PORTAL_PARTICLE_DURATION);
+    }
+
     pub(crate) fn update_projectiles(&mut self, ctx: &Context, dt: f32) {
         // Collected first: placing a portal needs `&self.level` while the loop holds
         // `&mut self.projectiles`.

@@ -128,6 +128,11 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// How much of the konami code has been entered on the title screen.
+    pub(crate) konami_index: usize,
+    /// Dust drifting out of the open portals, and the accumulator that releases it.
+    pub(crate) portal_particles: Vec<crate::effects::PortalParticle>,
+    pub(crate) portal_particle_timer: f32,
     /// The launch intro, if it is still running. `None` for the rest of the session.
     pub(crate) intro: Option<crate::interlude::Intro>,
     /// Has the camera reached the right edge of a `haswarpzone` level? That is what
@@ -243,6 +248,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_bubble: TextureId,
     pub(crate) tex_castle_flag: TextureId,
     pub(crate) tex_oneup_text: TextureId,
+    pub(crate) tex_portal_particle: TextureId,
     pub(crate) tex_logo: TextureId,
     pub(crate) tex_logo_blood: TextureId,
     /// The static Mario on the level card. Four layers, like the animation sheets.
@@ -454,6 +460,7 @@ impl Mari0Game {
         self.spawn_frontier = -1;
         self.portals = [None, None];
         self.projectiles.clear();
+        self.portal_particles.clear();
         self.crosshair_angle = 0.0;
         self.aim_dot_timer = 0.0;
         self.portal_anim_timer = 0.0;
@@ -1107,6 +1114,7 @@ impl Mari0Game {
 
         // ── Update projectiles ──
         self.update_projectiles(ctx, dt);
+        self.update_portal_particles(dt);
 
         // ── Enemies ──
         self.update_enemies(dt, ctx);
@@ -1438,6 +1446,9 @@ impl Game for Mari0Game {
             // Shown once, at launch. The original calls `intro_load` before the menu ever
             // appears (`main.lua`), which is why this starts populated rather than being
             // triggered by anything.
+            konami_index: 0,
+            portal_particles: Vec::new(),
+            portal_particle_timer: 0.0,
             intro: Some(crate::interlude::Intro {
                 timer: INTRO_START,
                 stabbed: false,
@@ -1499,6 +1510,7 @@ impl Game for Mari0Game {
             tex_bubble: t("bubble"),
             tex_castle_flag: t("castle_flag"),
             tex_oneup_text: t("oneup_text"),
+            tex_portal_particle: t("portal_particle"),
             tex_logo: t("logo"),
             tex_logo_blood: t("logo_blood"),
             tex_puppet: [t("skin0"), t("skin1"), t("skin2"), t("skin3")],
@@ -1574,7 +1586,7 @@ impl Game for Mari0Game {
         }
 
         match self.state {
-            GameState::Menu => self.update_menu(input),
+            GameState::Menu => self.update_menu(ctx, input),
             GameState::Playing => {
                 // Pause freezes everything, which is what the original's pause menu
                 // amounts to: it returns from the top of the update and nothing moves.

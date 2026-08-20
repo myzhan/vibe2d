@@ -61,6 +61,7 @@ assets:
     portal_crosshair: "assets/mari0/portalcrosshair.png"
     portal_projectile: "assets/mari0/portalprojectile.png"
     portal_dot: "assets/mari0/portaldot.png"
+    portal_particle: "assets/mari0/portalparticle.png"
     flag: "assets/mari0/flag.png"
     entities: "assets/mari0/entities.png"
     star: "assets/mari0/star.png"
@@ -126,6 +127,7 @@ assets:
     pause: "assets/sounds/pause.ogg"
     princess: "assets/sounds/princessmusic.ogg"
     stab: "assets/sounds/stab.ogg"
+    konami: "assets/sounds/konami.ogg"
 
     # These five were being asked for by name (`ctx.audio.play("pipe")` and
     # friends) without ever being declared here, so every pipe, every castle

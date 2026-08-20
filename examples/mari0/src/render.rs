@@ -1089,6 +1089,23 @@ impl Mari0Game {
             }
         }
 
+        // ── Portal dust ──
+        // Behind the projectiles and the player, and tinted the colour of the portal it
+        // came out of. `portalparticle.png` is a single pixel, drawn centred.
+        for p in &self.portal_particles {
+            let base = portal_colors[p.portal];
+            let fade = 1.0 - (p.timer / PORTAL_PARTICLE_DURATION).min(1.0);
+            const S: f32 = 2.0;
+            screen.draw_sprite_tinted(
+                self.tex_portal_particle,
+                p.x - cam_x - S / 2.0,
+                p.y - S / 2.0,
+                S,
+                S,
+                Color { r: base.r, g: base.g, b: base.b, a: fade },
+            );
+        }
+
         // ── Projectiles (with particle trail, matches original mari0) ──
         for proj in &self.projectiles {
             let color = portal_colors[proj.portal_index];

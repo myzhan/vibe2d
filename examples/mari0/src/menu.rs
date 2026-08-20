@@ -141,7 +141,86 @@ impl Mari0Game {
     }
 
     /// One frame of the title screen.
-    pub(crate) fn update_menu(&mut self, input: &InputState) {
+    /// The konami code, in the original's own order (`variables.lua:381`).
+    ///
+    /// Bound to this port's action names rather than raw keys, so it works on a gamepad
+    /// too: the last two are B and A on a NES pad, which are `jump` and `fire` here.
+    const KONAMI: [&str; 10] = [
+        "climb_up",
+        "climb_up",
+        "crouch",
+        "crouch",
+        "move_left",
+        "move_right",
+        "move_left",
+        "move_right",
+        "fire",
+        "jump",
+    ];
+
+    /// Watch for the konami code on the title screen, and unlock every level if it lands.
+    ///
+    /// `gamefinished = true` in the original (`main.lua:1275`) — it marks the whole mappack
+    /// as reached, which is what the level picker gates on. Any wrong key resets the
+    /// sequence to the start.
+    /// Returns true if the code just completed, in which case this frame's keypress is
+    /// **consumed**.
+    ///
+    /// The original's last two keys are B and A, which do nothing on its title screen. The
+    /// nearest equivalents here are `fire` and `jump` — and `jump` is what starts a level,
+    /// so without swallowing it the code can never be finished without also launching into
+    /// 1-1. Eating the frame is the smaller lie than renaming the keys.
+    fn check_konami(&mut self, ctx: &mut Context, input: &InputState) -> bool {
+        // A key that is part of the sequence but out of order still counts as wrong, so the
+        // check is "is the expected key the one pressed" rather than "was any key pressed".
+        let expected = Self::KONAMI[self.konami_index];
+        let pressed: Vec<&str> = Self::KONAMI
+            .iter()
+            .copied()
+            .chain(["use", "pause"])
+            .filter(|a| input.is_action_just_pressed(a))
+            .collect();
+        if pressed.is_empty() {
+            return false;
+        }
+        if pressed.contains(&expected) {
+            self.konami_index += 1;
+            if self.konami_index == Self::KONAMI.len() {
+                self.konami_index = 0;
+                ctx.audio.play("konami");
+                self.unlock_everything();
+                return true;
+            }
+        } else {
+            self.konami_index = 0;
+        }
+        false
+    }
+
+    /// Mark every world of every mappack as reached.
+    ///
+    /// `gamefinished = true` in the original — it is the flag the level picker gates on, so
+    /// the code's whole effect is "you may go anywhere". 8-4 covers all of smb, and the
+    /// lab's nine levels sit inside worlds 1-2, so the same figure unlocks both packs.
+    fn unlock_everything(&mut self) {
+        for pack in PACKS {
+            match self.furthest.iter_mut().find(|(p, _, _)| p == pack) {
+                Some(entry) => {
+                    entry.1 = 8;
+                    entry.2 = 4;
+                }
+                None => self.furthest.push((pack.to_string(), 8, 4)),
+            }
+        }
+        self.storage.set(KEY_FURTHEST, self.furthest.clone());
+        let _ = self.storage.save();
+    }
+
+    pub(crate) fn update_menu(&mut self, ctx: &mut Context, input: &InputState) {
+        if self.check_konami(ctx, input) {
+            return;
+        }
+
         // Left/right walks the levels, up/down switches mappack — the pack list is
         // short and the level list is long, which is the way round the keys suggest.
         if input.is_action_just_pressed("move_right") {

@@ -44,6 +44,24 @@ pub(crate) struct BrickDebris {
     pub(crate) timer: f32,
 }
 
+/// Dust out of an open portal's mouth.
+///
+/// Purely decorative, and the one detail worth keeping is that an **upward**-facing
+/// portal's particles are stopped from ever falling back (`portalparticle.lua:30-34`):
+/// their downward speed is clamped to zero, so the plume above a floor portal keeps
+/// rising instead of raining back into it.
+pub(crate) struct PortalParticle {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) vx: f32,
+    pub(crate) vy: f32,
+    pub(crate) timer: f32,
+    /// Which portal it came from, so it takes that portal's colour.
+    pub(crate) portal: usize,
+    /// Was the portal facing up? Then it never falls back.
+    pub(crate) facing_up: bool,
+}
+
 /// A bubble out of Mario's mouth, in a water level.
 ///
 /// Purely decorative, and the only reason it is worth the twenty lines is that without

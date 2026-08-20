@@ -31,6 +31,15 @@ pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 pub(crate) const ONEUP_TEXT_W: f32 = 16.0 * 2.0;
 pub(crate) const ONEUP_TEXT_H: f32 = 8.0 * 2.0;
 
+// ── Portal particles (variables.lua:197-200) ──
+/// Dust drifting out of an open portal's mouth. One every `PORTAL_PARTICLE_TIME`, moving
+/// outward along the portal's own facing, fading over its half-second life.
+pub(crate) const PORTAL_PARTICLE_SPEED: f32 = 1.0 * TILE_SIZE;
+pub(crate) const PORTAL_PARTICLE_TIME: f32 = 0.05;
+pub(crate) const PORTAL_PARTICLE_DURATION: f32 = 0.5;
+/// The wander added each frame, `math.random(-10, 10)/70` blocks/s.
+pub(crate) const PORTAL_PARTICLE_WANDER: f32 = 10.0 / 70.0 * TILE_SIZE;
+
 // ── The intro (intro.lua) ──
 // Stabyourself's logo, shown once at launch: it fades in, is stabbed — the blood wipes
 // upward out of a scissor — and fades out. Any key skips it.
