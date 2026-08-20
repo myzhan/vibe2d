@@ -28,6 +28,9 @@ pub(crate) struct Mari0Inspect {
     pub(crate) paused: bool,
     /// Which loadout the mouse buttons carry: `portal` or `gel_cannon`.
     pub(crate) player_type: PlayerType,
+    /// The launch intro, if it is running: seconds in, the logo's opacity, and how far the
+    /// blood has wiped up it.
+    pub(crate) intro: Option<IntroView>,
     /// Has the warp-zone text been revealed? Only ever true in a `haswarpzone` level.
     pub(crate) warp_text: bool,
     /// The black card being held between levels, or `null`.
@@ -252,6 +255,17 @@ pub(crate) struct SpringView {
 pub(crate) struct SpringRideView {
     pub(crate) timer: f32,
     pub(crate) charged: bool,
+}
+
+/// The launch intro.
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct IntroView {
+    /// Starts negative: there is a beat of black before the fade begins.
+    pub(crate) timer: f32,
+    pub(crate) alpha: f32,
+    pub(crate) blood_wipe: f32,
+    pub(crate) stabbed: bool,
 }
 
 /// A black card between levels.
@@ -652,6 +666,12 @@ impl Mari0Game {
             state: self.state,
             paused: self.paused,
             player_type: self.player_type,
+            intro: self.intro.map(|i| IntroView {
+                timer: i.timer,
+                alpha: i.alpha(),
+                blood_wipe: i.blood_wipe(),
+                stabbed: i.stabbed,
+            }),
             warp_text: self.warp_text,
             interlude: self.interlude.map(|c| InterludeView {
                 kind: c.kind,
@@ -1126,6 +1146,19 @@ impl Mari0Game {
         };
         self.lab.signal(p.index, signal);
         Ok(serde_json::json!({"index": p.index, "on": self.lab.elements[p.index].on}))
+    }
+
+    /// Replay the launch intro from the top.
+    ///
+    /// It only ever runs once per session, so without this there is no way to look at it
+    /// again — or to assert anything about it.
+    #[vdp("game.playIntro")]
+    pub(crate) fn vdp_play_intro(&mut self) -> Result<serde_json::Value, String> {
+        self.intro = Some(crate::interlude::Intro {
+            timer: INTRO_START,
+            stabbed: false,
+        });
+        Ok(serde_json::json!({"status": "ok"}))
     }
 
     /// Set the life count without touching anything else.

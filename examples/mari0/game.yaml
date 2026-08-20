@@ -40,6 +40,8 @@ assets:
     bubble: "assets/mari0/bubble.png"
     castle_flag: "assets/mari0/castleflag.png"
     oneup_text: "assets/mari0/oneuptext.png"
+    logo: "assets/mari0/stabyourself.png"
+    logo_blood: "assets/mari0/stabyourselfblood.png"
     skin0: "assets/mari0/skin0.png"
     skin1: "assets/mari0/skin1.png"
     skin2: "assets/mari0/skin2.png"
@@ -123,6 +125,7 @@ assets:
     boom: "assets/sounds/boom.ogg"
     pause: "assets/sounds/pause.ogg"
     princess: "assets/sounds/princessmusic.ogg"
+    stab: "assets/sounds/stab.ogg"
 
     # These five were being asked for by name (`ctx.audio.play("pipe")` and
     # friends) without ever being declared here, so every pipe, every castle

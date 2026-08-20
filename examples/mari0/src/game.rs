@@ -128,6 +128,8 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// The launch intro, if it is still running. `None` for the rest of the session.
+    pub(crate) intro: Option<crate::interlude::Intro>,
     /// Has the camera reached the right edge of a `haswarpzone` level? That is what
     /// reveals the warp-zone text and the world numbers over the three pipes
     /// (`hitrightside`, `game.lua:4181-4186`).
@@ -241,6 +243,8 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_bubble: TextureId,
     pub(crate) tex_castle_flag: TextureId,
     pub(crate) tex_oneup_text: TextureId,
+    pub(crate) tex_logo: TextureId,
+    pub(crate) tex_logo_blood: TextureId,
     /// The static Mario on the level card. Four layers, like the animation sheets.
     pub(crate) tex_puppet: [TextureId; 4],
     pub(crate) tex_bowser: TextureId,
@@ -1431,6 +1435,13 @@ impl Game for Mari0Game {
             checkpoints_passed: 0,
             lakito_retired: false,
             castle: None,
+            // Shown once, at launch. The original calls `intro_load` before the menu ever
+            // appears (`main.lua`), which is why this starts populated rather than being
+            // triggered by anything.
+            intro: Some(crate::interlude::Intro {
+                timer: INTRO_START,
+                stabbed: false,
+            }),
             warp_text: false,
             pending_music: None,
             interlude: None,
@@ -1488,6 +1499,8 @@ impl Game for Mari0Game {
             tex_bubble: t("bubble"),
             tex_castle_flag: t("castle_flag"),
             tex_oneup_text: t("oneup_text"),
+            tex_logo: t("logo"),
+            tex_logo_blood: t("logo_blood"),
             tex_puppet: [t("skin0"), t("skin1"), t("skin2"), t("skin3")],
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),
@@ -1547,6 +1560,19 @@ impl Game for Mari0Game {
             self.start_music(ctx);
         }
 
+        // The launch intro sits in front of the menu and owns the frame until it is done
+        // or skipped.
+        if self.intro.is_some() {
+            let any_key = input.is_action_just_pressed("jump")
+                || input.is_action_just_pressed("pause")
+                || input.is_action_just_pressed("use")
+                || input.is_action_just_pressed("fire")
+                || input.is_action_just_pressed("portal_blue");
+            if self.update_intro(ctx, dt, any_key) {
+                return;
+            }
+        }
+
         match self.state {
             GameState::Menu => self.update_menu(input),
             GameState::Playing => {
@@ -1581,7 +1607,7 @@ impl Game for Mari0Game {
         // (`levelscreen_load` calls `setBackgroundColor(0, 0, 0)`). Without this the
         // "world 2-1" screen appears on a daytime blue, which reads as a frozen level
         // rather than as a gap between levels.
-        if self.state == GameState::Interlude {
+        if self.state == GameState::Interlude || self.intro.is_some() {
             return Color::from_hex(0x000000);
         }
         // The level's `background` field picks one of three NES backdrops

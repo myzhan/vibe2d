@@ -283,10 +283,46 @@ impl Mari0Game {
     /// Split in two because a black card needs the HUD without the level behind it: the
     /// "world 1-1" screen would otherwise announce a level you can already see.
     pub(crate) fn draw_world(&self, ctx: &Context, screen: &mut Screen) {
+        // The launch intro replaces everything, HUD included.
+        if let Some(intro) = self.intro {
+            self.draw_intro(screen, &intro);
+            return;
+        }
         if self.state != GameState::Interlude {
             self.draw_level(ctx, screen);
         }
         self.draw_hud(ctx, screen);
+    }
+
+    /// Stabyourself's logo, stabbed.
+    ///
+    /// The blood is the same image again, revealed through a scissor that grows *upward*
+    /// from the logo's bottom edge — a cross-fade would read as the picture changing, and
+    /// this reads as blood running up it.
+    fn draw_intro(&self, screen: &mut Screen, intro: &crate::interlude::Intro) {
+        let alpha = intro.alpha();
+        if alpha <= 0.0 {
+            return;
+        }
+        let tint = Color { r: 1.0, g: 1.0, b: 1.0, a: alpha };
+        // The original draws with an origin inside the sheet rather than from a corner,
+        // and at half scale on a small window; centring on the virtual screen is the same
+        // placement expressed in this port's fixed resolution.
+        const SHEET: f32 = 512.0;
+        let (ox, oy) = INTRO_LOGO_ORIGIN;
+        let x = self.vw / 2.0 - ox;
+        let y = self.vh / 2.0 - oy;
+        screen.draw_sprite_tinted(self.tex_logo, x, y, SHEET, SHEET, tint);
+        let wipe = intro.blood_wipe();
+        if wipe > 0.0 {
+            // Scissor anchored on the logo's bottom edge, opening upward.
+            let bottom = y + oy + INTRO_LOGO_ORIGIN.1;
+            let top = (bottom - wipe).max(0.0);
+            let height = (bottom - top).min(self.vh);
+            screen.clipped(0.0, top, self.vw, height, |screen| {
+                screen.draw_sprite_tinted(self.tex_logo_blood, x, y, SHEET, SHEET, tint);
+            });
+        }
     }
 
     /// The level itself: tiles, actors, effects.

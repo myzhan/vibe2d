@@ -24,6 +24,54 @@ use vibe2d::prelude::*;
 use crate::constants::*;
 use crate::game::{GameState, Mari0Game};
 
+/// The launch intro: Stabyourself's logo, stabbed.
+///
+/// Not one of the cards — it has no HUD, its own fade, and it only ever runs once, at
+/// launch. It lives here because it is the same kind of thing: a timed screen that owns
+/// the frame and hands over to something else.
+///
+/// The timer starts **negative** (`introprogress = -0.2`), so there is a beat of black
+/// before the fade begins.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Intro {
+    pub(crate) timer: f32,
+    /// Has the stab sound played? Once only.
+    pub(crate) stabbed: bool,
+}
+
+impl Intro {
+    /// Opacity of the logo: fading in at the start, out at the end, solid between.
+    pub(crate) fn alpha(&self) -> f32 {
+        if self.timer < 0.0 || self.timer >= INTRO_DURATION {
+            return 0.0;
+        }
+        if self.timer < INTRO_FADE_TIME {
+            self.timer / INTRO_FADE_TIME
+        } else if self.timer >= INTRO_DURATION - INTRO_FADE_TIME {
+            1.0 - (self.timer - (INTRO_DURATION - INTRO_FADE_TIME)) / INTRO_FADE_TIME
+        } else {
+            1.0
+        }
+    }
+
+    /// How far the blood has wiped up the logo, in pixels — 0 before the stab, and the
+    /// full height once the fade-out begins.
+    ///
+    /// The wipe is a scissor whose *height* grows from the logo's bottom edge upward
+    /// (`intro.lua:53-56`), which is why it reads as blood running up rather than the
+    /// image cross-fading.
+    pub(crate) fn blood_wipe(&self) -> f32 {
+        if self.timer >= INTRO_DURATION - INTRO_FADE_TIME {
+            return INTRO_BLOOD_SPAN;
+        }
+        if self.timer <= INTRO_FADE_TIME + 0.3 {
+            return 0.0;
+        }
+        (self.timer - 0.2 - INTRO_FADE_TIME) / (INTRO_DURATION - 2.0 * INTRO_FADE_TIME)
+            * INTRO_BLOOD_SPAN
+    }
+}
+
 /// Which card is being held.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "vdp", derive(serde::Serialize))]
@@ -79,6 +127,29 @@ pub(crate) struct DeathAnim {
 }
 
 impl Mari0Game {
+    /// Run the launch intro. Returns true while it owns the frame.
+    ///
+    /// Skippable by any key — but only after the first frame (`allowskip`), so the key
+    /// that launched the game cannot dismiss it before it has been seen.
+    pub(crate) fn update_intro(&mut self, ctx: &mut Context, dt: f32, any_key: bool) -> bool {
+        let Some(mut intro) = self.intro else {
+            return false;
+        };
+        let skippable = intro.timer > INTRO_START;
+        intro.timer += dt;
+        if !intro.stabbed && intro.timer > INTRO_STAB_TIME {
+            intro.stabbed = true;
+            ctx.audio.play("stab");
+        }
+        if (skippable && any_key) || intro.timer >= INTRO_DURATION + INTRO_BLACK_AFTER {
+            self.intro = None;
+            self.state = GameState::Menu;
+            return true;
+        }
+        self.intro = Some(intro);
+        true
+    }
+
     /// Begin a black screen. The level behind it must already be loaded.
     ///
     /// Takes no `Context`, because two of its four callers are level loads that have none

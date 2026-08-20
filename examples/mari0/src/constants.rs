@@ -31,6 +31,23 @@ pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 pub(crate) const ONEUP_TEXT_W: f32 = 16.0 * 2.0;
 pub(crate) const ONEUP_TEXT_H: f32 = 8.0 * 2.0;
 
+// ── The intro (intro.lua) ──
+// Stabyourself's logo, shown once at launch: it fades in, is stabbed — the blood wipes
+// upward out of a scissor — and fades out. Any key skips it.
+/// How long the logo is on screen, and the black beat after it before the title.
+pub(crate) const INTRO_DURATION: f32 = 2.5;
+pub(crate) const INTRO_BLACK_AFTER: f32 = 0.3;
+/// Fade in and out, at each end of `INTRO_DURATION`.
+pub(crate) const INTRO_FADE_TIME: f32 = 0.5;
+/// The timer starts *negative*, so the screen is black for a moment before the fade.
+pub(crate) const INTRO_START: f32 = -0.2;
+/// When the stab lands.
+pub(crate) const INTRO_STAB_TIME: f32 = 0.5;
+/// The logo is drawn from this origin inside its 512x512 sheet (`intro.lua:52`).
+pub(crate) const INTRO_LOGO_ORIGIN: (f32, f32) = (142.0, 150.0);
+/// How far the blood wipe travels, in the original's own units.
+pub(crate) const INTRO_BLOOD_SPAN: f32 = 206.0 * 5.0;
+
 // ── Interludes and death (variables.lua:166-169, :316-319) ──
 /// The "world 1-1" card. Stretched 50% for the first level of a world.
 pub(crate) const LEVELSCREEN_TIME: f32 = 2.4;
