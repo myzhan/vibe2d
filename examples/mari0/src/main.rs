@@ -18,6 +18,7 @@ mod enemies;
 mod flagpole;
 mod game;
 mod gel;
+mod interlude;
 mod items;
 mod lab;
 mod lab_render;

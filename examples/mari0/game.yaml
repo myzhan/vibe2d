@@ -39,6 +39,10 @@ assets:
     seesaw: "assets/mari0/seesaw.png"
     bubble: "assets/mari0/bubble.png"
     castle_flag: "assets/mari0/castleflag.png"
+    skin0: "assets/mari0/skin0.png"
+    skin1: "assets/mari0/skin1.png"
+    skin2: "assets/mari0/skin2.png"
+    skin3: "assets/mari0/skin3.png"
     bowser: "assets/mari0/bowser.png"
     fire: "assets/mari0/fire.png"
     decoys: "assets/mari0/decoys.png"
@@ -117,6 +121,7 @@ assets:
     swim: "assets/sounds/swim.ogg"
     boom: "assets/sounds/boom.ogg"
     pause: "assets/sounds/pause.ogg"
+    princess: "assets/sounds/princessmusic.ogg"
 
     # These five were being asked for by name (`ctx.audio.play("pipe")` and
     # friends) without ever being declared here, so every pipe, every castle

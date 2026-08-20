@@ -247,7 +247,9 @@ impl Mari0Game {
                 self.current.warp_to_world(world);
                 if self.current.exists() {
                     self.reset_level();
-                    self.state = GameState::Playing;
+                    // A warp leaves the level entirely, so it gets the full "world 5-1"
+                    // card rather than the sublevel blink.
+                    self.begin_interlude(crate::interlude::InterludeKind::LevelScreen);
                 } else {
                     self.state = GameState::Menu;
                 }
@@ -276,7 +278,10 @@ impl Mari0Game {
         let clock = self.time_remaining;
         self.reset_level();
         self.time_remaining = clock;
-        self.state = GameState::Playing;
+        // The sublevel blink. Two lead-ins long and so it never draws anything — which is
+        // exactly why a pipe reads as a blink where a flagpole reads as a card
+        // (`levelscreen.lua:21-28`).
+        self.begin_interlude(crate::interlude::InterludeKind::Sublevel);
 
         // Arrive at the `pipespawn` that pairs with the trip. Going *in*, the
         // original matches on the sublevel being entered; coming *back*, on the one

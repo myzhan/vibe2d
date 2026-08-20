@@ -84,11 +84,23 @@ async def load(ws, world, level, sublevel=0, pack="smb"):
 
 
 async def die_and_respawn(ws):
-    """Force a death, then press jump to continue."""
+    """弄死玩家，然后等整段过场走完。
+
+    死亡不再是「切个文字屏等按键」：现在是 4 秒的死亡动画，接一张 2.4~3.6 秒的
+    `level_screen` 黑屏卡片，全程不吃输入。所以这里要一直步进到状态回到 playing，
+    而不是按一下跳跃。
+    """
+    # 先把命补满：死亡现在**真的扣命**（连 `setState("dead")` 也扣），
+    # 而这套测试要反复弄死玩家 —— 命耗光就变成 game over，复活点会被清掉，
+    # 后面每一条断言其实都在量另一件事。`setLives` 只动命数，不像 `reset` 会连
+    # 复活点和关卡一起清掉。
+    await rpc(ws, "game.setLives", {"lives": 3})
     await rpc(ws, "game.setState", {"state": "dead"})
-    await step(ws, 2)
-    await tap(ws, "Space")
-    await step(ws, 3)
+    for _ in range(400):
+        await step(ws, 3)
+        s = await snap(ws)
+        if s["state"] == "playing":
+            return s
     return await snap(ws)
 
 

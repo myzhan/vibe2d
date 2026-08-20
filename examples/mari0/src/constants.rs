@@ -27,6 +27,23 @@ pub(crate) const FRICTION: f32 = 448.0; // 14 blocks/s^2
 pub(crate) const MAX_Y_SPEED: f32 = 3200.0; // terminal velocity
 pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 
+// ── Interludes and death (variables.lua:166-169, :316-319) ──
+/// The "world 1-1" card. Stretched 50% for the first level of a world.
+pub(crate) const LEVELSCREEN_TIME: f32 = 2.4;
+/// The blink between a level and one of its sublevels. Exactly two lead-ins long, which
+/// is why it never gets as far as drawing anything.
+pub(crate) const SUBLEVELSCREEN_TIME: f32 = 0.2;
+/// "game over" and "congratulations!" both hold this long before the title screen.
+pub(crate) const GAMEOVER_TIME: f32 = 7.0;
+/// Black at each end of every card, with nothing drawn over it.
+pub(crate) const BLACKTIME_SUB: f32 = 0.1;
+/// The death throw: still for `DEATH_JUMP_TIME`, then thrown up at `DEATH_JUMP_FORCE` and
+/// falling under `DEATH_GRAVITY` — half the world's, so the arc is slow enough to read.
+pub(crate) const DEATH_TOTAL_TIME: f32 = 4.0;
+pub(crate) const DEATH_JUMP_TIME: f32 = 0.3;
+pub(crate) const DEATH_JUMP_FORCE: f32 = 17.0 * TILE_SIZE;
+pub(crate) const DEATH_GRAVITY: f32 = 40.0 * TILE_SIZE;
+
 // ── The gel cannon (variables.lua:392-393) ──
 /// One of the three `playertypelist` loadouts. Picked in the menu, and it replaces the
 /// portal gun outright: left click sprays blue, right click orange.

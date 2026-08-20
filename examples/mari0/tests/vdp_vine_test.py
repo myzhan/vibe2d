@@ -430,13 +430,14 @@ async def run(ws):
     # 等到他开始爬
     y_wait = arrived["player"]["y"]
     clock2 = arrived["time_remaining"]
+    # 用 `intro_timer`（游戏内计时）而不是自己数帧：进金币房前会先过一段
+    # `sublevelscreen` 黑屏，那 0.2 秒里 `update_playing` 整个不跑、intro 的计时也不动，
+    # 自己数帧就会把这 12 帧算进去，量出 3.0 而不是 2.817。
     started = None
-    elapsed = 0.0
     for _ in range(400):
         s = await si(ws, 1)
-        elapsed += DT
         if s["vine"] and s["vine"]["intro_climbing"]:
-            started = elapsed
+            started = s["vine"]["intro_timer"]
             break
         if s["vine"] is None:
             break

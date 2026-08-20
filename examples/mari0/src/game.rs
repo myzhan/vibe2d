@@ -26,8 +26,12 @@ use crate::world::*;
 pub(crate) enum GameState {
     Menu,
     Playing,
+    /// The four-second death throw. Not a screen — the level is still drawn behind him.
     Dead,
     LevelComplete,
+    /// A black card between levels: "world 1-1", the sublevel blink, "game over" or
+    /// "congratulations!". See `interlude.rs`.
+    Interlude,
 }
 
 // ── Main game ───────────────────────────────────────────────────────
@@ -124,6 +128,14 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// A track for a card to start on its first frame, since `begin_interlude` is called
+    /// from level loads that have no `Context` to play audio through. `Some(None)` means
+    /// silence.
+    pub(crate) pending_music: Option<Option<&'static str>>,
+    /// The black card being held, if any.
+    pub(crate) interlude: Option<crate::interlude::Interlude>,
+    /// The death throw in progress. Owns the frame for its four seconds.
+    pub(crate) death: Option<crate::interlude::DeathAnim>,
     /// The axe ending in progress, if the player has taken the axe.
     pub(crate) castle: Option<crate::castle::CastleEnding>,
     /// The flagpole ending in progress, if the player has grabbed the pole. Owns him for
@@ -224,6 +236,8 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_seesaw: TextureId,
     pub(crate) tex_bubble: TextureId,
     pub(crate) tex_castle_flag: TextureId,
+    /// The static Mario on the level card. Four layers, like the animation sheets.
+    pub(crate) tex_puppet: [TextureId; 4],
     pub(crate) tex_bowser: TextureId,
     pub(crate) tex_fire: TextureId,
     pub(crate) tex_decoys: TextureId,
@@ -295,11 +309,13 @@ impl Mari0Game {
             self.current = next;
             self.start_fresh();
             self.score_carry_over();
-            self.state = GameState::Playing;
             self.record_progress();
+            // The level is loaded; the card is held over it (`levelscreen.lua:24-41`).
+            self.begin_interlude(crate::interlude::InterludeKind::LevelScreen);
         } else {
-            // Mappack finished.
-            self.state = GameState::Menu;
+            // Out of levels: the original calls that finishing the mappack and plays the
+            // princess theme over a congratulations card (`levelscreen.lua:37-40`).
+            self.begin_interlude(crate::interlude::InterludeKind::MappackFinished);
         }
     }
 
@@ -396,6 +412,11 @@ impl Mari0Game {
         self.spring_ride = None;
         self.flag = None;
         self.fireworks_shown.clear();
+        // Both cleared here, not just on the paths that set them: a load reached from the
+        // VDP or from a warp would otherwise carry the previous level's card and death
+        // into the new one, and `inspect` would report a `sublevel` card during a death.
+        self.interlude = None;
+        self.death = None;
         self.seesaws = level
             .seesaws
             .iter()
@@ -1009,7 +1030,7 @@ impl Mari0Game {
             if self.level.bonusstage {
                 self.leave_bonus_stage();
             } else {
-                self.die(ctx);
+                self.die_by(ctx, true);
             }
             return;
         }
@@ -1286,16 +1307,47 @@ impl Mari0Game {
         self.bubbles.retain(|b| b.y >= BUBBLE_MAX_Y);
     }
 
-    pub(crate) fn die(&mut self, ctx: &mut Context) {
-        if self.lives > 1 {
-            self.lives -= 1;
-            self.state = GameState::Dead;
-            ctx.audio.play("death");
-        } else {
-            self.lives = 0;
-            self.state = GameState::Dead;
-            ctx.audio.play("gameover");
+    /// Kill the player, starting the four-second throw.
+    ///
+    /// `pit` skips the upward throw: he is already on his way down a hole, and throwing
+    /// him would bounce him back out of it (`mario.lua:596`). The game-over sound is not
+    /// played here any more — it belongs on the card at the *end* of the throw, which is
+    /// where the original puts it.
+    pub(crate) fn die_by(&mut self, ctx: &mut Context, pit: bool) {
+        if self.death.is_some() {
+            return;
         }
+        ctx.audio.play("death");
+        self.start_death(pit);
+    }
+
+    /// The state half of a death, without the sound.
+    ///
+    /// Split out because `game.setState("dead")` has no `Context` to play through — and
+    /// setting the state without starting the animation used to wedge the game: `Dead` now
+    /// means "the throw is running", so with no throw to run there was nothing to end it.
+    pub(crate) fn start_death(&mut self, pit: bool) {
+        if self.death.is_some() {
+            return;
+        }
+        self.lives = self.lives.saturating_sub(1);
+        self.state = GameState::Dead;
+        self.death = Some(crate::interlude::DeathAnim {
+            timer: 0.0,
+            vy: 0.0,
+            pit,
+        });
+        // Everything else stops: the original clears the player's control and lets the
+        // animation run on its own (`mario:die`).
+        self.player.vx = 0.0;
+        self.player.vy = 0.0;
+        self.vine = None;
+        self.spring_ride = None;
+    }
+
+    /// Killed by something other than a hole — an enemy, a laser, the clock.
+    pub(crate) fn die(&mut self, ctx: &mut Context) {
+        self.die_by(ctx, false);
     }
 }
 
@@ -1363,6 +1415,9 @@ impl Game for Mari0Game {
             checkpoints_passed: 0,
             lakito_retired: false,
             castle: None,
+            pending_music: None,
+            interlude: None,
+            death: None,
             coin_spin: 0.0,
             springs: Vec::new(),
             spring_ride: None,
@@ -1415,6 +1470,7 @@ impl Game for Mari0Game {
             tex_seesaw: t("seesaw"),
             tex_bubble: t("bubble"),
             tex_castle_flag: t("castle_flag"),
+            tex_puppet: [t("skin0"), t("skin1"), t("skin2"), t("skin3")],
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),
             tex_decoys: t("decoys"),
@@ -1488,18 +1544,12 @@ impl Game for Mari0Game {
                 }
             }
             GameState::Dead => {
-                if input.is_action_just_pressed("jump") {
-                    if self.lives > 0 {
-                        self.state = GameState::Playing;
-                        self.respawn_after_death();
-                    } else {
-                        // Game over clears the checkpoint (`levelscreen.lua:49`).
-                        self.checkpoint = None;
-                        self.respawn_sublevel = 0;
-                        self.state = GameState::Menu;
-                    }
-                }
+                // No longer a screen you dismiss: the throw runs itself and hands over to
+                // the level card, or to "game over", on its own.
+                self.update_death(ctx, dt);
+                self.update_visual_timers(dt);
             }
+            GameState::Interlude => self.update_interlude(ctx, dt),
             GameState::LevelComplete => {
                 if input.is_action_just_pressed("jump") {
                     self.advance_level();
@@ -1509,6 +1559,13 @@ impl Game for Mari0Game {
     }
 
     fn clear_color(&self) -> Color {
+        // A card is drawn on pure black, not on the level's sky
+        // (`levelscreen_load` calls `setBackgroundColor(0, 0, 0)`). Without this the
+        // "world 2-1" screen appears on a daytime blue, which reads as a frozen level
+        // rather than as a gap between levels.
+        if self.state == GameState::Interlude {
+            return Color::from_hex(0x000000);
+        }
         // The level's `background` field picks one of three NES backdrops
         // (`main.lua:194-197`). Hardcoding sky blue made every underground and
         // castle level render on a daytime sky.

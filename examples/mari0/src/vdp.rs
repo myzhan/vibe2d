@@ -28,6 +28,10 @@ pub(crate) struct Mari0Inspect {
     pub(crate) paused: bool,
     /// Which loadout the mouse buttons carry: `portal` or `gel_cannon`.
     pub(crate) player_type: PlayerType,
+    /// The black card being held between levels, or `null`.
+    pub(crate) interlude: Option<InterludeView>,
+    /// Seconds into the death throw, or `null`.
+    pub(crate) death_timer: Option<f32>,
     pub(crate) player: PlayerView,
     pub(crate) portals: PortalsView,
     pub(crate) projectiles: Vec<ProjectileView>,
@@ -246,6 +250,20 @@ pub(crate) struct SpringView {
 pub(crate) struct SpringRideView {
     pub(crate) timer: f32,
     pub(crate) charged: bool,
+}
+
+/// A black card between levels.
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct InterludeView {
+    pub(crate) kind: crate::interlude::InterludeKind,
+    pub(crate) timer: f32,
+    /// How long this card lasts — not a constant, since the first level of a world holds
+    /// 50% longer.
+    pub(crate) total: f32,
+    /// Is the text showing? False during the lead-in and lead-out, and *always* false for
+    /// the sublevel blink, which is exactly two lead-ins long.
+    pub(crate) text_visible: bool,
 }
 
 /// The flagpole ending: which beat, and the two things that move during it.
@@ -534,6 +552,12 @@ pub(crate) struct SetPlayerSize {
 
 #[cfg(feature = "vdp")]
 #[derive(serde::Deserialize)]
+pub(crate) struct SetLives {
+    pub(crate) lives: u32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
 pub(crate) struct SetPlayerType {
     pub(crate) player_type: String,
 }
@@ -626,6 +650,13 @@ impl Mari0Game {
             state: self.state,
             paused: self.paused,
             player_type: self.player_type,
+            interlude: self.interlude.map(|c| InterludeView {
+                kind: c.kind,
+                timer: c.timer,
+                total: c.total,
+                text_visible: c.text_visible(),
+            }),
+            death_timer: self.death.map(|d| d.timer),
             player: PlayerView {
                 x: self.player.x,
                 y: self.player.y,
@@ -1044,7 +1075,8 @@ impl Mari0Game {
         match p.state.as_str() {
             "menu" => self.state = GameState::Menu,
             "playing" => self.state = GameState::Playing,
-            "dead" => self.state = GameState::Dead,
+            // Starts the throw too, not just the state — see `start_death`.
+            "dead" => self.start_death(false),
             "level_complete" => self.state = GameState::LevelComplete,
             _ => return Err(format!("Unknown state: {}", p.state)),
         }
@@ -1091,6 +1123,19 @@ impl Mari0Game {
         };
         self.lab.signal(p.index, signal);
         Ok(serde_json::json!({"index": p.index, "on": self.lab.elements[p.index].on}))
+    }
+
+    /// Set the life count without touching anything else.
+    ///
+    /// `game.reset` is the only other way to restore lives, and it also clears the score,
+    /// the checkpoint and the level — which is exactly what a test about checkpoints
+    /// cannot afford. Death now costs a life even when triggered through
+    /// `setState("dead")`, so a script that kills the player repeatedly runs out and every
+    /// later assertion silently measures a game over instead.
+    #[vdp("game.setLives")]
+    pub(crate) fn vdp_set_lives(&mut self, p: SetLives) -> Result<serde_json::Value, String> {
+        self.lives = p.lives;
+        Ok(serde_json::json!({"lives": self.lives}))
     }
 
     #[vdp("game.setScore")]

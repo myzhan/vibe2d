@@ -46,6 +46,32 @@ fn hammer_bro_dst(hitbox: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// Mario's three tinted layers, in draw order: shirt, overalls, skin.
+///
+/// Layer 0 is the outline and is drawn untinted on top. Fire Mario swaps the shirt for
+/// white and the overalls for red; everything else is the same sheet.
+fn mario_palette(fire: bool) -> [Color; 3] {
+    let rgb = |r: f32, g: f32, b: f32| Color {
+        r: srgb_to_linear(r / 255.0),
+        g: srgb_to_linear(g / 255.0),
+        b: srgb_to_linear(b / 255.0),
+        a: 1.0,
+    };
+    if fire {
+        [
+            Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+            rgb(224.0, 32.0, 0.0),
+            rgb(252.0, 152.0, 56.0),
+        ]
+    } else {
+        [
+            rgb(224.0, 32.0, 0.0),
+            rgb(136.0, 112.0, 0.0),
+            rgb(252.0, 152.0, 56.0),
+        ]
+    }
+}
+
 impl Mari0Game {
     /// The window a piranha plant is drawn through, in screen space.
     ///
@@ -252,8 +278,19 @@ impl Mari0Game {
         }
     }
 
-    /// Draw the whole frame: level, actors, effects, then HUD.
+    /// Draw the whole frame.
+    ///
+    /// Split in two because a black card needs the HUD without the level behind it: the
+    /// "world 1-1" screen would otherwise announce a level you can already see.
     pub(crate) fn draw_world(&self, ctx: &Context, screen: &mut Screen) {
+        if self.state != GameState::Interlude {
+            self.draw_level(ctx, screen);
+        }
+        self.draw_hud(ctx, screen);
+    }
+
+    /// The level itself: tiles, actors, effects.
+    fn draw_level(&self, ctx: &Context, screen: &mut Screen) {
         let cam_x = self.camera.x;
 
         // Portal tint colors (convert sRGB → linear for GPU)
@@ -966,49 +1003,7 @@ impl Mari0Game {
                 // Mari0 4-layer palette rendering (Player 1 = Red Mario)
                 // Draw order: layer1 (primary), layer2 (secondary), layer3 (tertiary), layer0 (outline)
                 // Colors are sRGB values from original mari0; convert to linear for GPU tint multiplication
-                let mario_colors = if self.player.is_fire {
-                    [
-                        Color {
-                            r: 1.0,
-                            g: 1.0,
-                            b: 1.0,
-                            a: 1.0,
-                        }, // layer1: white shirt (fire)
-                        Color {
-                            r: srgb_to_linear(224.0 / 255.0),
-                            g: srgb_to_linear(32.0 / 255.0),
-                            b: srgb_to_linear(0.0 / 255.0),
-                            a: 1.0,
-                        }, // layer2: red overalls
-                        Color {
-                            r: srgb_to_linear(252.0 / 255.0),
-                            g: srgb_to_linear(152.0 / 255.0),
-                            b: srgb_to_linear(56.0 / 255.0),
-                            a: 1.0,
-                        }, // layer3: skin
-                    ]
-                } else {
-                    [
-                        Color {
-                            r: srgb_to_linear(224.0 / 255.0),
-                            g: srgb_to_linear(32.0 / 255.0),
-                            b: srgb_to_linear(0.0 / 255.0),
-                            a: 1.0,
-                        }, // layer1: red shirt
-                        Color {
-                            r: srgb_to_linear(136.0 / 255.0),
-                            g: srgb_to_linear(112.0 / 255.0),
-                            b: srgb_to_linear(0.0 / 255.0),
-                            a: 1.0,
-                        }, // layer2: brown
-                        Color {
-                            r: srgb_to_linear(252.0 / 255.0),
-                            g: srgb_to_linear(152.0 / 255.0),
-                            b: srgb_to_linear(56.0 / 255.0),
-                            a: 1.0,
-                        }, // layer3: skin
-                    ]
-                };
+                let mario_colors = mario_palette(self.player.is_fire);
                 let layers = if self.player.is_big {
                     &self.tex_mario_big_layers
                 } else {
@@ -1258,7 +1253,10 @@ impl Mari0Game {
             }
         }
 
-        // ── HUD (NES-style four-column layout) ──
+    }
+
+    /// The four-column NES HUD, and whatever screen the current state calls for.
+    fn draw_hud(&self, ctx: &Context, screen: &mut Screen) {
         let hud_font = ctx.assets.font("hud");
         let ui_font = ctx.assets.font("ui");
         let title_font = ctx.assets.font("title");
@@ -1360,6 +1358,72 @@ impl Mari0Game {
                     let score_text = format!("Score: {}", self.score);
                     screen.draw_text_centered(font, &score_text, 200.0);
                     screen.draw_text_centered(font, "Press SPACE to continue", 250.0);
+                }
+            }
+            GameState::Interlude => {
+                // The card. Everything is drawn over pure black — `draw_world` bails out
+                // for this state, so nothing of the level shows through.
+                let Some(card) = self.interlude else { return };
+                if !card.text_visible() {
+                    return;
+                }
+                // The HUD stays up behind every card (`levelscreen.lua:183-199`), minus
+                // the clock reading — "time" is printed with no number after it.
+                if let Some(font) = hud_font {
+                    screen.draw_text(font, "MARIO", 24.0, 8.0);
+                    screen.draw_text(font, &format!("{:06}", self.score), 24.0, 20.0);
+                    self.draw_coin_icon(screen);
+                    screen.draw_text(font, &format!("x{:02}", self.coins), 180.0, 20.0);
+                    screen.draw_text(font, "WORLD", 312.0, 8.0);
+                    screen.draw_text(font, &self.current.name(), 320.0, 20.0);
+                    screen.draw_text(font, "TIME", 432.0, 8.0);
+                }
+                match card.kind {
+                    crate::interlude::InterludeKind::Sublevel => {}
+                    crate::interlude::InterludeKind::LevelScreen => {
+                        if let Some(font) = ui_font {
+                            screen.draw_text_centered(
+                                font,
+                                &format!("world {}", self.current.name()),
+                                144.0,
+                            );
+                        }
+                        // The puppet: a static Mario in the same four-layer palette the
+                        // sprite sheet uses, with the life count beside it.
+                        const PW: f32 = 13.0 * 2.0;
+                        const PH: f32 = 16.0 * 2.0;
+                        let px = self.vw / 2.0 - 58.0;
+                        let py = 194.0;
+                        for (i, colour) in mario_palette(false).iter().enumerate() {
+                            screen.draw_sprite_tinted(
+                                self.tex_puppet[i + 1],
+                                px,
+                                py,
+                                PW,
+                                PH,
+                                *colour,
+                            );
+                        }
+                        screen.draw_sprite(self.tex_puppet[0], px, py, PW, PH);
+                        if let Some(font) = ui_font {
+                            screen.draw_text(font, &format!("*  {}", self.lives), px + 40.0, py + 12.0);
+                        }
+                    }
+                    crate::interlude::InterludeKind::GameOver => {
+                        if let Some(font) = ui_font {
+                            screen.draw_text_centered(font, "game over", 240.0);
+                        }
+                    }
+                    crate::interlude::InterludeKind::MappackFinished => {
+                        if let Some(font) = ui_font {
+                            screen.draw_text_centered(font, "congratulations!", 240.0);
+                            screen.draw_text_centered(
+                                font,
+                                "you have finished this mappack!",
+                                280.0,
+                            );
+                        }
+                    }
                 }
             }
             GameState::LevelComplete => {
