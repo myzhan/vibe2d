@@ -82,6 +82,9 @@ pub(crate) struct Mari0Game {
     pub(crate) lab: Lab,
     /// Weighted cubes. Bodies, not lab elements — see `cube.rs`.
     pub(crate) cubes: Vec<crate::cube::Cube>,
+    /// Is the game paused? Freezes the whole update, as the original's pause menu does
+    /// by returning from the top of `game_update` (`game.lua:143-146`).
+    pub(crate) paused: bool,
     /// Where the title screen's cursor is.
     pub(crate) menu: crate::menu::MenuCursor,
     /// Saved state: best score ever, and the furthest level reached per mappack.
@@ -457,6 +460,9 @@ impl Mari0Game {
         self.music_phase = MusicPhase::Normal;
         self.warning_started_at = None;
         self.music_restart = true;
+        // A fresh level is never paused — otherwise a pause carried across a death would
+        // leave the next life frozen with no way to tell why.
+        self.paused = false;
 
         // A bonus room does not start with Mario standing in it — it starts with him
         // below the floor, climbing in on a vine (`game.lua:2139-2141`). Last, because
@@ -966,6 +972,24 @@ impl Mari0Game {
             }
         }
 
+        // ── The screen boundaries ──
+        // The original hangs a `screenboundary` object at x = 0 and at x = mapwidth
+        // (`game.lua:2053`, `:2097`) — full-height walls with no art. Without the left
+        // one you can simply walk off the left of the level: the parser's 30 columns of
+        // padding stop you falling out of the world, but nothing stops you *entering*
+        // them, and the camera never scrolls back so you walk into a black void.
+        //
+        // Its collision rule pushes you to whichever side your *centre* is on
+        // (`mario.lua:2166-2172`), which for these two always means "back inside".
+        let right_wall = self.level.width as f32 * TILE_SIZE;
+        if self.player.x < 0.0 {
+            self.player.x = 0.0;
+            self.player.vx = 0.0;
+        } else if self.player.x + self.player.width > right_wall {
+            self.player.x = right_wall - self.player.width;
+            self.player.vx = 0.0;
+        }
+
         // ── Grabbing a vine ──
         // After the move, where the original's collision pass would have reported the
         // overlap, and after the block hit — so the frame you headbutt the brick is also
@@ -1294,6 +1318,7 @@ impl Game for Mari0Game {
             maze: MazeState::default(),
             lab: Lab::default(),
             cubes: Vec::new(),
+            paused: false,
             menu: crate::menu::MenuCursor::default(),
             storage: Storage::load("mari0"),
             high_score: 0,
@@ -1421,7 +1446,16 @@ impl Game for Mari0Game {
         match self.state {
             GameState::Menu => self.update_menu(input),
             GameState::Playing => {
-                self.update_playing(ctx, dt, input);
+                // Pause freezes everything, which is what the original's pause menu
+                // amounts to: it returns from the top of the update and nothing moves.
+                // The menu's own options are a separate piece of UI and are not here.
+                if input.is_action_just_pressed("pause") {
+                    self.paused = !self.paused;
+                    ctx.audio.play("pause");
+                }
+                if !self.paused {
+                    self.update_playing(ctx, dt, input);
+                }
             }
             GameState::Dead => {
                 if input.is_action_just_pressed("jump") {

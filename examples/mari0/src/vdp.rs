@@ -24,6 +24,8 @@ use crate::world::*;
 #[derive(serde::Serialize)]
 pub(crate) struct Mari0Inspect {
     pub(crate) state: GameState,
+    /// Is the update frozen? The original's pause menu amounts to the same thing.
+    pub(crate) paused: bool,
     pub(crate) player: PlayerView,
     pub(crate) portals: PortalsView,
     pub(crate) projectiles: Vec<ProjectileView>,
@@ -614,6 +616,7 @@ impl Mari0Game {
     pub(crate) fn inspect_snapshot(&self) -> serde_json::Value {
         let view = Mari0Inspect {
             state: self.state,
+            paused: self.paused,
             player: PlayerView {
                 x: self.player.x,
                 y: self.player.y,

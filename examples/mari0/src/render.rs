@@ -1328,6 +1328,11 @@ impl Mari0Game {
                         20.0,
                     );
                 }
+                // The original puts a menu here; this just says so, because a frozen
+                // frame with no label is indistinguishable from a hang.
+                if self.paused && let Some(font) = title_font {
+                    screen.draw_text_centered(font, "PAUSED", 200.0);
+                }
             }
             GameState::Dead => {
                 if let Some(font) = hud_font {

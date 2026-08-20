@@ -116,6 +116,7 @@ assets:
     vine: "assets/sounds/vine.ogg"
     swim: "assets/sounds/swim.ogg"
     boom: "assets/sounds/boom.ogg"
+    pause: "assets/sounds/pause.ogg"
 
     # These five were being asked for by name (`ctx.audio.play("pipe")` and
     # friends) without ever being declared here, so every pipe, every castle
@@ -186,6 +187,10 @@ input:
     fire:
       keys: ["F", "ShiftLeft"]
       gamepad_buttons: ["West", "RightShoulder"]
+    # Freeze the game. The original opens a menu here; this is just the freeze.
+    pause:
+      keys: ["P", "Escape"]
+      gamepad_buttons: ["Start"]
     # Wall buttons in the lab are pressed with a "use" key, not walked into
     # (`pushbutton:used`), so they need a binding of their own.
     use:
