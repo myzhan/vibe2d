@@ -83,6 +83,8 @@ pub(crate) struct Level {
     pub(crate) intermission: bool,
     /// Swap the player's whole movement model for the swimming one. Six levels.
     pub(crate) underwater: bool,
+    /// Reaching the right edge reveals "welcome to warp zone!" and the world numbers.
+    pub(crate) has_warpzone: bool,
     /// A coin room reached by vine. Two things follow from the flag: the level opens
     /// with the `vinestart` climb-in animation, and a pit is the *exit* rather than a
     /// death (`game.lua:2139-2141`, `mario.lua:2603-2607`).
@@ -819,6 +821,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         checkpoints,
         intermission: parsed.meta.intermission,
         underwater: parsed.meta.underwater,
+        has_warpzone: parsed.meta.has_warpzone,
         bonusstage: parsed.meta.bonusstage,
         maze_starts: parsed
             .markers

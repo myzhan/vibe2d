@@ -28,6 +28,8 @@ pub(crate) struct Mari0Inspect {
     pub(crate) paused: bool,
     /// Which loadout the mouse buttons carry: `portal` or `gel_cannon`.
     pub(crate) player_type: PlayerType,
+    /// Has the warp-zone text been revealed? Only ever true in a `haswarpzone` level.
+    pub(crate) warp_text: bool,
     /// The black card being held between levels, or `null`.
     pub(crate) interlude: Option<InterludeView>,
     /// Seconds into the death throw, or `null`.
@@ -650,6 +652,7 @@ impl Mari0Game {
             state: self.state,
             paused: self.paused,
             player_type: self.player_type,
+            warp_text: self.warp_text,
             interlude: self.interlude.map(|c| InterludeView {
                 kind: c.kind,
                 timer: c.timer,

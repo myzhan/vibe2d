@@ -128,6 +128,10 @@ pub(crate) struct Mari0Game {
     /// How many checkpoints have been passed, so the next one to watch for is a
     /// single index rather than a scan.
     pub(crate) checkpoints_passed: usize,
+    /// Has the camera reached the right edge of a `haswarpzone` level? That is what
+    /// reveals the warp-zone text and the world numbers over the three pipes
+    /// (`hitrightside`, `game.lua:4181-4186`).
+    pub(crate) warp_text: bool,
     /// A track for a card to start on its first frame, since `begin_interlude` is called
     /// from level loads that have no `Context` to play audio through. `Some(None)` means
     /// silence.
@@ -236,6 +240,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_seesaw: TextureId,
     pub(crate) tex_bubble: TextureId,
     pub(crate) tex_castle_flag: TextureId,
+    pub(crate) tex_oneup_text: TextureId,
     /// The static Mario on the level card. Four layers, like the animation sheets.
     pub(crate) tex_puppet: [TextureId; 4],
     pub(crate) tex_bowser: TextureId,
@@ -417,6 +422,7 @@ impl Mari0Game {
         // into the new one, and `inspect` would report a `sublevel` card during a death.
         self.interlude = None;
         self.death = None;
+        self.warp_text = false;
         self.seesaws = level
             .seesaws
             .iter()
@@ -1157,6 +1163,16 @@ impl Mari0Game {
         self.camera.x = target_x.max(self.camera.x); // never scroll back
         let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);
         self.camera.x = self.camera.x.clamp(0.0, max_camera);
+        // Reaching the right edge of a warp-zone level reveals its text. Keyed on the
+        // *camera*, not the player (`game.lua:546-548`), so it appears as the room comes
+        // into view rather than when you walk into the far wall. It also clears the
+        // piranha plants, which is the original being kind: the warp pipes have plants in
+        // them and you are meant to be able to choose.
+        if self.level.has_warpzone && !self.warp_text && self.camera.x >= max_camera {
+            self.warp_text = true;
+            self.enemies
+                .retain(|e| e.enemy_type != crate::enemies::EnemyType::Plant);
+        }
 
         // Newly revealed columns spawn their enemies before anything updates, so
         // a goomba that appears this frame still gets its first step.
@@ -1415,6 +1431,7 @@ impl Game for Mari0Game {
             checkpoints_passed: 0,
             lakito_retired: false,
             castle: None,
+            warp_text: false,
             pending_music: None,
             interlude: None,
             death: None,
@@ -1470,6 +1487,7 @@ impl Game for Mari0Game {
             tex_seesaw: t("seesaw"),
             tex_bubble: t("bubble"),
             tex_castle_flag: t("castle_flag"),
+            tex_oneup_text: t("oneup_text"),
             tex_puppet: [t("skin0"), t("skin1"), t("skin2"), t("skin3")],
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),

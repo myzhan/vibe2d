@@ -27,7 +27,12 @@ pub(crate) struct CoinPopup {
 pub(crate) struct ScorePopup {
     pub(crate) x: f32,
     pub(crate) y: f32,
-    pub(crate) value: u32,
+    /// `None` means draw the "1UP" graphic instead of a number.
+    ///
+    /// The original stores the two in the same list and switches on the *type* of the
+    /// field — `type(i) == "number"` against `i == "1up"` (`game.lua:1585-1588`) — so an
+    /// extra life floats up on exactly the same track as a score.
+    pub(crate) value: Option<u32>,
     pub(crate) timer: f32,
 }
 

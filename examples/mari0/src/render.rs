@@ -394,6 +394,25 @@ impl Mari0Game {
         // actors so Mario walks in front of a beam rather than behind it.
         self.draw_lab(screen);
 
+        // ── The warp-zone text ──
+        // Revealed by the camera reaching the right edge. Drawn in world space so it
+        // stays over the pipes, and each pipe gets its destination world printed three
+        // blocks above it (`game.lua:1067-1073`).
+        if self.warp_text
+            && let Some(font) = ctx.assets.font("ui")
+        {
+            let text_x = (self.level.width as f32 - 14.0 - 1.0 / 16.0) * TILE_SIZE - cam_x;
+            screen.draw_text(font, "welcome to warp zone!", text_x, 88.0 / 16.0 * TILE_SIZE);
+            for ((col, row), world) in &self.level.warp_pipes {
+                screen.draw_text(
+                    font,
+                    &format!("{world}"),
+                    (*col as f32 - 9.0 / 16.0) * TILE_SIZE - cam_x,
+                    (*row as f32 - 3.0) * TILE_SIZE,
+                );
+            }
+        }
+
         // ── The flag on the pole ──
         // It sits at the top until the pole is grabbed, then comes down with Mario over
         // the same span in the same time — which is what makes it read as him pulling it.
@@ -1245,9 +1264,18 @@ impl Mari0Game {
                     let sy = popup.y;
                     let alpha = 1.0 - (popup.timer / SCORE_POPUP_TIME).min(1.0);
                     if alpha > 0.0 {
-                        // Draw score text (simple white text with fade)
-                        let text = format!("{}", popup.value);
-                        screen.draw_text(font, &text, sx, sy);
+                        match popup.value {
+                            Some(value) => screen.draw_text(font, &format!("{value}"), sx, sy),
+                            // An extra life floats up on the same track as a score, but as
+                            // a graphic rather than a number (`game.lua:1588`).
+                            None => screen.draw_sprite(
+                                self.tex_oneup_text,
+                                sx,
+                                sy,
+                                ONEUP_TEXT_W,
+                                ONEUP_TEXT_H,
+                            ),
+                        }
                     }
                 }
             }

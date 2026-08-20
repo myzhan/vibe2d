@@ -27,6 +27,10 @@ pub(crate) const FRICTION: f32 = 448.0; // 14 blocks/s^2
 pub(crate) const MAX_Y_SPEED: f32 = 3200.0; // terminal velocity
 pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 
+/// `oneuptext.png` is 16x8 — the "1UP" graphic that floats up instead of a number.
+pub(crate) const ONEUP_TEXT_W: f32 = 16.0 * 2.0;
+pub(crate) const ONEUP_TEXT_H: f32 = 8.0 * 2.0;
+
 // ── Interludes and death (variables.lua:166-169, :316-319) ──
 /// The "world 1-1" card. Stretched 50% for the first level of a world.
 pub(crate) const LEVELSCREEN_TIME: f32 = 2.4;

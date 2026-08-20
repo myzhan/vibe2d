@@ -1618,7 +1618,7 @@ impl Mari0Game {
             self.score_popups.push(crate::effects::ScorePopup {
                 x,
                 y,
-                value: LAKITO_SCORE,
+                value: Some(LAKITO_SCORE),
                 timer: 0.0,
             });
         }

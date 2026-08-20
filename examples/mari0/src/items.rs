@@ -155,7 +155,7 @@ impl Mari0Game {
                         self.score_popups.push(ScorePopup {
                             x: bx,
                             y: by - TILE_SIZE,
-                            value: COIN_SCORE,
+                            value: Some(COIN_SCORE),
                             timer: 0.0,
                         });
                         ctx.audio.play("coin");
@@ -217,7 +217,7 @@ impl Mari0Game {
                         self.score_popups.push(ScorePopup {
                             x: bx,
                             y: by - TILE_SIZE,
-                            value: COIN_SCORE,
+                            value: Some(COIN_SCORE),
                             timer: 0.0,
                         });
                         ctx.audio.play("coin");
@@ -265,7 +265,7 @@ impl Mari0Game {
                             self.score_popups.push(ScorePopup {
                                 x: bx,
                                 y: by - TILE_SIZE,
-                                value: COIN_SCORE,
+                                value: Some(COIN_SCORE),
                                 timer: 0.0,
                             });
                             ctx.audio.play("coin");
@@ -288,7 +288,7 @@ impl Mari0Game {
                             self.score_popups.push(ScorePopup {
                                 x: bx,
                                 y: by - TILE_SIZE,
-                                value: COIN_SCORE,
+                                value: Some(COIN_SCORE),
                                 timer: 0.0,
                             });
                             ctx.audio.play("coin");
@@ -334,7 +334,7 @@ impl Mari0Game {
                     self.score_popups.push(ScorePopup {
                         x: bx,
                         y: by - TILE_SIZE,
-                        value: BRICK_BREAK_SCORE,
+                        value: Some(BRICK_BREAK_SCORE),
                         timer: 0.0,
                     });
                     // 4 debris particles
@@ -408,7 +408,7 @@ impl Mari0Game {
                             self.score_popups.push(ScorePopup {
                                 x: bx,
                                 y: by - TILE_SIZE,
-                                value: COIN_SCORE,
+                                value: Some(COIN_SCORE),
                                 timer: 0.0,
                             });
                             ctx.audio.play("coin");
@@ -564,7 +564,7 @@ impl Mari0Game {
                         self.score_popups.push(ScorePopup {
                             x: item.x,
                             y: item.y - TILE_SIZE,
-                            value: ITEM_SCORE,
+                            value: Some(ITEM_SCORE),
                             timer: 0.0,
                         });
                         ctx.audio.play("mushroomeat");
@@ -575,13 +575,21 @@ impl Mari0Game {
                         self.score_popups.push(ScorePopup {
                             x: item.x,
                             y: item.y - TILE_SIZE,
-                            value: ITEM_SCORE,
+                            value: Some(ITEM_SCORE),
                             timer: 0.0,
                         });
                         ctx.audio.play("mushroomeat");
                     }
                     ItemType::OneUp => {
                         self.lives += 1;
+                        // No points — an extra life *is* the reward. What floats up is the
+                        // "1UP" graphic (`oneup.lua:127`).
+                        self.score_popups.push(ScorePopup {
+                            x: item.x,
+                            y: item.y - TILE_SIZE,
+                            value: None,
+                            timer: 0.0,
+                        });
                         ctx.audio.play("oneup");
                     }
                     ItemType::FireFlower => {
@@ -593,7 +601,7 @@ impl Mari0Game {
                         self.score_popups.push(ScorePopup {
                             x: item.x,
                             y: item.y - TILE_SIZE,
-                            value: ITEM_SCORE,
+                            value: Some(ITEM_SCORE),
                             timer: 0.0,
                         });
                         ctx.audio.play("mushroomeat");
