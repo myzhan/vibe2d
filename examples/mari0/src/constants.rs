@@ -27,6 +27,39 @@ pub(crate) const FRICTION: f32 = 448.0; // 14 blocks/s^2
 pub(crate) const MAX_Y_SPEED: f32 = 3200.0; // terminal velocity
 pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 
+// ── The flagpole ending (variables.lua:322-333) ──
+/// How long the slide down the pole takes, and how far it covers. The flag comes down
+/// over exactly the same span, so the two move together.
+pub(crate) const FLAG_DESCEND_TIME: f32 = 0.9;
+pub(crate) const FLAG_Y_DISTANCE: f32 = (7.0 + 10.0 / 16.0) * TILE_SIZE;
+/// Where Mario ends up: `68/16 + flagydistance`, less his own height
+/// (`mario.lua:367`).
+pub(crate) const FLAG_BOTTOM: f32 = 68.0 / 16.0 * TILE_SIZE + FLAG_Y_DISTANCE;
+/// The flag sprite's own starting height, `49/16` (`game.lua:2470`).
+pub(crate) const FLAG_IMG_START: f32 = 49.0 / 16.0 * TILE_SIZE;
+/// Frame flip while sliding — twice as fast as the vine's climb.
+pub(crate) const FLAG_CLIMB_FRAME_DELAY: f32 = 0.07;
+/// He hangs at the bottom this long before letting go.
+pub(crate) const FLAG_ANIM_DELAY: f32 = 0.6;
+/// Then runs off at a fixed 4.27 blocks/s — not his own top speed.
+pub(crate) const FLAG_RUN_SPEED: f32 = 4.27 * TILE_SIZE;
+/// He disappears into the castle 6 blocks past the pole.
+pub(crate) const FLAG_CASTLE_DIST: f32 = 6.0 * TILE_SIZE;
+/// The clock is cashed in one unit per frame, at 50 points each.
+pub(crate) const SCORE_SUBTRACT_SPEED: f32 = 1.0 / 60.0;
+/// The castle's flag rises from here to 0 at this speed…
+pub(crate) const CASTLE_FLAG_START_Y: f32 = 1.5 * TILE_SIZE;
+pub(crate) const CASTLE_FLAG_SPEED: f32 = 3.0 * TILE_SIZE;
+/// …but not before the sequence has been running this long. Without the floor the flag
+/// would go up while the clock is still being counted down, and the two are meant to be
+/// consecutive beats (`mario.lua:433-435`).
+pub(crate) const CASTLE_MIN_TIME: f32 = 7.0;
+/// Fireworks go off this far apart, and the level ends `FLAG_END_TIME` after the last.
+pub(crate) const FIREWORK_DELAY: f32 = 0.55;
+pub(crate) const FLAG_END_TIME: f32 = 2.0;
+/// A firework's bang lands partway through its own life.
+pub(crate) const FIREWORK_SOUND_TIME: f32 = 0.1;
+
 // ── Underwater (variables.lua:51-73) ──
 // Six levels are flagged `underwater` — 2-2_1, 5-2_1, 6-2_2, 7-2_1, 8-4_1 and M-1 —
 // and in them the player runs an entirely separate movement function

@@ -357,18 +357,46 @@ impl Mari0Game {
         // actors so Mario walks in front of a beam rather than behind it.
         self.draw_lab(screen);
 
-        // ── Flag sprite (drawn beside the flagpole pole) ──
+        // ── The flag on the pole ──
+        // It sits at the top until the pole is grabbed, then comes down with Mario over
+        // the same span in the same time — which is what makes it read as him pulling it.
         if self.level.flag_x > 0.0 {
             let fx = self.level.flag_x - cam_x;
             if fx > -TILE_SIZE && fx < self.vw + TILE_SIZE {
-                screen.draw_sprite(
-                    self.tex_flag,
-                    fx - TILE_SIZE,
-                    3.0 * TILE_SIZE,
-                    TILE_SIZE,
-                    TILE_SIZE,
-                );
+                let fy = match &self.flag {
+                    Some(f) => f.flag_y - 0.5 * TILE_SIZE,
+                    None => FLAG_IMG_START - 0.5 * TILE_SIZE,
+                };
+                screen.draw_sprite(self.tex_flag, fx - TILE_SIZE, fy, TILE_SIZE, TILE_SIZE);
             }
+        }
+
+        // ── The castle's flag, and the fireworks ──
+        // Both only exist during the ending. The castle flag rises the last block and a
+        // half into place once the clock has been cashed in (`game.lua:939`).
+        if let Some(f) = &self.flag {
+            let castle_x = self.level.flag_x + FLAG_CASTLE_DIST - cam_x;
+            screen.draw_sprite(
+                self.tex_castle_flag,
+                castle_x,
+                106.0 / 16.0 * TILE_SIZE + f.castle_flag_y,
+                TILE_SIZE,
+                TILE_SIZE,
+            );
+        }
+        for fw in &self.fireworks_shown {
+            // Centred on its own position, and drawn from the fireball sheet's explosion
+            // frames — `fireworkboom` has no art of its own.
+            screen.draw_sprite_region(
+                self.tex_fireball,
+                fireball_explode_uv(fw.frame()),
+                [
+                    fw.x - cam_x - TILE_SIZE / 2.0,
+                    fw.y - TILE_SIZE / 2.0,
+                    TILE_SIZE,
+                    TILE_SIZE,
+                ],
+            );
         }
 
         // ── Coins ──
@@ -839,8 +867,20 @@ impl Mari0Game {
             || self.state == GameState::Dead
             || self.state == GameState::LevelComplete
         {
-            let visible = self.player.invincible_timer <= 0.0
-                || ((self.player.invincible_timer * 10.0) as u32).is_multiple_of(2);
+            // Once he is through the castle door he is not drawn at all — the original
+            // clears `drawable` there (`mario.lua:404`) and the last three beats of the
+            // ending happen with him off-stage.
+            let in_castle = self.flag.is_some_and(|f| {
+                matches!(
+                    f.phase,
+                    crate::flagpole::FlagPhase::Countdown
+                        | crate::flagpole::FlagPhase::CastleFlag
+                        | crate::flagpole::FlagPhase::Fireworks
+                )
+            });
+            let visible = !in_castle
+                && (self.player.invincible_timer <= 0.0
+                    || ((self.player.invincible_timer * 10.0) as u32).is_multiple_of(2));
             // Inside a pipe Mario is clipped to the mouth's outer side, so he
             // disappears into it instead of sliding across the top of it.
             let pipe_clip = self.pipe_clip_rect(cam_x, self.vw, self.vh);

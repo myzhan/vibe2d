@@ -61,6 +61,10 @@ pub(crate) struct Mari0Inspect {
     pub(crate) fire_started: bool,
     /// The axe ending, if it is running: which beat and how far into it.
     pub(crate) castle: Option<CastleView>,
+    /// The flagpole ending, if it is running.
+    pub(crate) flag: Option<FlagView>,
+    /// Firework bursts on screen right now, `[x, y]` in world pixels.
+    pub(crate) fireworks_shown: Vec<[f32; 2]>,
     /// Moving platforms in the world right now.
     pub(crate) platforms: Vec<PlatformView>,
     /// Springs, with their live (compressing) collision boxes.
@@ -238,6 +242,23 @@ pub(crate) struct SpringView {
 pub(crate) struct SpringRideView {
     pub(crate) timer: f32,
     pub(crate) charged: bool,
+}
+
+/// The flagpole ending: which beat, and the two things that move during it.
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct FlagView {
+    pub(crate) phase: crate::flagpole::FlagPhase,
+    /// Seconds since the pole was grabbed. Never reset, so `CASTLE_MIN_TIME` is a floor
+    /// on the whole sequence rather than a per-beat delay.
+    pub(crate) timer: f32,
+    /// The flag sprite's height, which descends with Mario.
+    pub(crate) flag_y: f32,
+    /// The castle flag's remaining offset above its final position; 0 once it is up.
+    pub(crate) castle_flag_y: f32,
+    /// How many fireworks have gone off, and how many there will be.
+    pub(crate) fired: u32,
+    pub(crate) total: u32,
 }
 
 /// One end of a seesaw: the box you stand on, its speed, and how many riders it counted.
@@ -718,6 +739,15 @@ impl Mari0Game {
                 timer: r.timer,
                 charged: r.charged,
             }),
+            flag: self.flag.map(|f| FlagView {
+                phase: f.phase,
+                timer: f.timer,
+                flag_y: f.flag_y,
+                castle_flag_y: f.castle_flag_y,
+                fired: f.fired,
+                total: f.total,
+            }),
+            fireworks_shown: self.fireworks_shown.iter().map(|f| [f.x, f.y]).collect(),
             bubbles: self.bubbles.iter().map(|b| [b.x, b.y]).collect(),
             seesaws: self
                 .seesaws

@@ -88,9 +88,10 @@ pub(crate) struct Mari0Game {
     pub(crate) storage: Storage,
     pub(crate) high_score: u32,
     pub(crate) furthest: Vec<(String, u32, u32)>,
-    /// Fireworks earned by the last flagpole — 500 points each, and the count is a
-    /// function of the clock's last digit. Kept so the end-of-level screen (and a test)
-    /// can see how many went up.
+    /// Fireworks earned by the last flagpole — 200 points each (see
+    /// `flagpole::FIREWORK_SCORE`, which the original's own comment gets wrong), and the
+    /// count is a function of the clock's last digit. Kept so the end-of-level screen
+    /// (and a test) can see how many went up.
     pub(crate) fireworks: u32,
     /// Emancipation grills, resolved to spans at load.
     pub(crate) grills: Vec<crate::emancipation::Grill>,
@@ -117,6 +118,11 @@ pub(crate) struct Mari0Game {
     pub(crate) checkpoints_passed: usize,
     /// The axe ending in progress, if the player has taken the axe.
     pub(crate) castle: Option<crate::castle::CastleEnding>,
+    /// The flagpole ending in progress, if the player has grabbed the pole. Owns him for
+    /// the whole sequence, the way the axe ending does.
+    pub(crate) flag: Option<crate::flagpole::FlagSequence>,
+    /// Firework bursts currently on screen.
+    pub(crate) fireworks_shown: Vec<crate::flagpole::Firework>,
     /// The shared coin-spin phase, in seconds.
     ///
     /// One counter for every coin in the level, because the original has one
@@ -209,6 +215,7 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_vine: TextureId,
     pub(crate) tex_seesaw: TextureId,
     pub(crate) tex_bubble: TextureId,
+    pub(crate) tex_castle_flag: TextureId,
     pub(crate) tex_bowser: TextureId,
     pub(crate) tex_fire: TextureId,
     pub(crate) tex_decoys: TextureId,
@@ -379,6 +386,8 @@ impl Mari0Game {
             .map(|(x, y)| crate::spring::Spring::new(*x, *y))
             .collect();
         self.spring_ride = None;
+        self.flag = None;
+        self.fireworks_shown.clear();
         self.seesaws = level
             .seesaws
             .iter()
@@ -654,6 +663,19 @@ impl Mari0Game {
             self.update_enemies(dt, ctx);
             // The camera still follows him to the toad; without this the last walk
             // happens off the right of a frozen view.
+            let target_x = self.player.center_x() - self.vw / 3.0;
+            let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);
+            self.camera.x = target_x.max(self.camera.x).clamp(0.0, max_camera);
+            return;
+        }
+
+        // ── The flagpole ending ──
+        // Same contract as the axe: from the grab to the next level there is no input at
+        // all. The camera keeps following him into the castle, and the clock is *not*
+        // ticked here — the countdown beat spends it deliberately, 50 points a unit.
+        if self.update_flagpole(ctx, dt) {
+            self.update_visual_timers(dt);
+            self.update_enemies(dt, ctx);
             let target_x = self.player.center_x() - self.vw / 3.0;
             let max_camera = (self.level.width as f32 * TILE_SIZE - self.vw).max(0.0);
             self.camera.x = target_x.max(self.camera.x).clamp(0.0, max_camera);
@@ -1050,19 +1072,12 @@ impl Mari0Game {
         // are the two mutually exclusive ways a level ends.
         self.check_axe(ctx);
 
-        // ── Flag/level complete ──
-        // Still triggered by reaching the pole's column rather than by the original's
-        // grab-and-slide animation, but the *payout* is now the real one: height on the
-        // pole, then the clock, then the fireworks.
-        if self.level.flag_x > 0.0 && self.player.x + self.player.width > self.level.flag_x {
-            self.state = GameState::LevelComplete;
-            self.score += crate::flagpole::flagpole_score(self.player.y / TILE_SIZE);
-            self.score += (self.time_remaining as u32) * 50;
-            self.fireworks =
-                crate::flagpole::firework_count(self.time_remaining, self.current.pack == "portal");
-            self.score += self.fireworks * crate::flagpole::FIREWORK_SCORE;
-            ctx.audio.play("levelend");
-        }
+        // ── The flagpole ──
+        // Grabbing it hands the level over to a scripted sequence: slide down the pole,
+        // hang, run into the castle, cash in the clock, raise the castle's flag, and set
+        // off the fireworks. The score is paid out *across* those beats rather than in
+        // one lump, which is what the ticking is for.
+        self.check_flagpole(ctx);
 
         // ── Camera ──
         let target_x = self.player.center_x() - self.vw / 3.0;
@@ -1297,6 +1312,8 @@ impl Game for Mari0Game {
             springs: Vec::new(),
             spring_ride: None,
             seesaws: Vec::new(),
+            flag: None,
+            fireworks_shown: Vec::new(),
             vines: Vec::new(),
             vine: None,
             bubbles: Vec::new(),
@@ -1342,6 +1359,7 @@ impl Game for Mari0Game {
             tex_vine: t("vine"),
             tex_seesaw: t("seesaw"),
             tex_bubble: t("bubble"),
+            tex_castle_flag: t("castle_flag"),
             tex_bowser: t("bowser"),
             tex_fire: t("fire"),
             tex_decoys: t("decoys"),

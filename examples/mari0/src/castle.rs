@@ -174,7 +174,7 @@ impl Mari0Game {
     /// Used by the scripted walk at the end of a castle. Deliberately not the full
     /// player update: no friction, no jump, no direction — his velocity is whatever the
     /// sequence set it to.
-    fn step_player_without_input(&mut self, dt: f32) {
+    pub(crate) fn step_player_without_input(&mut self, dt: f32) {
         self.player.vy = (self.player.vy + GRAVITY * dt).min(MAX_Y_SPEED);
         self.player.vx = crate::physics::move_and_collide_x(
             &mut self.player.x,

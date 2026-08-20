@@ -38,6 +38,7 @@ assets:
     vine: "assets/mari0/vine.png"
     seesaw: "assets/mari0/seesaw.png"
     bubble: "assets/mari0/bubble.png"
+    castle_flag: "assets/mari0/castleflag.png"
     bowser: "assets/mari0/bowser.png"
     fire: "assets/mari0/fire.png"
     decoys: "assets/mari0/decoys.png"
@@ -114,6 +115,7 @@ assets:
     shot: "assets/sounds/shot.ogg"
     vine: "assets/sounds/vine.ogg"
     swim: "assets/sounds/swim.ogg"
+    boom: "assets/sounds/boom.ogg"
 
     # These five were being asked for by name (`ctx.audio.play("pipe")` and
     # friends) without ever being declared here, so every pipe, every castle

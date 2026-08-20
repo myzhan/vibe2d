@@ -849,7 +849,17 @@ async def test_level_complete(ws):
                     {"x": flag_x + 10.0, "y": 384.0, "vx": 0.0, "vy": 0.0})
     await step_and_wait(ws, 3)
 
+    # 抓杆不再是「碰到就结算」，而是一段六拍的过场（滑杆 → 挂着 → 跑向城堡 → 时间换分
+    # → 城堡升旗 → 烟花），整段有 castlemintime = 7 秒的硬下限，所以要等它走完。
     state = await inspect(ws)
+    assert state["flag"] is not None, f"应进入旗杆过场, 实际 flag={state['flag']}"
+    print(f"    OK 进入旗杆过场: phase={state['flag']['phase']}")
+    for _ in range(400):
+        await step_and_wait(ws, 5)
+        state = await inspect(ws)
+        if state["state"] == "level_complete":
+            break
+
     print(f"    state={state['state']}, score={state['score']}")
     assert state["state"] == "level_complete", f"应为 level_complete, 实际 {state['state']}"
     # Time bonus should be added
