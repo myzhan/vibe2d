@@ -610,6 +610,16 @@ pub(crate) const MAX_FIREBALLS: usize = 2;
 // Scoring
 pub(crate) const COMBO_SCORES: [u32; 10] = [100, 200, 400, 500, 800, 1000, 2000, 4000, 5000, 8000];
 pub(crate) const COIN_SCORE: u32 = 200;
+/// What a *sliding shell* pays per enemy it mows down (`koopacombo`,
+/// `variables.lua:25`), which is its own ladder and not [`COMBO_SCORES`]'s tail by
+/// coincidence: a shell opens at 500 where a stomp opens at 100.
+///
+/// The shell carries its own counter too, so a chain of shell kills is scored
+/// independently of whatever stomp combo Mario had going.
+pub(crate) const KOOPA_COMBO: [u32; 7] = [500, 800, 1000, 2000, 4000, 5000, 8000];
+/// Walking into a resting shell kicks it and pays this flat (`mario.lua:1902`), rather
+/// than entering either ladder.
+pub(crate) const SHELL_KICK_SCORE: u32 = 500;
 
 // Player sizes (in pixels) — match tile size like original Mario
 pub(crate) const PLAYER_SMALL_W: f32 = 32.0;

@@ -231,6 +231,9 @@ pub(crate) struct EnemyView {
     /// Bowser only: fireball hits left, and whether the player has got behind him.
     pub(crate) hp: u32,
     pub(crate) backing_off: bool,
+    /// How far up `KOOPA_COMBO` a sliding shell's own kill chain has climbed. Its own
+    /// counter, not Mario's stomp combo, and stopping the shell resets it.
+    pub(crate) shell_combo: usize,
 }
 
 #[cfg(feature = "vdp")]
@@ -778,6 +781,7 @@ impl Mari0Game {
                     squid_phase: e.squid_phase,
                     hp: e.hp,
                     backing_off: e.backing_off,
+                    shell_combo: e.shell_combo,
                 })
                 .collect(),
             coins: self
@@ -1362,6 +1366,7 @@ impl Mari0Game {
             portaled: false,
             jump_timer: 0.0,
             hp: 0,
+            shell_combo: 0,
             target_x: 0.0,
             falling_to_lava: false,
             backing_off: false,

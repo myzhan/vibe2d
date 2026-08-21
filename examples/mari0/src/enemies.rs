@@ -382,6 +382,12 @@ pub(crate) struct Enemy {
     pub(crate) jump_timer: f32,
     /// Bowser: fireball hits left before he goes down. Nothing else has hit points.
     pub(crate) hp: u32,
+    /// How far up [`KOOPA_COMBO`] this shell's own chain has climbed.
+    ///
+    /// A shell scores its kills on its own counter, not Mario's stomp combo
+    /// (`self.combo`, `koopa.lua:279`), and stopping it by stomping resets that counter —
+    /// so a shell you have re-kicked opens at 500 again rather than continuing the chain.
+    pub(crate) shell_combo: usize,
     /// Bowser: the end of the current leg of his pace, re-drawn at each turn.
     pub(crate) target_x: f32,
     /// Bowser: is he dropping into the lava at the end of the level?
@@ -495,6 +501,7 @@ impl Enemy {
             } else {
                 0
             },
+            shell_combo: 0,
             target_x: if sp.enemy_type == EnemyType::Bowser {
                 // `newtargetx("right")` at birth (`bowser.lua:58`).
                 x - BOWSER_TURN_NEAR - TILE_SIZE
@@ -578,6 +585,7 @@ impl Enemy {
             portaled: false,
             jump_timer: 0.0,
             hp: 0,
+            shell_combo: 0,
             target_x: 0.0,
             falling_to_lava: false,
             backing_off: false,
@@ -618,6 +626,7 @@ impl Enemy {
             portaled: false,
             jump_timer: 0.0,
             hp: 0,
+            shell_combo: 0,
             target_x: 0.0,
             falling_to_lava: false,
             backing_off: false,
@@ -652,6 +661,7 @@ impl Enemy {
             angle_deg: 0.0,
             segment: 0,
             hp: 0,
+            shell_combo: 0,
             target_x: 0.0,
             falling_to_lava: false,
             backing_off: false,
@@ -691,6 +701,7 @@ impl Enemy {
             portaled: false,
             jump_timer: 0.0,
             hp: 0,
+            shell_combo: 0,
             target_x: 0.0,
             falling_to_lava: false,
             backing_off: false,
@@ -725,6 +736,7 @@ impl Enemy {
             portaled: false,
             jump_timer: 0.0,
             hp: 0,
+            shell_combo: 0,
             target_x: 0.0,
             falling_to_lava: false,
             backing_off: false,
@@ -1500,6 +1512,15 @@ impl Mari0Game {
                             -SHELL_SPEED
                         };
                     }
+                    EnemyState::ShellMoving => {
+                        // Landing on a shell already in motion stops it dead, and resets
+                        // the chain it was scoring on (`koopa.lua:236-239`). Trapping a
+                        // shell against a wall and re-kicking it is the whole 1-up trick,
+                        // and this is the half of it that makes the chain restart at 500.
+                        enemy.state = EnemyState::Shell;
+                        enemy.vx = 0.0;
+                        enemy.shell_combo = 0;
+                    }
                     _ => {}
                 }
 
@@ -1519,7 +1540,39 @@ impl Mari0Game {
                 self.combo_index += 1;
                 self.combo_active = true;
                 ctx.audio.play("stomp");
-            } else if self.player.invincible_timer <= 0.0 && enemy.state != EnemyState::Shell {
+            } else if enemy.state == EnemyState::Shell {
+                // Walking into a resting shell kicks it instead of hurting you
+                // (`mario.lua:1899-1911`). It pays a flat 500 — not a rung of either
+                // ladder — and it works during the post-hit grace period too, which is why
+                // this sits outside the `invincible_timer` test below.
+                //
+                // A shell already *moving* is not special-cased and falls through to the
+                // damage branch, as it does in the original: the thing you kicked will
+                // kill you on the way back.
+                enemy.state = EnemyState::ShellMoving;
+                let kick_right = self.player.center_x() < enemy.x + PLAYER_SMALL_W / 2.0;
+                enemy.vx = if kick_right {
+                    SHELL_SPEED
+                } else {
+                    -SHELL_SPEED
+                };
+                // Shoved clear of Mario in the same motion (`koopa.lua:231`, `:234`).
+                // Without it he is still overlapping it next frame and kicks it straight
+                // back, and the shell buzzes in place instead of leaving.
+                enemy.x = if kick_right {
+                    self.player.x + self.player.width
+                } else {
+                    self.player.x - PLAYER_SMALL_W
+                };
+                self.score += SHELL_KICK_SCORE;
+                self.score_popups.push(crate::effects::ScorePopup {
+                    x: enemy.x,
+                    y: enemy.y,
+                    value: Some(SHELL_KICK_SCORE),
+                    timer: 0.0,
+                });
+                ctx.audio.play("stomp");
+            } else if self.player.invincible_timer <= 0.0 {
                 // Hit by enemy from side. `mario:shrink` is not a step down the ladder —
                 // it assigns `size = 1` outright (`mario.lua:1672`), so a fire Mario lands
                 // on *small*, not on big. Two hits kill from the top, never three.
@@ -1547,6 +1600,7 @@ impl Mari0Game {
             ctx.audio.play("bulletbill");
         }
         self.egg_may_hit_its_thrower();
+        self.sliding_shells_mow_things_down(ctx);
         self.portaled_bills_shoot_things_down();
         self.respawn_shot_lakitos();
 
@@ -1638,6 +1692,90 @@ impl Mari0Game {
                 value: Some(LAKITO_SCORE),
                 timer: 0.0,
             });
+        }
+    }
+
+    /// A sliding shell shots whatever it runs into (`koopa.lua:277-293`).
+    ///
+    /// The scoring is the shell's own business: it climbs [`KOOPA_COMBO`] on its own
+    /// counter, opening at 500 where a stomp opens at 100, and past the end of that ladder
+    /// each further kill is a **1-up** instead of points. Stopping the shell resets the
+    /// counter, so the classic trick — pin a shell against a staircase and let it grind —
+    /// only keeps paying while you leave it alone.
+    ///
+    /// The shell is not choosy about what it hits, unlike the portaled bill below: any
+    /// enemy that can be shot goes down, which includes the beetles and spinies that
+    /// shrug off fireballs and cannot be stomped.
+    fn sliding_shells_mow_things_down(&mut self, ctx: &Context) {
+        let shells: Vec<(usize, [f32; 4])> = self
+            .enemies
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.state == EnemyState::ShellMoving)
+            .map(|(i, e)| {
+                (
+                    i,
+                    [
+                        e.x,
+                        e.y,
+                        PLAYER_SMALL_W,
+                        enemy_height(e.enemy_type, e.state),
+                    ],
+                )
+            })
+            .collect();
+        if shells.is_empty() {
+            return;
+        }
+        // Collected first, applied after: the score and the extra life belong to the
+        // shell that landed the hit, and awarding them needs the enemy list free.
+        let mut hits: Vec<(usize, usize, f32, f32)> = Vec::new();
+        for (vi, victim) in self.enemies.iter().enumerate() {
+            if victim.state == EnemyState::Dead
+                || victim.enemy_type.indestructible()
+                || victim.state == EnemyState::ShellMoving
+            {
+                continue;
+            }
+            let box_ = [
+                victim.x,
+                victim.y,
+                PLAYER_SMALL_W,
+                enemy_height(victim.enemy_type, victim.state),
+            ];
+            if let Some((si, _)) = shells
+                .iter()
+                .find(|(si, sbox)| *si != vi && aabb_overlap(box_, *sbox))
+            {
+                hits.push((*si, vi, victim.x, victim.y));
+            }
+        }
+        for (si, vi, x, y) in hits {
+            if self.enemies[vi].state == EnemyState::Dead {
+                continue;
+            }
+            self.enemies[vi].shotted();
+            let rung = self.enemies[si].shell_combo;
+            if rung < KOOPA_COMBO.len() {
+                self.enemies[si].shell_combo += 1;
+                let value = KOOPA_COMBO[rung];
+                self.score += value;
+                self.score_popups.push(crate::effects::ScorePopup {
+                    x,
+                    y,
+                    value: Some(value),
+                    timer: 0.0,
+                });
+            } else {
+                self.lives += 1;
+                self.score_popups.push(crate::effects::ScorePopup {
+                    x,
+                    y,
+                    value: None,
+                    timer: 0.0,
+                });
+                ctx.audio.play("oneup");
+            }
         }
     }
 
