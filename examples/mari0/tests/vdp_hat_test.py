@@ -308,6 +308,9 @@ async def run(ws):
         s["player"]["hat_selection"] == [HAT_STANDARD],
         f"selection={s['player']['hat_selection']}",
     )
+    # 先把命补满：这一步要看的是重生，而不是「上一个脚本把命耗光了没有」。
+    # 命不够就会走到 game over 回标题，等不到 playing。
+    await rpc(ws, "game.setLives", {"lives": 5})
     await rpc(ws, "game.setState", {"state": "dead"})
     for _ in range(120):
         s = await si(ws, 8)

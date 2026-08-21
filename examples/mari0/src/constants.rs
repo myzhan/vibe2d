@@ -51,6 +51,13 @@ pub(crate) const RAINBOOM_CELL: (f32, f32) = (204.0, 182.0);
 pub(crate) const RAINBOOM_SHEET: (f32, f32) = (1428.0, 1274.0);
 /// The sprite's origin inside its own cell (`rainboom.lua:36`).
 pub(crate) const RAINBOOM_ORIGIN: (f32, f32) = (29.0, 92.0);
+/// Hits a rainboom lands on Bowser: one like everything else, then six more
+/// (`mario.lua:3120-3124`).
+///
+/// Seven against [`BOWSER_HEALTH`]'s five, so he always dies — but written as the hits the
+/// original deals rather than as "kill him", because the margin is the point. `bowser:shotted`
+/// is a plain `hp - 1` (`bowser.lua:176-181`), and the loop exists to outrun it.
+pub(crate) const RAINBOOM_BOWSER_HITS: u32 = 7;
 
 // ── Portal particles (variables.lua:197-200) ──
 /// Dust drifting out of an open portal's mouth. One every `PORTAL_PARTICLE_TIME`, moving

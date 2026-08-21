@@ -219,6 +219,24 @@ impl EnemyType {
         )
     }
 
+    /// Does a sonic rainboom sweep this off the screen?
+    ///
+    /// The rainboom walks a hardcoded list of kinds (`enemies`, `game.lua:55`) rather than
+    /// testing any property, so what it clears is worth reading off that list directly.
+    /// Two entries are surprising:
+    ///
+    /// - A **buzzy beetle** dies, despite [`Self::fireball_immune`]. The rainboom calls
+    ///   `shotted` itself instead of going through the fireball path, so the immunity
+    ///   never gets a say. Same for a spiny, which cannot be stomped either.
+    /// - A **bullet bill** survives, even though a fireball kills one. It is simply not on
+    ///   the list — bills live in their own object bucket — so a screen full of them is
+    ///   still a screen full of them afterwards.
+    ///
+    /// Everything else the list leaves out is already [`Self::indestructible`] here.
+    pub(crate) fn cleared_by_rainboom(self) -> bool {
+        !self.indestructible() && self != EnemyType::BulletBill
+    }
+
     /// Is this kind thrown away once it scrolls off the left of the screen?
     ///
     /// The original marks most things `autodelete` and pointedly does **not** mark

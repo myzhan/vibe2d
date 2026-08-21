@@ -16,6 +16,7 @@
 use vibe2d::prelude::*;
 
 use crate::constants::*;
+use crate::enemies::{EnemyState, EnemyType};
 use crate::game::Mari0Game;
 use crate::physics::*;
 use crate::player::Orientation;
@@ -159,10 +160,48 @@ impl Mari0Game {
         self.earthquake = RAINBOOM_EARTHQUAKE;
         self.rainboom_allowed = false;
         ctx.audio.play("rainboom");
+        self.rainboom_clear_enemies();
         // And you keep the hat (`mario.lua:3133`). It replaces the stack rather than
         // adding to it, so whatever you picked in the menu is gone — you broke the sound
         // barrier, you wear what that earns.
         self.hats = vec![crate::hats::HAT_BEST_PONY];
+    }
+
+    /// Everything on screen dies (`mario.lua:3115-3131`).
+    ///
+    /// Not a side effect of the shockwave — the loop has no range test, so it takes the
+    /// whole level's live enemies at once, off-screen ones included. Which kinds are
+    /// eligible is [`EnemyType::cleared_by_rainboom`]'s business.
+    ///
+    /// Points are paid at the flat fire rate, the same as a fireball kill, and float up
+    /// where each body was (`addpoints`). Bowser is paid for here rather than in the sweep's
+    /// `else` branch as the original has it, because the branch he is routed to instead
+    /// (`bowser:firedeath`, `bowser.lua:193`) is where the original pays *his* 5000 — and
+    /// this port has no `firedeath`. Same total, one call site, as on the fireball path.
+    fn rainboom_clear_enemies(&mut self) {
+        let mut popups = Vec::new();
+        for enemy in &mut self.enemies {
+            if !enemy.enemy_type.cleared_by_rainboom() || enemy.state == EnemyState::Dead {
+                continue;
+            }
+            if enemy.enemy_type == EnemyType::Bowser {
+                enemy.hp = enemy.hp.saturating_sub(RAINBOOM_BOWSER_HITS);
+                if enemy.hp > 0 {
+                    continue;
+                }
+            }
+            popups.push((enemy.x, enemy.y, enemy.enemy_type.fire_points()));
+            enemy.shotted();
+        }
+        for (x, y, value) in popups {
+            self.score += value;
+            self.score_popups.push(crate::effects::ScorePopup {
+                x,
+                y,
+                value: Some(value),
+                timer: 0.0,
+            });
+        }
     }
 
     /// Step the rainbooms and let the shake decay.
