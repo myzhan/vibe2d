@@ -17,13 +17,30 @@ pub(crate) const GRAVITY: f32 = 2560.0; // 80 blocks/s^2
 /// rate. Hard-clamping instead is what made a diagonal faith plate barely move you.
 pub(crate) const SUPER_FRICTION: f32 = 100.0 * TILE_SIZE;
 pub(crate) const GRAVITY_JUMPING: f32 = 960.0; // reduced while holding jump
-pub(crate) const JUMP_VELOCITY: f32 = -512.0; // initial upward (walking)
-pub(crate) const JUMP_VELOCITY_RUN: f32 = -608.0; // higher jump when sprinting (like original SMB)
-pub(crate) const MAX_WALK_SPEED: f32 = 204.8; // 6.4 blocks/s
-pub(crate) const MAX_RUN_SPEED: f32 = 358.4; // 11.2 blocks/s (sprint with fire/shift)
-pub(crate) const WALK_ACCEL: f32 = 256.0; // 8 blocks/s^2
-pub(crate) const RUN_ACCEL: f32 = 512.0; // 16 blocks/s^2 (sprint, fast acceleration)
-pub(crate) const FRICTION: f32 = 448.0; // 14 blocks/s^2
+/// Jump force at a standstill, and how much of it top speed is worth
+/// (`jumpforce`/`jumpforceadd`, `variables.lua:43-44`).
+///
+/// The two add up **continuously**, not in two steps: the force is
+/// `jumpforce + (|vx| / maxrunspeed) * jumpforceadd`, capped at their sum
+/// (`mario.lua:1571-1572`). So every speed between a standstill and a full run gets its
+/// own jump height, and 17.9 blocks/s is the ceiling however you got there — which
+/// matters, because orange gel and faith plates can put you well past `maxrunspeed`.
+pub(crate) const JUMP_FORCE: f32 = 16.0 * TILE_SIZE;
+pub(crate) const JUMP_FORCE_ADD: f32 = 1.9 * TILE_SIZE;
+pub(crate) const MAX_WALK_SPEED: f32 = 6.4 * TILE_SIZE;
+pub(crate) const MAX_RUN_SPEED: f32 = 9.0 * TILE_SIZE;
+pub(crate) const WALK_ACCEL: f32 = 8.0 * TILE_SIZE;
+pub(crate) const RUN_ACCEL: f32 = 16.0 * TILE_SIZE;
+pub(crate) const FRICTION: f32 = 14.0 * TILE_SIZE;
+/// Acceleration is worth only this much when it points against the way you are already
+/// moving **in the air** (`airslidefactor`, `variables.lua:22`).
+///
+/// On the ground the same situation gets [`FRICTION`] added on top instead — that is the
+/// skid. In the air there is nothing to skid against, so the turn is merely slower.
+pub(crate) const AIR_SLIDE_FACTOR: f32 = 0.8;
+/// Below this, friction snaps horizontal speed to a dead stop (`minspeed`,
+/// `variables.lua:16`). Without it Mario creeps for another second at a pixel a frame.
+pub(crate) const MIN_SPEED: f32 = 0.7 * TILE_SIZE;
 pub(crate) const MAX_Y_SPEED: f32 = 3200.0; // terminal velocity
 pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 
@@ -573,6 +590,14 @@ pub(crate) const ITEM_SCORE: u32 = 1000;
 pub(crate) const STAR_JUMP_FORCE: f32 = -416.0; // 13 blocks/s upward
 pub(crate) const STAR_ANIM_DELAY: f32 = 0.04;
 pub(crate) const STAR_DURATION: f32 = 12.0; // seconds of invincibility
+
+// ── The flicker after taking a hit (variables.lua:308-312) ──
+/// How long losing a size makes you untouchable (`invincibletime`). Runs *after* the
+/// shrink animation, so it is 3.2 seconds of grace on top of that.
+pub(crate) const INVINCIBLE_TIME: f32 = 3.2;
+/// Half the flicker period (`invicibleblinktime`) — on for this long, then off, so the
+/// whole cycle is 0.04s. Fast enough to shimmer rather than blink.
+pub(crate) const INVINCIBLE_BLINK: f32 = 0.02;
 
 // Fireball (fire flower power-up)
 pub(crate) const FIREBALL_SPEED: f32 = 480.0; // 15 blocks/s horizontal

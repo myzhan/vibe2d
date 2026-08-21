@@ -986,7 +986,8 @@ impl Mari0Game {
             });
             let visible = !in_castle
                 && (self.player.invincible_timer <= 0.0
-                    || ((self.player.invincible_timer * 10.0) as u32).is_multiple_of(2));
+                    || ((self.player.invincible_timer / INVINCIBLE_BLINK) as u32)
+                        .is_multiple_of(2));
             // Inside a pipe Mario is clipped to the mouth's outer side, so he
             // disappears into it instead of sliding across the top of it.
             let pipe_clip = self.pipe_clip_rect(cam_x, self.vw, self.vh);
@@ -1036,6 +1037,7 @@ impl Mari0Game {
                             let frame = (self.player.run_frame as u32) % 3;
                             mario_big_uv(1 + frame, angle_row)
                         }
+                        PlayerAnim::Slide => mario_big_uv(4, angle_row),
                         PlayerAnim::Jump | PlayerAnim::Fall => mario_big_uv(5, angle_row),
                         PlayerAnim::Climb => mario_big_uv(climb_col, angle_row),
                         PlayerAnim::Swim => mario_big_uv(swim_col, angle_row),
@@ -1048,6 +1050,7 @@ impl Mari0Game {
                             let frame = (self.player.run_frame as u32) % 3;
                             mario_uv(1 + frame, angle_row)
                         }
+                        PlayerAnim::Slide => mario_uv(4, angle_row),
                         PlayerAnim::Jump | PlayerAnim::Fall => mario_uv(5, angle_row),
                         PlayerAnim::Climb => mario_uv(climb_col, angle_row),
                         PlayerAnim::Swim => mario_uv(swim_col, angle_row),

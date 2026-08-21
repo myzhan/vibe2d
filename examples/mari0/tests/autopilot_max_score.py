@@ -3,8 +3,8 @@
 mari0 AI Autopilot — 通过 VDP 协议自动通关第一关（含道具收集）
 
 策略:
-  - 正常走路 (walk speed ~205 px/s)
-  - 靠近高管道 (>=3格) 前按 Shift 加速跑 (~358 px/s) + 冲刺跳
+  - 正常走路 (walk speed 204.8 px/s = 6.4 格/秒)
+  - 靠近高管道 (>=3格) 前按 Shift 加速跑 (288 px/s = 9.0 格/秒) + 冲刺跳
   - 在坑前跳跃、遇敌跳跃、阶梯前跳跃
   - 至少使用一次 Portal 传送
   - 识别前方含蘑菇/星星的问号砖块，走到下方跳跃顶出
@@ -105,6 +105,15 @@ FLAG_STAIR_TOP_ROW = 5      # highest row of staircase blocks
 
 # Tall pipes that require sprint (height >= 3)
 TALL_PIPES = [(c, h) for c, h in PIPES if h >= 3]
+
+# 按住跳跃键的帧数。松手之后重力从 30 涨到 80 格/秒²，所以这个数字直接决定跳多高。
+#
+# 原先管道和楼梯都是 14 帧，那是配着**错的**跳跃力 19 格/秒调出来的。跳跃力修回原版
+# 的 16~17.9（`mario.lua:1571`）之后 14 帧就差一点点：4 格管会正面撞上去，楼梯会卡在
+# 第 138 列。实测 18 帧够用，再往上加没有区别。
+PIPE_JUMP_HOLD_TALL = 18
+PIPE_JUMP_HOLD = 10
+STAIR_JUMP_HOLD = 18
 
 
 def enemies_ahead_list(state, max_dist=256):
@@ -325,18 +334,13 @@ class Autopilot:
             key = f"pipe_{left_col}"
             if key in self.consumed_jumps:
                 continue
-            if height >= 4:
-                trigger_min = pipe_left - TILE * 5.5
-                trigger_max = pipe_left - TILE * 3.5
-                hold = 14
-            elif height >= 3:
-                trigger_min = pipe_left - TILE * 4
-                trigger_max = pipe_left - TILE * 2
-                hold = 8
-            else:
-                trigger_min = pipe_left - TILE * 3
-                trigger_max = pipe_left - TILE * 1.5
-                hold = 10
+            # 一个窗口管三种管高：实测 1-1 的四根管子（2/3/4/4 格），
+            # 中心距 1.0~2.5 格起跳，跑或走都跳得上去。原先每档一个窗口，
+            # 而 4 格管那档写的是提前 3.5~5.5 格 —— 那是按旧的（过快的）
+            # 跑速 11.2 格/秒调出来的；跑速改回原版 9.0 之后就会撞在管壁上。
+            trigger_min = pipe_left - TILE * 2.5
+            trigger_max = pipe_left - TILE * 1.5
+            hold = PIPE_JUMP_HOLD_TALL if height >= 4 else PIPE_JUMP_HOLD
             if trigger_min <= px <= trigger_max:
                 return (hold, key)
         return None
@@ -351,7 +355,7 @@ class Autopilot:
             trigger_min = stair_x - TILE * 5
             trigger_max = stair_x - TILE * 0.3
             if trigger_min <= px <= trigger_max:
-                return (14, key)
+                return (STAIR_JUMP_HOLD, key)
         return None
 
     def in_staircase_area(self, px):

@@ -8,6 +8,10 @@ use crate::constants::*;
 pub(crate) enum PlayerAnim {
     Idle,
     Run,
+    /// Turning around on the ground: the heels-dug-in pose, column 4 of the sheet
+    /// (`marioslide`, `main.lua:540`). Held only while the skid is actually being paid
+    /// for — see [`Player::skidding`].
+    Slide,
     Jump,
     Fall,
     /// Holding a vine. Two frames, picked by [`Player::climb_frame`].
@@ -85,6 +89,12 @@ pub(crate) struct Player {
     pub(crate) is_fire: bool,
     pub(crate) is_jumping: bool,
     pub(crate) anim_state: PlayerAnim,
+    /// Is this frame's acceleration fighting the way Mario is already moving, on the
+    /// ground? Set by the movement pass, read by the animation pass a few hundred lines
+    /// later — the original assigns `animationstate = "sliding"` inside the movement
+    /// branch itself (`mario.lua:1125`), which this port cannot do because the two live
+    /// apart and the animation pass would overwrite it.
+    pub(crate) skidding: bool,
     pub(crate) run_frame: f32,
     /// Which of the two climbing frames is showing, 1 or 2. Only read while
     /// `anim_state` is [`PlayerAnim::Climb`]; the vine drives it.
@@ -117,6 +127,7 @@ impl Player {
             is_fire: false,
             is_jumping: false,
             anim_state: PlayerAnim::Idle,
+            skidding: false,
             run_frame: 0.0,
             climb_frame: 2,
             swim_phase: 1.0,

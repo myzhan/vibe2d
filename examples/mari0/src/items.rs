@@ -73,6 +73,27 @@ pub(crate) struct Item {
 }
 
 impl Mari0Game {
+    /// One step up the power ladder: small → big → fire, and nothing beyond that.
+    ///
+    /// This is `mario:grow` (`mario.lua:1638-1647`), and the notable part is who calls it:
+    /// the mushroom and the fire flower **both** do (`mushroom.lua:85`, `flower.lua:76`),
+    /// with no argument to tell them apart. Neither item decides what you become — your
+    /// current size does, because `grow` is a single `size + 1` and `size == 3` is the one
+    /// that sets `flowercolor`.
+    ///
+    /// Which normally goes unnoticed, because the *block* already substituted the right
+    /// sprite when it was hit (see the `BlockContent::Mushroom` arm above). It shows only
+    /// when an item outlives the state it was spawned for: take a flower while still small
+    /// — from a block you hit before shrinking — and you come up merely big, needing a
+    /// second pickup to throw anything.
+    fn grow_player(&mut self) {
+        if !self.player.is_big {
+            self.player.set_size(true);
+        } else {
+            self.player.is_fire = true;
+        }
+    }
+
     pub(crate) fn hit_block(&mut self, ctx: &Context, row: usize, col: usize, tile: u32) {
         let key = (row, col);
         let bx = col as f32 * TILE_SIZE;
@@ -557,9 +578,7 @@ impl Mari0Game {
                 let item = self.items.remove(i);
                 match item.item_type {
                     ItemType::Mushroom => {
-                        if !self.player.is_big {
-                            self.player.set_size(true);
-                        }
+                        self.grow_player();
                         self.score += ITEM_SCORE;
                         self.score_popups.push(ScorePopup {
                             x: item.x,
@@ -593,10 +612,7 @@ impl Mari0Game {
                         ctx.audio.play("oneup");
                     }
                     ItemType::FireFlower => {
-                        if !self.player.is_big {
-                            self.player.set_size(true);
-                        }
-                        self.player.is_fire = true;
+                        self.grow_player();
                         self.score += ITEM_SCORE;
                         self.score_popups.push(ScorePopup {
                             x: item.x,

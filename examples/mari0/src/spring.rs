@@ -208,7 +208,8 @@ mod tests {
     #[test]
     fn holding_jump_is_worth_nearly_double() {
         const { assert!(SPRING_HIGH_FORCE > 1.5 * SPRING_FORCE) };
-        // And both are far beyond anything Mario can do himself.
-        const { assert!(SPRING_FORCE > -JUMP_VELOCITY_RUN) };
+        // And both are far beyond anything Mario can do himself, even at the top speed
+        // that earns him the largest jump he has.
+        const { assert!(SPRING_FORCE > JUMP_FORCE + JUMP_FORCE_ADD) };
     }
 }

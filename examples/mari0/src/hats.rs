@@ -677,9 +677,9 @@ pub(crate) const HAT_BEST_PONY: u8 = 33;
 /// pose wears no hat at all.
 ///
 /// The original keys `hatoffsets` by animation state and bails when the entry is `false`
-/// (`game.lua:1306`), which only `dead` is. Three of its states have no counterpart here
-/// — `sliding`, `grow` and big Mario's `fire` throw pose are animations this port does
-/// not have — and their offsets are dropped rather than guessed at.
+/// (`game.lua:1306`), which only `dead` is. Two of its states have no counterpart here
+/// — `grow` and big Mario's `fire` throw pose are animations this port does not have —
+/// and their offsets are dropped rather than guessed at.
 pub(crate) fn hat_offset(
     is_big: bool,
     anim: PlayerAnim,
@@ -698,6 +698,7 @@ pub(crate) fn hat_offset(
         match anim {
             PlayerAnim::Idle => (-4.0, -2.0),
             PlayerAnim::Run | PlayerAnim::Fall => [(-5.0, -4.0), (-4.0, -3.0), (-3.0, -2.0)][run],
+            PlayerAnim::Slide => (-5.0, -2.0),
             PlayerAnim::Jump => (-4.0, -4.0),
             PlayerAnim::Climb => [(-4.0, -4.0), (-4.0, -4.0)][climb],
             PlayerAnim::Swim => [(-5.0, -4.0), (-5.0, -4.0)][swim],
@@ -707,6 +708,7 @@ pub(crate) fn hat_offset(
         match anim {
             PlayerAnim::Idle => (0.0, 0.0),
             PlayerAnim::Run | PlayerAnim::Fall => [(0.0, 0.0), (0.0, 0.0), (-1.0, -1.0)][run],
+            PlayerAnim::Slide => (0.0, 0.0),
             PlayerAnim::Jump => (0.0, -1.0),
             PlayerAnim::Climb => [(2.0, 0.0), (2.0, -1.0)][climb],
             PlayerAnim::Swim => [(1.0, -1.0), (1.0, -1.0)][swim],

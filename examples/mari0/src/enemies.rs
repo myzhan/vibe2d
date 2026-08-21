@@ -1520,14 +1520,13 @@ impl Mari0Game {
                 self.combo_active = true;
                 ctx.audio.play("stomp");
             } else if self.player.invincible_timer <= 0.0 && enemy.state != EnemyState::Shell {
-                // Hit by enemy from side
-                if self.player.is_fire {
+                // Hit by enemy from side. `mario:shrink` is not a step down the ladder —
+                // it assigns `size = 1` outright (`mario.lua:1672`), so a fire Mario lands
+                // on *small*, not on big. Two hits kill from the top, never three.
+                if self.player.is_big || self.player.is_fire {
                     self.player.is_fire = false;
-                    self.player.invincible_timer = 2.0;
-                    ctx.audio.play("shrink");
-                } else if self.player.is_big {
                     self.player.set_size(false);
-                    self.player.invincible_timer = 2.0;
+                    self.player.invincible_timer = INVINCIBLE_TIME;
                     ctx.audio.play("shrink");
                 } else {
                     self.die(ctx);
