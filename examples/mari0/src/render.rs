@@ -1095,6 +1095,79 @@ impl Mari0Game {
                     } else {
                         screen.draw_sprite_region_flipped(layers[0], src, dst, true, false);
                     }
+
+                    // ── Hats, on top of the outline (`game.lua:1306-1352`) ──
+                    //
+                    // A dying Mario wears none: the original's `hatoffsets["dead"]` is
+                    // `false`, and the `and hatoffsets[v.animationstate]` guard is what
+                    // makes that mean "skip the hat entirely" rather than "offset by zero".
+                    if self.state != GameState::Dead {
+                        let (off_x, off_y) = crate::hats::hat_offset(
+                            self.player.is_big,
+                            self.player.anim_state,
+                            self.player.run_frame as u32,
+                            self.player.climb_frame,
+                            self.player.swim_phase.floor() as u32,
+                        );
+                        // The sprite cell is 20 wide at either size; the hat's placement is
+                        // in those same unscaled pixels, so mirroring happens here and the
+                        // scale is applied once at the end.
+                        let cell_w = sw / MARIO_SPRITE_SCALE;
+                        let hat_texs = if self.player.is_big {
+                            &self.tex_hats_big
+                        } else {
+                            &self.tex_hats
+                        };
+                        // Each hat lifts the one above it by its own `height`, which is
+                        // less than its image so brims overlap.
+                        let mut yadd = 0.0;
+                        for &index in &self.hats {
+                            let Some(def) = crate::hats::HATS.get(index as usize - 1) else {
+                                continue;
+                            };
+                            let fit = if self.player.is_big { &def.big } else { &def.small };
+                            let local_x = fit.x - off_x;
+                            // Facing left mirrors the hat within the cell, the same way
+                            // Mario's own sheet is mirrored. The original flips hat and
+                            // Mario about one shared origin, which works out to exactly
+                            // this once the cell width is taken off.
+                            let local_x = if face_right {
+                                local_x
+                            } else {
+                                cell_w - fit.w - local_x
+                            };
+                            let local_y = fit.y - off_y - yadd;
+                            // Each hat is its own texture, so the source is all of it —
+                            // and `src_rect` is normalised, not pixels. Passing `fit.w`
+                            // here samples eleven copies of the image and draws a solid
+                            // block, which is exactly what the first draft looked like.
+                            let hat_src = [0.0, 0.0, 1.0, 1.0];
+                            let hat_dst = [
+                                sx + local_x * MARIO_SPRITE_SCALE,
+                                sy + local_y * MARIO_SPRITE_SCALE,
+                                fit.w * MARIO_SPRITE_SCALE,
+                                fit.h * MARIO_SPRITE_SCALE,
+                            ];
+                            let tex = hat_texs[index as usize - 1];
+                            // The standard cap is the one hat tinted to the shirt, which
+                            // is how a fire Mario's comes out white off the same image.
+                            if index == crate::hats::HAT_STANDARD {
+                                screen.draw_sprite_region_flipped_tinted(
+                                    tex,
+                                    hat_src,
+                                    hat_dst,
+                                    !face_right,
+                                    false,
+                                    mario_colors[0],
+                                );
+                            } else {
+                                screen.draw_sprite_region_flipped(
+                                    tex, hat_src, hat_dst, !face_right, false,
+                                );
+                            }
+                            yadd += fit.height;
+                        }
+                    }
                 };
                 match pipe_clip {
                     Some([cx, cy, cw, ch]) => screen.clipped(cx, cy, cw, ch, draw_mario),
@@ -1446,26 +1519,34 @@ impl Mari0Game {
                     );
                     let (fw, fl) = self.furthest_in(pack);
                     screen.draw_text_centered(font, &format!("furthest {fw}-{fl}"), 252.0);
+                    screen.draw_text_centered(
+                        font,
+                        &format!("high score {:06}", self.high_score),
+                        270.0,
+                    );
                     // Which loadout the mouse buttons will carry.
                     let gun = match self.player_type {
                         crate::player::PlayerType::Portal => "PORTAL GUN",
                         crate::player::PlayerType::GelCannon => "GEL CANNON",
                     };
-                    screen.draw_text_centered(font, &format!("[F] {gun}"), 274.0);
+                    screen.draw_text_centered(font, &format!("[F] {gun}"), 292.0);
+                    // The hat. Bare-headed is a real choice here, which it is not in the
+                    // original — there every player starts in the standard cap and the skin
+                    // editor can only swap it for another hat.
+                    let hat = match self.hat_selection.first() {
+                        Some(&i) => crate::hats::HATS[i as usize - 1].label,
+                        None => "NONE",
+                    };
+                    screen.draw_text_centered(font, &format!("[H] HAT: {hat}"), 310.0);
                     if self.sonic_rainboom {
-                        screen.draw_text_centered(font, "[P] SONIC RAINBOOM: ON", 296.0);
+                        screen.draw_text_centered(font, "[P] SONIC RAINBOOM: ON", 328.0);
                     }
-                    screen.draw_text_centered(
-                        font,
-                        &format!("high score {:06}", self.high_score),
-                        272.0,
-                    );
 
-                    screen.draw_text_centered(font, "Left/Right: level   Down: mappack", 310.0);
+                    screen.draw_text_centered(font, "Left/Right: level   Down: mappack", 352.0);
                     screen.draw_text_centered(
                         font,
                         "Space: start   Mouse: aim, click: portals",
-                        330.0,
+                        372.0,
                     );
                 }
             }

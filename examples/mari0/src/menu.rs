@@ -13,8 +13,9 @@
 use vibe2d::prelude::*;
 
 use crate::game::{GameState, Mari0Game};
-use crate::player::PlayerType;
+use crate::hats::HATS;
 use crate::level;
+use crate::player::PlayerType;
 
 /// The mappacks the build ships with, in menu order.
 pub(crate) const PACKS: [&str; 2] = ["smb", "portal"];
@@ -254,6 +255,20 @@ impl Mari0Game {
         // shares that menu's fate for now and lives here as a key, next to the loadout.
         if input.is_action_just_pressed("pause") {
             self.sonic_rainboom = !self.sonic_rainboom;
+        }
+        // Hats. The original stacks them in a per-player skin editor (`menu.lua:751-761`)
+        // that also recolours Mario; without that screen this cycles the one hat, and
+        // walks off the end of the list into wearing none before coming back round.
+        if input.is_action_just_pressed("hat") {
+            let next = self.hat_selection.first().map_or(1, |&i| i as usize + 1);
+            self.hat_selection = if next > HATS.len() {
+                Vec::new()
+            } else {
+                vec![next as u8]
+            };
+            // Nobody is wearing anything on the title screen, but keeping the two in step
+            // means the selection is what starts the level even without a reload.
+            self.hats = self.hat_selection.clone();
         }
         if input.is_action_just_pressed("jump") {
             self.start_selected();

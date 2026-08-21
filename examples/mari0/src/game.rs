@@ -137,6 +137,17 @@ pub(crate) struct Mari0Game {
     pub(crate) rainbooms: Vec<crate::effects::Rainboom>,
     /// How much of the konami code has been entered on the title screen.
     pub(crate) konami_index: usize,
+    /// The hats Mario is wearing *this life*, bottom of the stack first, as 1-based
+    /// indices into [`crate::hats::HATS`]. The original stacks them from a skin editor
+    /// this port has no equivalent of, so the menu only ever sets one — but the draw path
+    /// stacks, and `game.setHats` can hand it a pile.
+    pub(crate) hats: Vec<u8>,
+    /// The hats the *menu* picked, which is the copy that outlives a death.
+    ///
+    /// The original keeps these apart too: `mariohats` is the saved per-player setting and
+    /// `mario.hats` is a copy taken in `mario:new()` (`mario.lua:97`). Nothing rewrites the
+    /// former mid-level, so the rainboom's trophy hat only lasts until you respawn.
+    pub(crate) hat_selection: Vec<u8>,
     /// Dust drifting out of the open portals, and the accumulator that releases it.
     pub(crate) portal_particles: Vec<crate::effects::PortalParticle>,
     pub(crate) portal_particle_timer: f32,
@@ -239,6 +250,9 @@ pub(crate) struct Mari0Game {
     pub(crate) tex_tiles: TextureId,
     pub(crate) tex_mario_layers: [TextureId; 4], // layers 0-3 (small)
     pub(crate) tex_mario_big_layers: [TextureId; 4], // layers 0-3 (big)
+    /// One texture per hat, in [`crate::hats::HATS`] order, at each of Mario's two sizes.
+    pub(crate) tex_hats: [TextureId; 33],
+    pub(crate) tex_hats_big: [TextureId; 33],
     pub(crate) tex_goomba: TextureId,
     pub(crate) tex_koopa: TextureId,
     pub(crate) tex_koopa_red: TextureId,
@@ -415,6 +429,9 @@ impl Mari0Game {
             None => level.player_start,
         };
         self.player = Player::new(start.0, start.1);
+        // A fresh Mario takes a fresh copy of the hat selection (`mario.lua:97`), which is
+        // what makes a rainboom's bestpony last exactly one life.
+        self.hats = self.hat_selection.clone();
         // Restore how many checkpoints are behind us, so passing the *next* one
         // still registers after a respawn (`game.lua:2161-2163`).
         self.checkpoints_passed = match self.checkpoint.filter(|_| use_checkpoint) {
@@ -1408,6 +1425,14 @@ impl Game for Mari0Game {
         let spawned = vec![false; level.enemy_spawns.len()];
         let time_limit = level.time_limit;
 
+        // Resolved once rather than per frame: the draw path wants a `TextureId` for
+        // whichever hat is on, and `hat_<name>` would otherwise be a `format!` and a hash
+        // lookup inside the render loop.
+        let tex_hats: [TextureId; 33] =
+            std::array::from_fn(|i| t(&format!("hat_{}", crate::hats::HATS[i].name)));
+        let tex_hats_big: [TextureId; 33] =
+            std::array::from_fn(|i| t(&format!("bighat_{}", crate::hats::HATS[i].name)));
+
         let mut game = Self {
             state: GameState::Menu,
             current,
@@ -1465,6 +1490,9 @@ impl Game for Mari0Game {
             earthquake: 0.0,
             rainbooms: Vec::new(),
             konami_index: 0,
+            // Mario starts in his own cap, as every player does (`main.lua:1130-1132`).
+            hats: vec![crate::hats::HAT_STANDARD],
+            hat_selection: vec![crate::hats::HAT_STANDARD],
             portal_particles: Vec::new(),
             portal_particle_timer: 0.0,
             intro: Some(crate::interlude::Intro {
@@ -1512,6 +1540,8 @@ impl Game for Mari0Game {
                 t("mario_big2"),
                 t("mario_big3"),
             ],
+            tex_hats,
+            tex_hats_big,
             tex_goomba: t("goomba"),
             tex_koopa: t("koopa"),
             tex_koopa_red: t("koopa_red"),

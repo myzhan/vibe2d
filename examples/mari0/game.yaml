@@ -63,6 +63,76 @@ assets:
     portal_dot: "assets/mari0/portaldot.png"
     portal_particle: "assets/mari0/portalparticle.png"
     rainboom: "assets/mari0/rainboom.png"
+
+    # The 33 hats, in hatconfigs.lua's own order — the index is what a save file
+    # stores, so it is the order that matters, not the names.
+    hat_standard: "assets/mari0/hats/standard.png"
+    hat_tyrolean: "assets/mari0/hats/tyrolean.png"
+    hat_towering1: "assets/mari0/hats/towering1.png"
+    hat_towering2: "assets/mari0/hats/towering2.png"
+    hat_towering3: "assets/mari0/hats/towering3.png"
+    hat_drseuss: "assets/mari0/hats/drseuss.png"
+    hat_bird: "assets/mari0/hats/bird.png"
+    hat_banana: "assets/mari0/hats/banana.png"
+    hat_beanie: "assets/mari0/hats/beanie.png"
+    hat_toilet: "assets/mari0/hats/toilet.png"
+    hat_indian: "assets/mari0/hats/indian.png"
+    hat_officerhat: "assets/mari0/hats/officerhat.png"
+    hat_crown: "assets/mari0/hats/crown.png"
+    hat_tophat: "assets/mari0/hats/tophat.png"
+    hat_batter: "assets/mari0/hats/batter.png"
+    hat_bonk: "assets/mari0/hats/bonk.png"
+    hat_bakerboy: "assets/mari0/hats/bakerboy.png"
+    hat_troublemaker: "assets/mari0/hats/troublemaker.png"
+    hat_whoopee: "assets/mari0/hats/whoopee.png"
+    hat_milkman: "assets/mari0/hats/milkman.png"
+    hat_bombingrun: "assets/mari0/hats/bombingrun.png"
+    hat_bonkboy: "assets/mari0/hats/bonkboy.png"
+    hat_flippedtrilby: "assets/mari0/hats/flippedtrilby.png"
+    hat_superfan: "assets/mari0/hats/superfan.png"
+    hat_familiarfez: "assets/mari0/hats/familiarfez.png"
+    hat_santahat: "assets/mari0/hats/santahat.png"
+    hat_sailor: "assets/mari0/hats/sailor.png"
+    hat_koopa: "assets/mari0/hats/koopa.png"
+    hat_blooper: "assets/mari0/hats/blooper.png"
+    hat_shyguy: "assets/mari0/hats/shyguy.png"
+    hat_goodnewseverybody: "assets/mari0/hats/goodnewseverybody.png"
+    hat_jetset: "assets/mari0/hats/jetset.png"
+    hat_bestpony: "assets/mari0/hats/bestpony.png"
+    # A big Mario wears a bigger hat (bighatconfigs.lua). Same order, same count.
+    bighat_standard: "assets/mari0/bighats/standard.png"
+    bighat_tyrolean: "assets/mari0/bighats/tyrolean.png"
+    bighat_towering1: "assets/mari0/bighats/towering1.png"
+    bighat_towering2: "assets/mari0/bighats/towering2.png"
+    bighat_towering3: "assets/mari0/bighats/towering3.png"
+    bighat_drseuss: "assets/mari0/bighats/drseuss.png"
+    bighat_bird: "assets/mari0/bighats/bird.png"
+    bighat_banana: "assets/mari0/bighats/banana.png"
+    bighat_beanie: "assets/mari0/bighats/beanie.png"
+    bighat_toilet: "assets/mari0/bighats/toilet.png"
+    bighat_indian: "assets/mari0/bighats/indian.png"
+    bighat_officerhat: "assets/mari0/bighats/officerhat.png"
+    bighat_crown: "assets/mari0/bighats/crown.png"
+    bighat_tophat: "assets/mari0/bighats/tophat.png"
+    bighat_batter: "assets/mari0/bighats/batter.png"
+    bighat_bonk: "assets/mari0/bighats/bonk.png"
+    bighat_bakerboy: "assets/mari0/bighats/bakerboy.png"
+    bighat_troublemaker: "assets/mari0/bighats/troublemaker.png"
+    bighat_whoopee: "assets/mari0/bighats/whoopee.png"
+    bighat_milkman: "assets/mari0/bighats/milkman.png"
+    bighat_bombingrun: "assets/mari0/bighats/bombingrun.png"
+    bighat_bonkboy: "assets/mari0/bighats/bonkboy.png"
+    bighat_flippedtrilby: "assets/mari0/bighats/flippedtrilby.png"
+    bighat_superfan: "assets/mari0/bighats/superfan.png"
+    bighat_familiarfez: "assets/mari0/bighats/familiarfez.png"
+    bighat_santahat: "assets/mari0/bighats/santahat.png"
+    bighat_sailor: "assets/mari0/bighats/sailor.png"
+    bighat_koopa: "assets/mari0/bighats/koopa.png"
+    bighat_blooper: "assets/mari0/bighats/blooper.png"
+    bighat_shyguy: "assets/mari0/bighats/shyguy.png"
+    bighat_goodnewseverybody: "assets/mari0/bighats/goodnewseverybody.png"
+    bighat_jetset: "assets/mari0/bighats/jetset.png"
+    bighat_bestpony: "assets/mari0/bighats/bestpony.png"
     flag: "assets/mari0/flag.png"
     entities: "assets/mari0/entities.png"
     star: "assets/mari0/star.png"
@@ -209,6 +279,11 @@ input:
     use:
       keys: ["E", "Up"]
       gamepad_buttons: ["North"]
+    # Cycle hats on the title screen. The original picks these in a skin editor; here
+    # it is one key, so it needs a binding no other menu key has already claimed.
+    hat:
+      keys: ["H"]
+      gamepad_buttons: ["East"]
 
 debug:
   vdp:

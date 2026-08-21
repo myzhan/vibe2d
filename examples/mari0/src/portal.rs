@@ -159,6 +159,10 @@ impl Mari0Game {
         self.earthquake = RAINBOOM_EARTHQUAKE;
         self.rainboom_allowed = false;
         ctx.audio.play("rainboom");
+        // And you keep the hat (`mario.lua:3133`). It replaces the stack rather than
+        // adding to it, so whatever you picked in the menu is gone — you broke the sound
+        // barrier, you wear what that earns.
+        self.hats = vec![crate::hats::HAT_BEST_PONY];
     }
 
     /// Step the rainbooms and let the shake decay.

@@ -142,6 +142,17 @@ pub(crate) struct PlayerView {
     pub(crate) portal_cooldown: f32,
     pub(crate) teleport_cooldown: f32,
     pub(crate) invincible_timer: f32,
+    /// The hats being worn *this life*, bottom first, as 1-based indices into `hats.rs`.
+    pub(crate) hats: Vec<u8>,
+    /// The menu's hat pick, which a death restores `hats` from.
+    pub(crate) hat_selection: Vec<u8>,
+    /// Where the hat sits for the pose Mario is in this frame, as `[x, y]` in the
+    /// original's unscaled pixels.
+    ///
+    /// Exposed because the hat is pure decoration: nothing else in the snapshot moves
+    /// when it does, so a screenshot would otherwise be the only way to tell that
+    /// climbing shifts it two pixels right — or that falling reads the running table.
+    pub(crate) hat_offset: [f32; 2],
 }
 
 #[cfg(feature = "vdp")]
@@ -584,6 +595,14 @@ pub(crate) struct SetRainboom {
 
 #[cfg(feature = "vdp")]
 #[derive(serde::Deserialize)]
+pub(crate) struct SetHats {
+    /// 1-based indices into `hats.rs`'s table, bottom of the stack first. Empty is
+    /// bare-headed.
+    pub(crate) hats: Vec<u8>,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
 pub(crate) struct SetPlayerType {
     pub(crate) player_type: String,
 }
@@ -710,6 +729,18 @@ impl Mari0Game {
                 portal_cooldown: self.player.portal_cooldown,
                 teleport_cooldown: self.player.teleport_cooldown,
                 invincible_timer: self.player.invincible_timer,
+                hats: self.hats.clone(),
+                hat_selection: self.hat_selection.clone(),
+                hat_offset: {
+                    let (x, y) = crate::hats::hat_offset(
+                        self.player.is_big,
+                        self.player.anim_state,
+                        self.player.run_frame as u32,
+                        self.player.climb_frame,
+                        self.player.swim_phase.floor() as u32,
+                    );
+                    [x, y]
+                },
             },
             portals: PortalsView {
                 blue: PortalView::from_slot(&self.portals[0]),
@@ -1159,6 +1190,29 @@ impl Mari0Game {
         };
         self.lab.signal(p.index, signal);
         Ok(serde_json::json!({"index": p.index, "on": self.lab.elements[p.index].on}))
+    }
+
+    /// Put a stack of hats on Mario. In the game the menu only ever sets one; the stack
+    /// is what the original's skin editor could build, and the draw path still honours it.
+    ///
+    /// Sets the selection as well as what he has on, so the choice survives a death — a
+    /// test that wants the two to differ should use the rainboom, which is the only thing
+    /// in the game that touches one without the other.
+    #[vdp("game.setHats")]
+    pub(crate) fn vdp_set_hats(&mut self, p: SetHats) -> Result<serde_json::Value, String> {
+        if let Some(bad) = p
+            .hats
+            .iter()
+            .find(|&&i| i == 0 || i as usize > crate::hats::HATS.len())
+        {
+            return Err(format!(
+                "hat {bad} out of range: 1..={}",
+                crate::hats::HATS.len()
+            ));
+        }
+        self.hat_selection = p.hats.clone();
+        self.hats = p.hats;
+        Ok(serde_json::json!({"hats": self.hats}))
     }
 
     /// Switch the rainboom easter egg on or off.
