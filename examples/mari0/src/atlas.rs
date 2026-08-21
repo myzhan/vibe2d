@@ -4,6 +4,8 @@
 //! several sheets mix frame sizes (see `fireball_uv`), so each accessor carries
 //! the sheet's dimensions in its arithmetic rather than sharing a generic helper.
 
+use crate::constants::{RAINBOOM_CELL, RAINBOOM_FRAMES, RAINBOOM_SHEET};
+
 // ── sRGB → Linear conversion (for tint colors with sRGB textures) ───
 pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     if c <= 0.04045 {
@@ -147,6 +149,19 @@ pub(crate) fn spring_uv(frame: usize) -> [f32; 4] {
         0.0,
         16.0 / 48.0,
         31.0 / 124.0,
+    ]
+}
+
+/// One of the rainboom's 49 frames. `rainboom.png` is a 7x7 grid of 204x182 cells.
+pub(crate) fn rainboom_uv(frame: u32) -> [f32; 4] {
+    let frame = frame.min(RAINBOOM_FRAMES - 1);
+    let (cw, ch) = RAINBOOM_CELL;
+    let (sw, sh) = RAINBOOM_SHEET;
+    [
+        (frame % 7) as f32 * cw / sw,
+        (frame / 7) as f32 * ch / sh,
+        cw / sw,
+        ch / sh,
     ]
 }
 

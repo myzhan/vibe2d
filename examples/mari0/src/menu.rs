@@ -250,6 +250,11 @@ impl Mari0Game {
                 PlayerType::GelCannon => PlayerType::Portal,
             };
         }
+        // The rainboom toggle. In the original this is a checkbox in the options menu; it
+        // shares that menu's fate for now and lives here as a key, next to the loadout.
+        if input.is_action_just_pressed("pause") {
+            self.sonic_rainboom = !self.sonic_rainboom;
+        }
         if input.is_action_just_pressed("jump") {
             self.start_selected();
         }

@@ -125,6 +125,61 @@ impl Mari0Game {
         ]
     }
 
+    /// Leave a portal fast enough and the screen detonates.
+    ///
+    /// Only up, left and right count (`mario.lua:3097-3110`) — there is no rainboom for
+    /// being fired *downward*, presumably because gravity gets you there for free. Each one
+    /// spends `rainboom_allowed`, which only a floor restores, so it is once per landing.
+    pub(crate) fn check_rainboom(&mut self, ctx: &Context) {
+        if !self.sonic_rainboom || !self.rainboom_allowed {
+            return;
+        }
+        // The original is handed the exit portal's facing and checks the matching velocity
+        // component against the threshold. Reading the direction back *out* of the exit
+        // velocity is the same test with one fewer thing to thread through: only one
+        // component can be over 45 blocks/s, and its sign is the direction.
+        let rotation = if self.player.vy < -RAINBOOM_SPEED {
+            -std::f32::consts::FRAC_PI_2
+        } else if self.player.vx > RAINBOOM_SPEED {
+            0.0
+        } else if self.player.vx < -RAINBOOM_SPEED {
+            std::f32::consts::PI
+        } else {
+            // Including every downward exit: there is no rainboom for being fired *down*,
+            // presumably because gravity gets you there for free.
+            return;
+        };
+        self.rainbooms.push(crate::effects::Rainboom {
+            x: self.player.center_x(),
+            y: self.player.center_y(),
+            rotation,
+            timer: 0.0,
+            frame: 0,
+        });
+        self.earthquake = RAINBOOM_EARTHQUAKE;
+        self.rainboom_allowed = false;
+        ctx.audio.play("rainboom");
+    }
+
+    /// Step the rainbooms and let the shake decay.
+    ///
+    /// The decay is proportional to the shake itself plus a floor
+    /// (`game.lua:139`), so it falls off fast at first and then stops dead rather than
+    /// trailing away asymptotically.
+    pub(crate) fn update_rainbooms(&mut self, dt: f32) {
+        if self.earthquake > 0.0 {
+            self.earthquake = (self.earthquake - dt * self.earthquake * 2.0 - 0.001).max(0.0);
+        }
+        for r in &mut self.rainbooms {
+            r.timer += dt;
+            while r.timer > RAINBOOM_DELAY {
+                r.timer -= RAINBOOM_DELAY;
+                r.frame += 1;
+            }
+        }
+        self.rainbooms.retain(|r| r.frame < RAINBOOM_FRAMES);
+    }
+
     /// Spawn and drift the dust coming out of the open portals.
     ///
     /// The wander is a deterministic function of the particle's index and the shared
@@ -315,6 +370,7 @@ impl Mari0Game {
                     self.player.is_jumping = false;
                 }
                 ctx.audio.play("portalenter");
+                self.check_rainboom(ctx);
                 true
             }
         }

@@ -31,6 +31,10 @@ pub(crate) struct Mari0Inspect {
     /// The launch intro, if it is running: seconds in, the logo's opacity, and how far the
     /// blood has wiped up it.
     pub(crate) intro: Option<IntroView>,
+    /// Is the rainboom easter egg on, and how much shake is left?
+    pub(crate) sonic_rainboom: bool,
+    pub(crate) earthquake: f32,
+    pub(crate) rainbooms: usize,
     /// Has the warp-zone text been revealed? Only ever true in a `haswarpzone` level.
     pub(crate) warp_text: bool,
     /// The black card being held between levels, or `null`.
@@ -574,6 +578,12 @@ pub(crate) struct SetLives {
 
 #[cfg(feature = "vdp")]
 #[derive(serde::Deserialize)]
+pub(crate) struct SetRainboom {
+    pub(crate) on: bool,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Deserialize)]
 pub(crate) struct SetPlayerType {
     pub(crate) player_type: String,
 }
@@ -672,6 +682,9 @@ impl Mari0Game {
                 blood_wipe: i.blood_wipe(),
                 stabbed: i.stabbed,
             }),
+            sonic_rainboom: self.sonic_rainboom,
+            earthquake: self.earthquake,
+            rainbooms: self.rainbooms.len(),
             warp_text: self.warp_text,
             interlude: self.interlude.map(|c| InterludeView {
                 kind: c.kind,
@@ -1146,6 +1159,13 @@ impl Mari0Game {
         };
         self.lab.signal(p.index, signal);
         Ok(serde_json::json!({"index": p.index, "on": self.lab.elements[p.index].on}))
+    }
+
+    /// Switch the rainboom easter egg on or off.
+    #[vdp("game.setRainboom")]
+    pub(crate) fn vdp_set_rainboom(&mut self, p: SetRainboom) -> Result<serde_json::Value, String> {
+        self.sonic_rainboom = p.on;
+        Ok(serde_json::json!({"sonic_rainboom": self.sonic_rainboom}))
     }
 
     /// Replay the launch intro from the top.

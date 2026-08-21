@@ -44,6 +44,20 @@ pub(crate) struct BrickDebris {
     pub(crate) timer: f32,
 }
 
+/// A sonic rainboom, and the shake that comes with it.
+///
+/// Purely an easter egg — `sonicrainboom` is off by default and the original's own comment
+/// on the file is "Can't believe I'm doing this". 49 frames of rainbow, rotated to point
+/// the way you left the portal.
+pub(crate) struct Rainboom {
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    /// Radians, from the direction you came out travelling.
+    pub(crate) rotation: f32,
+    pub(crate) timer: f32,
+    pub(crate) frame: u32,
+}
+
 /// Dust out of an open portal's mouth.
 ///
 /// Purely decorative, and the one detail worth keeping is that an **upward**-facing

@@ -31,6 +31,27 @@ pub(crate) const STOMP_BOUNCE: f32 = -300.0; // bounce velocity after stomp
 pub(crate) const ONEUP_TEXT_W: f32 = 16.0 * 2.0;
 pub(crate) const ONEUP_TEXT_H: f32 = 8.0 * 2.0;
 
+// ── Sonic rainboom (variables.lua:374-384) ──
+// An easter egg, off by default: leave a portal fast enough and the screen detonates into
+// a rainbow. Gated on the `sonicrainboom` option *and* on `rainboomallowed`, which is
+// cleared by each one and only restored when Mario next touches a floor — so it is once
+// per landing, not once per portal.
+/// Speed you must leave a portal at, in blocks/s. Four times Mario's own top speed, so
+/// only a portal-assisted fall or a faith plate gets you there.
+pub(crate) const RAINBOOM_SPEED: f32 = 45.0 * TILE_SIZE;
+/// 49 frames at this interval — 1.47 seconds of rainbow.
+pub(crate) const RAINBOOM_DELAY: f32 = 0.03;
+pub(crate) const RAINBOOM_FRAMES: u32 = 49;
+/// The shake, and what the background stripes' opacity is measured against.
+pub(crate) const RAINBOOM_EARTHQUAKE: f32 = 50.0;
+/// Stripes in the radial burst behind everything.
+pub(crate) const BACKGROUND_STRIPES: u32 = 24;
+/// One cell of `rainboom.png`: a 7x7 grid of 204x182 frames.
+pub(crate) const RAINBOOM_CELL: (f32, f32) = (204.0, 182.0);
+pub(crate) const RAINBOOM_SHEET: (f32, f32) = (1428.0, 1274.0);
+/// The sprite's origin inside its own cell (`rainboom.lua:36`).
+pub(crate) const RAINBOOM_ORIGIN: (f32, f32) = (29.0, 92.0);
+
 // ── Portal particles (variables.lua:197-200) ──
 /// Dust drifting out of an open portal's mouth. One every `PORTAL_PARTICLE_TIME`, moving
 /// outward along the portal's own facing, fading over its half-second life.

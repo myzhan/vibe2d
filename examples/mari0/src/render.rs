@@ -327,6 +327,20 @@ impl Mari0Game {
 
     /// The level itself: tiles, actors, effects.
     fn draw_level(&self, ctx: &Context, screen: &mut Screen) {
+        // The rainboom's tremor. Applied as the engine's own shake so the HUD — drawn
+        // inside `screen_space` — stays put while the world jitters, which is what the
+        // original gets by translating before its scissor and not after.
+        if self.earthquake > 0.0 {
+            // Deterministic rather than `math.random`, on the shared clock: two different
+            // frequencies per axis so it reads as noise rather than a circle.
+            let t = self.coin_spin;
+            screen.set_shake(
+                (t * 137.0).sin() * self.earthquake,
+                (t * 149.0).cos() * self.earthquake,
+            );
+        } else {
+            screen.set_shake(0.0, 0.0);
+        }
         let cam_x = self.camera.x;
 
         // Portal tint colors (convert sRGB → linear for GPU)
@@ -1089,6 +1103,61 @@ impl Mari0Game {
             }
         }
 
+        // ── The rainboom, and the rainbow burst behind it ──
+        // The stripes are a fan of triangles from the middle of the screen, rotating with
+        // the shared clock, fading with the shake (`game.lua:857-874`). Drawn first so
+        // everything else sits on top of them.
+        if self.earthquake > 0.0 {
+            const STRIPE_COLOURS: [u32; 6] = [
+                0xF26F33, 0xFBF4AE, 0x5FBA4C, 0x1D97D4, 0x652D87, 0xEE4044,
+            ];
+            let alpha = self.earthquake / RAINBOOM_EARTHQUAKE;
+            let (cx, cy) = (self.vw / 2.0, self.vh * 112.0 / 240.0);
+            let spin = (self.coin_spin / 5.0).fract();
+            screen.screen_space(|screen| {
+                for i in 0..BACKGROUND_STRIPES {
+                    let hex = STRIPE_COLOURS[(i as usize) % 6];
+                    let base = Color::from_hex(hex);
+                    let tint = Color { r: base.r, g: base.g, b: base.b, a: alpha };
+                    let angle = |k: f32| {
+                        (k / BACKGROUND_STRIPES as f32 + spin) * std::f32::consts::TAU
+                    };
+                    // No polygon primitive here, so each wedge is drawn as a run of thin
+                    // quads along its own radius. Visually the same fan; the original
+                    // fills a triangle per stripe.
+                    let a0 = angle(i as f32);
+                    let a1 = angle(i as f32 + 1.0);
+                    const R: f32 = 600.0;
+                    let steps = 24;
+                    for s in 0..steps {
+                        let t0 = s as f32 / steps as f32;
+                        let r0 = t0 * R;
+                        let mid = (a0 + a1) * 0.5;
+                        let w = (a1 - a0) * r0 + 2.0;
+                        screen.draw_sprite_tinted(
+                            self.tex_portal_particle,
+                            cx + mid.cos() * r0 - w / 2.0,
+                            cy + mid.sin() * r0 - w / 2.0,
+                            w,
+                            w,
+                            tint,
+                        );
+                    }
+                }
+            });
+        }
+        for r in &self.rainbooms {
+            let (ox, oy) = RAINBOOM_ORIGIN;
+            let (cw, ch) = RAINBOOM_CELL;
+            screen.rotated(r.rotation, |screen| {
+                screen.draw_sprite_region(
+                    self.tex_rainboom,
+                    rainboom_uv(r.frame),
+                    [r.x - cam_x - ox, r.y - oy, cw, ch],
+                );
+            });
+        }
+
         // ── Portal dust ──
         // Behind the projectiles and the player, and tinted the colour of the portal it
         // came out of. `portalparticle.png` is a single pixel, drawn centred.
@@ -1383,6 +1452,9 @@ impl Mari0Game {
                         crate::player::PlayerType::GelCannon => "GEL CANNON",
                     };
                     screen.draw_text_centered(font, &format!("[F] {gun}"), 274.0);
+                    if self.sonic_rainboom {
+                        screen.draw_text_centered(font, "[P] SONIC RAINBOOM: ON", 296.0);
+                    }
                     screen.draw_text_centered(
                         font,
                         &format!("high score {:06}", self.high_score),
