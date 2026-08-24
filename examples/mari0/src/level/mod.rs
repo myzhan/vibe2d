@@ -54,11 +54,15 @@ mod tests {
     /// The headline test: **every shipped level parses**.
     ///
     /// A 1-level port cannot discover that world 5-2 has a cell shape the loader
-    /// chokes on. This walks all 73 files and asserts the invariants that must
+    /// chokes on. This walks every shipped file and asserts the invariants that must
     /// hold for the level to be playable at all.
     #[test]
     fn every_shipped_level_parses() {
-        assert_eq!(LEVELS.len(), 73, "expected 64 smb + 9 portal");
+        assert_eq!(
+            LEVELS.len(),
+            81,
+            "expected 64 smb + 9 portal + 4 escape_the_lab + 4 scienceandstuff"
+        );
         let mut failures = Vec::new();
         for (pack, name, raw) in LEVELS {
             match Level::parse(raw) {

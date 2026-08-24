@@ -76,6 +76,27 @@ impl Mari0Game {
         }
     }
 
+    /// Put the level's own music back on after a star (`playmusic()`, `mario.lua:281`).
+    ///
+    /// Called a second before the invincibility ends, not at the end of it, so the theme
+    /// returning *is* the warning.
+    ///
+    /// Which track that is depends on where the clock got to while you were starred. The
+    /// warning window is the odd one: it deliberately leaves everything silent until the
+    /// fast variant is due, so a star that expires inside it hands back silence rather
+    /// than reviving a theme the warning had already taken away.
+    pub(crate) fn resume_music_after_star(&mut self, ctx: &mut Context) {
+        let track = match self.music_phase {
+            MusicPhase::Warning => None,
+            MusicPhase::Fast => self.theme().map(|t| format!("{t}-fast")),
+            MusicPhase::Normal => self.theme().map(str::to_string),
+        };
+        match track {
+            Some(track) => ctx.audio.play_music(&track),
+            None => ctx.audio.stop_music(),
+        }
+    }
+
     /// Advance the clock and drive the low-time music sequence.
     ///
     /// Returns `true` when time has run out and the player should die.

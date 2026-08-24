@@ -61,6 +61,15 @@ pub(crate) fn mario_uv(col: u32, row: u32) -> [f32; 4] {
     ]
 }
 
+/// The transform cell used while growing or shrinking: 20x24 at x=260 on the small sheet.
+///
+/// Always row 0 — `mariogrow[i]` ignores its own loop variable (`main.lua:552`), so unlike
+/// every other pose this one does not follow the gun's aim. Four pixels taller than a
+/// standing frame, which is the whole point: it is Mario caught halfway.
+pub(crate) fn mario_grow_uv() -> [f32; 4] {
+    [260.0 / 512.0, 0.0, 20.0 / 512.0, 24.0 / 128.0]
+}
+
 /// Get UV rect for a big mario animation frame (512×256, 20×36 cells)
 pub(crate) fn mario_big_uv(col: u32, row: u32) -> [f32; 4] {
     [

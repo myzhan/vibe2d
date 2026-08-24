@@ -591,6 +591,52 @@ pub(crate) const STAR_JUMP_FORCE: f32 = -416.0; // 13 blocks/s upward
 pub(crate) const STAR_ANIM_DELAY: f32 = 0.04;
 pub(crate) const STAR_DURATION: f32 = 12.0; // seconds of invincibility
 
+// ── The star's disco, and how it warns you (variables.lua:91-94) ──
+/// The last second of a star. `mariostarrunout` "subtracts, doesn't add", as the
+/// original's own comment puts it: it is carved out of [`STAR_DURATION`], not added to it.
+///
+/// Two things happen when it begins, and neither is a sound effect: the flashing halves in
+/// speed, and the level's music comes back. You are still invincible for that second — the
+/// music is the whole warning.
+pub(crate) const STAR_RUNOUT: f32 = 1.0;
+/// Seconds per palette step, and what it slows to during the run-out.
+pub(crate) const STAR_BLINK_RATE: f32 = 0.08;
+pub(crate) const STAR_BLINK_RATE_SLOW: f32 = 0.16;
+/// The four palettes a starred Mario cycles through (`starcolors`, `main.lua:1152-1156`),
+/// each one shirt/overalls/skin — the same three tinted layers `render::mario_palette`
+/// hands back. Held as sRGB bytes because that is how the original writes them.
+pub(crate) const STAR_COLORS: [[(f32, f32, f32); 3]; 4] = [
+    [(0.0, 0.0, 0.0), (200.0, 76.0, 12.0), (252.0, 188.0, 176.0)],
+    [
+        (0.0, 168.0, 0.0),
+        (252.0, 152.0, 56.0),
+        (252.0, 252.0, 252.0),
+    ],
+    [
+        (252.0, 216.0, 168.0),
+        (216.0, 40.0, 0.0),
+        (252.0, 152.0, 56.0),
+    ],
+    [
+        (216.0, 40.0, 0.0),
+        (252.0, 152.0, 56.0),
+        (252.0, 252.0, 252.0),
+    ],
+];
+
+// ── Growing and shrinking (variables.lua:307-309) ──
+/// How long the transform holds the world still. Both directions take the same
+/// half-second-and-a-bit (`growtime`, `shrinktime`).
+///
+/// The freeze is total: the original sets a global `noupdate` and returns from the top of
+/// its update, calling nothing but the player's own animation (`game.lua:229-234`). No
+/// enemies, no clock, no physics — the screen stops while Mario changes size.
+pub(crate) const GROW_TIME: f32 = 0.9;
+pub(crate) const SHRINK_TIME: f32 = 0.9;
+/// Seconds per frame of the three-frame flip. The cycle runs small → transform cell →
+/// big and repeats for the whole duration, which is what reads as pulsing.
+pub(crate) const GROW_FRAME_DELAY: f32 = 0.08;
+
 // ── The flicker after taking a hit (variables.lua:308-312) ──
 /// How long losing a size makes you untouchable (`invincibletime`). Runs *after* the
 /// shrink animation, so it is 3.2 seconds of grace on top of that.

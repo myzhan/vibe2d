@@ -50,13 +50,30 @@ fn hammer_bro_dst(hitbox: [f32; 4]) -> [f32; 4] {
 ///
 /// Layer 0 is the outline and is drawn untinted on top. Fire Mario swaps the shirt for
 /// white and the overalls for red; everything else is the same sheet.
-fn mario_palette(fire: bool) -> [Color; 3] {
-    let rgb = |r: f32, g: f32, b: f32| Color {
+fn rgb(r: f32, g: f32, b: f32) -> Color {
+    Color {
         r: srgb_to_linear(r / 255.0),
         g: srgb_to_linear(g / 255.0),
         b: srgb_to_linear(b / 255.0),
         a: 1.0,
-    };
+    }
+}
+
+/// The palette a starred Mario is flashing this frame (`starcolors`, `main.lua:1152`).
+///
+/// It replaces the whole three-layer tint, fire or not — which is why a starred fire Mario
+/// stops looking like one until it wears off. Also borrowed by the fire-flower transform,
+/// the only other thing in the game that flashes these colours.
+fn star_palette(index: usize) -> [Color; 3] {
+    let set = STAR_COLORS[index % STAR_COLORS.len()];
+    [
+        rgb(set[0].0, set[0].1, set[0].2),
+        rgb(set[1].0, set[1].1, set[1].2),
+        rgb(set[2].0, set[2].1, set[2].2),
+    ]
+}
+
+fn mario_palette(fire: bool) -> [Color; 3] {
     if fire {
         [
             Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
@@ -1075,8 +1092,47 @@ impl Mari0Game {
                 // Mari0 4-layer palette rendering (Player 1 = Red Mario)
                 // Draw order: layer1 (primary), layer2 (secondary), layer3 (tertiary), layer0 (outline)
                 // Colors are sRGB values from original mari0; convert to linear for GPU tint multiplication
-                let mario_colors = mario_palette(self.player.is_fire);
-                let layers = if self.player.is_big {
+                // ── Growing and shrinking ──
+                // The flip runs small pose → transform cell → big pose and repeats
+                // (`mario.lua:740-760`), drawing off *both* sheets in turn — so the sprite,
+                // its size and which layer set to use are decided here rather than by
+                // `is_big`. Two of the three frames disagree with the box on purpose.
+                //
+                // Everything hangs from the bottom of the box, which is what reads as
+                // growing upward: the box is already the new size, so a short sprite pinned
+                // to its floor leaves the gap at the top.
+                let transform_frame = self.transform.as_ref().map(|t| (t.kind, t.frame()));
+                let (src, dst, big_sheet) = match transform_frame {
+                    // `grow2` never changes sprite at all; only the palette moves.
+                    None | Some((TransformKind::Fire, _)) => (src, dst, self.player.is_big),
+                    Some((_, frame)) => {
+                        let bottom = sy + sh;
+                        match frame {
+                            3 => {
+                                let h = MARIO_BIG_SPRITE_H;
+                                (mario_big_uv(0, angle_row), [sx, bottom - h, sw, h], true)
+                            }
+                            // The 20x24 halfway cell, four pixels taller than a standing
+                            // small Mario and drawn off the small sheet.
+                            2 => {
+                                let h = 24.0 * MARIO_SPRITE_SCALE;
+                                (mario_grow_uv(), [sx, bottom - h, sw, h], false)
+                            }
+                            _ => {
+                                let h = MARIO_SMALL_SPRITE_H;
+                                (mario_uv(0, angle_row), [sx, bottom - h, sw, h], false)
+                            }
+                        }
+                    }
+                };
+                let mario_colors = match transform_frame {
+                    // A flower flashes the star colours for the whole freeze
+                    // (`mario.lua:786`) rather than changing shape.
+                    Some((TransformKind::Fire, frame)) => star_palette(frame as usize - 1),
+                    _ if self.star_timer > 0.0 => star_palette(self.star_color_index),
+                    _ => mario_palette(self.player.is_fire),
+                };
+                let layers = if big_sheet {
                     &self.tex_mario_big_layers
                 } else {
                     &self.tex_mario_layers

@@ -956,23 +956,29 @@ mod tests {
         }
     }
 
-    /// The 21 levels that have one, have exactly one. Worth pinning: the respawn
-    /// index logic is simple only because no shipped level has two.
+    /// How many levels carry a checkpoint, and the one that carries three.
+    ///
+    /// Super Mario Bros never puts two in a level, and this used to assert that no shipped
+    /// level did. `escape_the_lab/1-3` does — a mappack may place as many as it likes. The
+    /// respawn logic already coped: `check_checkpoint_passed` walks the sorted list with a
+    /// `while`, and `load_current` restores the index by finding the recorded column, so N
+    /// works for the same reason 1 does. The old assertion was pinning the *content*, not a
+    /// limitation, which is exactly the kind of thing that only surfaces when content
+    /// arrives.
     #[test]
-    fn no_shipped_level_has_more_than_one_checkpoint() {
+    fn checkpoint_counts_are_what_we_expect() {
         let mut with_checkpoints = 0;
+        let mut most = 0;
         for (pack, name, _) in level::LEVELS {
             let lv = load_level(pack, name);
-            assert!(
-                lv.checkpoints.len() <= 1,
-                "{pack}/{name} has {} checkpoints",
-                lv.checkpoints.len()
-            );
+            most = most.max(lv.checkpoints.len());
             if !lv.checkpoints.is_empty() {
                 with_checkpoints += 1;
             }
         }
-        assert_eq!(with_checkpoints, 21, "expected 21 levels with a checkpoint");
+        assert_eq!(with_checkpoints, 25, "levels with at least one checkpoint");
+        assert_eq!(most, 3, "escape_the_lab/1-3 has three");
+        assert_eq!(load_level("escape_the_lab", "1-3").checkpoints.len(), 3);
     }
 
     /// The intermission stubs are the levels whose pipe sets a respawn sublevel.

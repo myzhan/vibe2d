@@ -118,8 +118,25 @@ pub(crate) struct Mari0Inspect {
     pub(crate) items: Vec<ItemView>,
     pub(crate) block_contents: Vec<BlockContentView>,
     pub(crate) star_timer: f32,
+    /// Which of the four star palettes is showing. Exposed because the flashing is the only
+    /// sign a star is running, and its *rate* is the only sign it is about to stop.
+    pub(crate) star_color_index: usize,
+    /// A size change in progress: which way it is going and how far in. `null` otherwise.
+    ///
+    /// Exposed because the freeze it causes is otherwise indistinguishable from a hang —
+    /// every other field in the snapshot stops moving for its whole duration.
+    pub(crate) transform: Option<TransformView>,
     /// Fireworks the last flagpole earned.
     pub(crate) fireworks: u32,
+}
+
+#[cfg(feature = "vdp")]
+#[derive(serde::Serialize)]
+pub(crate) struct TransformView {
+    pub(crate) kind: crate::player::TransformKind,
+    pub(crate) timer: f32,
+    /// Which of the three flip frames is showing, 1..=3.
+    pub(crate) frame: u32,
 }
 
 #[cfg(feature = "vdp")]
@@ -1065,6 +1082,12 @@ impl Mari0Game {
                 })
                 .collect(),
             star_timer: self.star_timer,
+            star_color_index: self.star_color_index,
+            transform: self.transform.as_ref().map(|t| TransformView {
+                kind: t.kind,
+                timer: t.timer,
+                frame: t.frame(),
+            }),
             fireworks: self.fireworks,
         };
         serde_json::to_value(&view).unwrap_or(serde_json::Value::Null)

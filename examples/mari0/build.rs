@@ -131,20 +131,40 @@ fn marker_set(img: &image::RgbaImage, x: u32, y: u32) -> bool {
 /// well under a megabyte, so embedding costs little.
 fn generate_level_manifest(assets: &Path, out_dir: &Path) {
     let mut entries: Vec<(String, String, PathBuf)> = Vec::new();
-    for pack in ["smb", "portal"] {
-        let dir = assets.join("levels").join(pack);
+    // Enumerated rather than listed, so adding a mappack is a matter of dropping its
+    // directory in. It has to stay sorted for the generated table to be stable across
+    // machines, and `menu::PACKS` decides the *menu* order separately — a pack that is
+    // embedded but not listed there is simply unreachable rather than broken.
+    let levels_root = assets.join("levels");
+    println!("cargo:rerun-if-changed={}", levels_root.display());
+    let mut packs: Vec<String> = std::fs::read_dir(&levels_root)
+        .unwrap_or_else(|e| panic!("read {}: {e}", levels_root.display()))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    packs.sort();
+    for pack in &packs {
+        let dir = levels_root.join(pack);
         println!("cargo:rerun-if-changed={}", dir.display());
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
             .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
             .filter_map(|e| e.ok().map(|e| e.path()))
             .filter(|p| p.extension().is_some_and(|e| e == "txt"))
-            .filter(|p| p.file_stem().is_some_and(|s| s != "settings"))
+            // A mappack directory also holds its own metadata, and neither file is a
+            // level: `settings.txt` names the pack and `version.txt` is one line of
+            // integer. Feeding either to the parser fails with "not a multiple of 15",
+            // which is how they were noticed.
+            .filter(|p| {
+                p.file_stem()
+                    .is_some_and(|s| s != "settings" && s != "version")
+            })
             .collect();
         // Sorted so the generated table is stable across machines.
         files.sort();
         for path in files {
             let stem = path.file_stem().unwrap().to_string_lossy().to_string();
-            entries.push((pack.to_string(), stem, path));
+            entries.push((pack.clone(), stem, path));
         }
     }
 

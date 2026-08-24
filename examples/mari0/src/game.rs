@@ -75,6 +75,14 @@ pub(crate) struct Mari0Game {
     /// Bubbles Mario has breathed out. Only ever non-empty in a water level.
     pub(crate) bubbles: Vec<Bubble>,
     pub(crate) star_timer: f32, // player star invincibility timer
+    /// A size change in progress, which freezes the whole world while it runs.
+    pub(crate) transform: Option<Transform>,
+    /// Which of [`STAR_COLORS`] is showing, and the accumulator that steps it.
+    ///
+    /// Accumulated rather than derived from `star_timer`, because the rate changes partway
+    /// through: the run-out halves it, so elapsed time no longer maps onto a palette index.
+    pub(crate) star_color_index: usize,
+    pub(crate) star_blink_timer: f32,
 
     /// The pipe trip in progress, if any. While set, the player has no control.
     pub(crate) pipe: Option<PipeTransit>,
@@ -245,6 +253,11 @@ pub(crate) struct Mari0Game {
     /// Deferred rather than started inline because `reset_level` is also reached
     /// from VDP methods, which have no `Context` to play audio through.
     pub(crate) music_restart: bool,
+    /// Set when a star is picked up; `update` starts the star theme on the next frame.
+    ///
+    /// Same reason as [`Self::music_restart`]: the item pass only holds a `&Context`, and
+    /// starting a track needs a mutable one.
+    pub(crate) star_music_start: bool,
 
     // Sprite sheet textures
     pub(crate) tex_tiles: TextureId,
@@ -432,6 +445,11 @@ impl Mari0Game {
         // A fresh Mario takes a fresh copy of the hat selection (`mario.lua:97`), which is
         // what makes a rainboom's bestpony last exactly one life.
         self.hats = self.hat_selection.clone();
+        // And he is not mid-transform, whatever the last one was doing. Without this a hit
+        // taken just before a level change carries its freeze into the new level and holds
+        // it still for the first 0.9s — which reads as the game having hung on load, and is
+        // how three unrelated tests started failing at once.
+        self.transform = None;
         // Restore how many checkpoints are behind us, so passing the *next* one
         // still registers after a respawn (`game.lua:2161-2163`).
         self.checkpoints_passed = match self.checkpoint.filter(|_| use_checkpoint) {
@@ -721,7 +739,40 @@ impl Mari0Game {
         }
     }
 
+    /// Tick a grow or shrink, and report whether the world is still frozen.
+    ///
+    /// The frame the timer crosses the duration is still a frozen one — the original clears
+    /// `noupdate` and then `return`s from the same frame (`mario.lua:768-780`), and the gate
+    /// that read it had already fired.
+    fn update_transform(&mut self, dt: f32) -> bool {
+        let Some(t) = self.transform.as_mut() else {
+            return false;
+        };
+        t.timer += dt;
+        if t.timer < t.duration() {
+            return true;
+        }
+        let kind = t.kind;
+        self.transform = None;
+        if kind == TransformKind::Shrink {
+            // The flicker picks up exactly where the shrink stops (`mario.lua:710-716`),
+            // so the grace period is 3.2s *on top of* the 0.9s freeze.
+            self.player.invincible_timer = INVINCIBLE_TIME;
+        }
+        true
+    }
+
     pub(crate) fn update_playing(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
+        // ── Growing and shrinking ──
+        // Outranks every other suspension below, because the original's is not a branch at
+        // all: `noupdate` makes `game_update` return from the top after calling nothing but
+        // the player's own animation (`game.lua:229-234`). Enemies, the clock, physics, the
+        // coin spin — all of it stops. Mario has *already* changed size; this is the half
+        // second the screen spends admitting it.
+        if self.update_transform(dt) {
+            return;
+        }
+
         // ── Pipe transition ──
         // A trip through a pipe owns the player: input, physics and the clock are
         // all suspended, and the level may swap out from under us partway through.
@@ -1190,7 +1241,27 @@ impl Mari0Game {
         self.player.portal_cooldown = (self.player.portal_cooldown - dt).max(0.0);
         self.player.teleport_cooldown = (self.player.teleport_cooldown - dt).max(0.0);
         self.player.invincible_timer = (self.player.invincible_timer - dt).max(0.0);
+        let star_before = self.star_timer;
         self.star_timer = (self.star_timer - dt).max(0.0);
+        if self.star_timer > 0.0 {
+            // The flashing halves in speed for the last second (`mario.lua:256-258`).
+            let rate = if self.star_timer <= STAR_RUNOUT {
+                STAR_BLINK_RATE_SLOW
+            } else {
+                STAR_BLINK_RATE
+            };
+            self.star_blink_timer += dt;
+            while self.star_blink_timer > rate {
+                self.star_color_index = (self.star_color_index + 1) % STAR_COLORS.len();
+                self.star_blink_timer -= rate;
+            }
+        }
+        // And the music comes back on the way *into* that second, not out of it
+        // (`mario.lua:272-284`) — which is the only warning you get, since you stay
+        // invincible throughout.
+        if star_before > STAR_RUNOUT && self.star_timer <= STAR_RUNOUT {
+            self.resume_music_after_star(ctx);
+        }
 
         // ── The mouse: portals, or paint ──
         // The gel cannon is a whole different loadout, not a second weapon: with it
@@ -1570,6 +1641,9 @@ impl Game for Mari0Game {
             items: Vec::new(),
             fireballs: Vec::new(),
             star_timer: 0.0,
+            transform: None,
+            star_color_index: 0,
+            star_blink_timer: 0.0,
             level,
             pipe: None,
             maze: MazeState::default(),
@@ -1641,6 +1715,7 @@ impl Game for Mari0Game {
             // Starts on the first frame of play, not at construction: the menu is
             // silent, and `Context` isn't usable for audio until then anyway.
             music_restart: false,
+            star_music_start: false,
 
             tex_tiles: t("tiles"),
             tex_mario_layers: [t("mario0"), t("mario1"), t("mario2"), t("mario3")],
@@ -1729,6 +1804,10 @@ impl Game for Mari0Game {
         if self.music_restart {
             self.music_restart = false;
             self.start_music(ctx);
+        }
+        if self.star_music_start {
+            self.star_music_start = false;
+            ctx.audio.play_music("starmusic");
         }
 
         // The launch intro sits in front of the menu and owns the frame until it is done

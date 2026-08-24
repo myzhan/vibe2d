@@ -2,6 +2,53 @@
 
 use crate::constants::*;
 
+/// Which way a size change is going. All three freeze the world for the same length of
+/// time; what differs is which sprite the flip settles on and what happens afterwards.
+#[derive(PartialEq, Clone, Copy)]
+#[cfg_attr(feature = "vdp", derive(serde::Serialize))]
+#[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]
+pub(crate) enum TransformKind {
+    /// Small becoming big (`grow1`). Flips between the small pose, the transform cell and
+    /// the big pose.
+    Grow,
+    /// Big becoming fire (`grow2`). No sprite change at all — it flashes the *star* palette
+    /// instead, which is why taking a flower reads as a sparkle rather than a change of
+    /// size. Nothing else in the game reuses those colours this way.
+    Fire,
+    /// Losing a size (`shrink`). The same flip as [`Self::Grow`] plus the blink, and the
+    /// post-hit grace period begins where it ends.
+    Shrink,
+}
+
+/// A size change in progress.
+///
+/// Mario's size and box have *already* changed when one of these starts — `mario:grow`
+/// assigns them before setting the animation (`mario.lua:1641-1644`) — so this is theatre
+/// over a state that has finished moving. What it buys is the freeze: see [`GROW_TIME`].
+pub(crate) struct Transform {
+    pub(crate) kind: TransformKind,
+    pub(crate) timer: f32,
+}
+
+impl Transform {
+    /// Which of the three flip frames is showing, 1..=3.
+    ///
+    /// `ceil(fmod(timer, delay*3) / delay)` (`mario.lua:743`), which yields 0 exactly at
+    /// the start and on every wrap — the original's `if frame == 3 … elseif frame == 2 …
+    /// else` sends that 0 down the same arm as 1, so clamping here matches it.
+    pub(crate) fn frame(&self) -> u32 {
+        let phase = (self.timer % (GROW_FRAME_DELAY * 3.0)) / GROW_FRAME_DELAY;
+        (phase.ceil() as u32).clamp(1, 3)
+    }
+
+    pub(crate) fn duration(&self) -> f32 {
+        match self.kind {
+            TransformKind::Shrink => SHRINK_TIME,
+            _ => GROW_TIME,
+        }
+    }
+}
+
 #[derive(PartialEq, Clone, Copy)]
 #[cfg_attr(feature = "vdp", derive(serde::Serialize))]
 #[cfg_attr(feature = "vdp", serde(rename_all = "snake_case"))]

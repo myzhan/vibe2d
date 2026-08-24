@@ -113,7 +113,10 @@ TALL_PIPES = [(c, h) for c, h in PIPES if h >= 3]
 # 第 138 列。实测 18 帧够用，再往上加没有区别。
 PIPE_JUMP_HOLD_TALL = 18
 PIPE_JUMP_HOLD = 10
-STAIR_JUMP_HOLD = 18
+# 楼梯要 24 而不是 18：这个脚本现在会真的把蘑菇吃掉，于是**以大马里奥的身体**去爬
+# 最后那段楼梯 —— 在此之前它一路都是小马里奥（历次跑完都是 `big: NO`），所以这段
+# 逻辑从没在大身体下被检验过。盒子高一格，同样的起跳就差那么一点。
+STAIR_JUMP_HOLD = 24
 
 
 def enemies_ahead_list(state, max_dist=256):
@@ -870,6 +873,14 @@ async def main():
     try:
         async with websockets.connect(WS_URL) as ws:
             await rpc(ws, "engine.pause")
+            # 明确指定关卡再 reset：`game.reset` 重载的是**当前**关卡，不是 1-1，
+            # 所以这个脚本一直隐含依赖「上一个测试恰好把关卡留在 1-1」。
+            # 前面跑过 vdp_underwater_test 的话，这里会去跑一张水下关然后一路淹死。
+            await rpc(
+                ws,
+                "game.setLevel",
+                {"pack": "smb", "world": 1, "level": 1, "sublevel": 0},
+            )
             await rpc(ws, "game.reset")
 
             # Initial steps to let the game settle

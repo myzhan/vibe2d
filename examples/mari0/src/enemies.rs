@@ -10,6 +10,7 @@ use vibe2d::prelude::*;
 use crate::constants::*;
 use crate::game::Mari0Game;
 use crate::physics::*;
+use crate::player::{Transform, TransformKind};
 use crate::portal::{PortalBody, portal_carry};
 use crate::world::EnemySpawnPoint;
 
@@ -1524,21 +1525,64 @@ impl Mari0Game {
                     _ => {}
                 }
 
-                let combo_score = COMBO_SCORES[self.combo_index.min(COMBO_SCORES.len() - 1)];
-                self.score += combo_score;
-                self.combo_index += 1;
+                // A bullet bill pays its rung but does not advance the chain
+                // (`mario.lua:1853`), so a row of them cannot be ridden up the ladder.
+                let advance = enemy.enemy_type != EnemyType::BulletBill;
+                let (x, y) = (enemy.x, enemy.y);
+                // Inlined rather than a helper: the loop holds a mutable borrow of
+                // `self.enemies`, so a `&mut self` method is out — but reaching disjoint
+                // fields directly is fine.
+                //
+                // The top of the ladder is an extra life instead of a score, and the guard
+                // that decides which is a strict `combo < #mariocombo`, so the last entry
+                // of `COMBO_SCORES` is **never paid by a stomp at all**: nine kills run
+                // 100…5000 and the tenth is the 1-up. Reproduced rather than tidied —
+                // tidying it would hand out an 8000 the original never gives here and put
+                // the 1-up one enemy later.
                 self.combo_active = true;
-                player_bounce = true;
+                if self.combo_index < COMBO_SCORES.len() - 1 {
+                    let value = COMBO_SCORES[self.combo_index];
+                    self.score += value;
+                    self.score_popups.push(crate::effects::ScorePopup {
+                        x,
+                        y,
+                        value: Some(value),
+                        timer: 0.0,
+                    });
+                    if advance {
+                        self.combo_index += 1;
+                    }
+                } else {
+                    self.lives += 1;
+                    self.score_popups.push(crate::effects::ScorePopup {
+                        x,
+                        y,
+                        value: None,
+                        timer: 0.0,
+                    });
+                    ctx.audio.play("oneup");
+                }
                 ctx.audio.play("stomp");
+                player_bounce = true;
             } else if self.star_timer > 0.0 && !enemy.enemy_type.indestructible() {
                 // Star invincibility: kill enemy on contact (flip + fly off).
                 // A star does not clear a firebar or a lava geyser — those are
                 // level geometry with a hitbox, not enemies.
+                //
+                // It pays the flat fire rate and leaves the stomp chain alone
+                // (`mario:starcollide`, `mario.lua:2240-2247`) — running through a row of
+                // goombas starred is worth 100 each, not 100, 200, 400. Bowser's 5000 is
+                // paid here rather than in his own death throw, as on the fireball path.
                 enemy.shotted();
-                let combo_score = COMBO_SCORES[self.combo_index.min(COMBO_SCORES.len() - 1)];
-                self.score += combo_score;
-                self.combo_index += 1;
-                self.combo_active = true;
+                let value = enemy.enemy_type.fire_points();
+                let (x, y) = (enemy.x, enemy.y);
+                self.score += value;
+                self.score_popups.push(crate::effects::ScorePopup {
+                    x,
+                    y,
+                    value: Some(value),
+                    timer: 0.0,
+                });
                 ctx.audio.play("stomp");
             } else if enemy.state == EnemyState::Shell {
                 // Walking into a resting shell kicks it instead of hurting you
@@ -1579,7 +1623,13 @@ impl Mari0Game {
                 if self.player.is_big || self.player.is_fire {
                     self.player.is_fire = false;
                     self.player.set_size(false);
-                    self.player.invincible_timer = INVINCIBLE_TIME;
+                    // The grace period does not start here — it starts when the shrink
+                    // animation finishes, which is 0.9s of frozen world away. See
+                    // `Mari0Game::update_transform`.
+                    self.transform = Some(Transform {
+                        kind: TransformKind::Shrink,
+                        timer: 0.0,
+                    });
                     ctx.audio.play("shrink");
                 } else {
                     self.die(ctx);

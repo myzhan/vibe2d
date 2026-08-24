@@ -7,6 +7,7 @@ use crate::effects::*;
 use crate::enemies::{EnemyState, EnemyType, enemy_height};
 use crate::game::Mari0Game;
 use crate::physics::*;
+use crate::player::{Transform, TransformKind};
 use crate::portal::{PortalBody, portal_carry};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -87,11 +88,22 @@ impl Mari0Game {
     /// — from a block you hit before shrinking — and you come up merely big, needing a
     /// second pickup to throw anything.
     fn grow_player(&mut self) {
-        if !self.player.is_big {
+        // The size lands now and the animation runs afterwards, in that order — which is
+        // why the freeze can be pure theatre: there is nothing left to decide once it
+        // starts (`mario.lua:1641-1660`).
+        let kind = if !self.player.is_big {
             self.player.set_size(true);
-        } else {
+            TransformKind::Grow
+        } else if !self.player.is_fire {
             self.player.is_fire = true;
-        }
+            TransformKind::Fire
+        } else {
+            // Already at the top of the ladder: `if self.size > 2 then` is an empty arm in
+            // the original, so a third pickup pays its 1000 points and does nothing else —
+            // no animation and, notably, no freeze.
+            return;
+        };
+        self.transform = Some(Transform { kind, timer: 0.0 });
     }
 
     pub(crate) fn hit_block(&mut self, ctx: &Context, row: usize, col: usize, tile: u32) {
@@ -590,6 +602,9 @@ impl Mari0Game {
                     }
                     ItemType::Star => {
                         self.star_timer = STAR_DURATION;
+                        self.star_blink_timer = 0.0;
+                        self.star_color_index = 0;
+                        self.star_music_start = true;
                         self.score += ITEM_SCORE;
                         self.score_popups.push(ScorePopup {
                             x: item.x,

@@ -18,7 +18,15 @@ use crate::level;
 use crate::player::PlayerType;
 
 /// The mappacks the build ships with, in menu order.
-pub(crate) const PACKS: [&str; 2] = ["smb", "portal"];
+///
+/// Only packs that render correctly against the *stock* tilesheet are listed. Four of the
+/// original's six DLC packs ship a `tiles.png` of their own, and a tilesheet is not just
+/// art — each cell's 17th column carries that tile's collision and breakability (see
+/// `build.rs`). Their markers genuinely differ from the stock sheet's (66 cells in `a
+/// portal tribute`, 23 in `smb2J`), and two of the sheets are taller, which moves where
+/// the lab's tile ids begin. Listing them without that support would not look wrong so
+/// much as play wrong.
+pub(crate) const PACKS: [&str; 4] = ["smb", "portal", "escape_the_lab", "scienceandstuff"];
 
 /// Storage keys. Bumping these resets everyone's save, so they are written once here.
 const KEY_HIGH_SCORE: &str = "high_score";
