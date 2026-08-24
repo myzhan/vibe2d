@@ -176,7 +176,11 @@ impl crate::game::Mari0Game {
                     // Twice the vine's rate, and it is the *timer* that is folded, so the
                     // flicker keeps going even once he has bottomed out mid-slide.
                     let phase = f.timer % (FLAG_CLIMB_FRAME_DELAY * 2.0);
-                    self.player.climb_frame = if phase >= FLAG_CLIMB_FRAME_DELAY { 1 } else { 2 };
+                    self.player.climb_frame = if phase >= FLAG_CLIMB_FRAME_DELAY {
+                        1
+                    } else {
+                        2
+                    };
                 }
                 self.player.anim_state = PlayerAnim::Climb;
                 if f.timer >= FLAG_DESCEND_TIME {

@@ -323,7 +323,11 @@ impl Mari0Game {
             return 0;
         }
         let surface = p.y - ph;
-        if !in_range(py, surface - SEESAW_RIDE_TOLERANCE, surface + SEESAW_RIDE_TOLERANCE) {
+        if !in_range(
+            py,
+            surface - SEESAW_RIDE_TOLERANCE,
+            surface + SEESAW_RIDE_TOLERANCE,
+        ) {
             return 0;
         }
         self.player.y = surface + p.vy * dt;
@@ -376,7 +380,9 @@ mod tests {
         assert!((right_centre - left_centre - 7.0 * TILE_SIZE).abs() < 0.01);
         // And the right one starts lower, because dist2 > dist1.
         assert!(s.right.y > s.left.y);
-        assert!((s.drop_of(SeesawSide::Left) - (4.0 * TILE_SIZE + SEESAW_PLATFORM_DROP)).abs() < 0.01);
+        assert!(
+            (s.drop_of(SeesawSide::Left) - (4.0 * TILE_SIZE + SEESAW_PLATFORM_DROP)).abs() < 0.01
+        );
     }
 
     /// The pair's total drop is fixed — that is what makes it a rope and not two lifts.
@@ -409,7 +415,11 @@ mod tests {
         // And it keeps accelerating — there is no terminal speed, only the rope.
         let first = s.left.vy;
         s.step(1.0 / 60.0);
-        assert!(s.left.vy > first * 1.9, "still building: {first} → {}", s.left.vy);
+        assert!(
+            s.left.vy > first * 1.9,
+            "still building: {first} → {}",
+            s.left.vy
+        );
     }
 
     /// Step off and friction cancels exactly what you were adding, so it coasts to a
@@ -428,7 +438,10 @@ mod tests {
             s.step(1.0 / 60.0);
         }
         assert_eq!(s.left.vy, 0.0, "settles exactly, not near-zero");
-        assert_eq!(s.right.vy, 0.0, "and so does the far side — the original's slip left this one drifting");
+        assert_eq!(
+            s.right.vy, 0.0,
+            "and so does the far side — the original's slip left this one drifting"
+        );
     }
 
     /// Coast into the end of the rope with nobody aboard and it simply stops — and the
@@ -482,7 +495,10 @@ mod tests {
         let before = s.left.vy;
         s.step(1.0 / 60.0);
         assert!(s.left.vy > before);
-        assert!((s.left.vy - s.right.vy).abs() < 0.001, "both fall, not just one");
+        assert!(
+            (s.left.vy - s.right.vy).abs() < 0.001,
+            "both fall, not just one"
+        );
         // The collapse is far faster than anything the rig does under weight.
         const { assert!(SEESAW_GRAVITY > 7.0 * SEESAW_SPEED) };
     }

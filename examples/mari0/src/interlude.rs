@@ -90,7 +90,10 @@ pub(crate) enum InterludeKind {
 impl InterludeKind {
     /// Does this one hand back to the level, or to the title screen?
     fn returns_to_menu(self) -> bool {
-        matches!(self, InterludeKind::GameOver | InterludeKind::MappackFinished)
+        matches!(
+            self,
+            InterludeKind::GameOver | InterludeKind::MappackFinished
+        )
     }
 }
 

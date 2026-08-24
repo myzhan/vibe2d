@@ -1115,10 +1115,6 @@ mod tests {
     fn level_id_of(pack: &str, name: &str) -> LevelId {
         let base = name.split('_').next().unwrap_or(name);
         let (world, level) = base.split_once('-').expect("W-L");
-        LevelId::new(
-            pack,
-            world.parse().unwrap_or(1),
-            level.parse().unwrap_or(1),
-        )
+        LevelId::new(pack, world.parse().unwrap_or(1), level.parse().unwrap_or(1))
     }
 }

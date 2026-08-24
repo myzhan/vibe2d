@@ -933,9 +933,7 @@ impl Mari0Game {
                 .collect(),
             vine: self.vine.map(|s| {
                 let (phase, side, dest, intro) = match s {
-                    crate::vine::VineState::Grip { side, .. } => {
-                        ("grip", Some(side), None, None)
-                    }
+                    crate::vine::VineState::Grip { side, .. } => ("grip", Some(side), None, None),
                     crate::vine::VineState::Leaving { dest, .. } => {
                         ("leaving", None, Some(dest), None)
                     }

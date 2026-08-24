@@ -76,7 +76,12 @@ fn star_palette(index: usize) -> [Color; 3] {
 fn mario_palette(fire: bool) -> [Color; 3] {
     if fire {
         [
-            Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 },
+            Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 1.0,
+            },
             rgb(224.0, 32.0, 0.0),
             rgb(252.0, 152.0, 56.0),
         ]
@@ -321,7 +326,12 @@ impl Mari0Game {
         if alpha <= 0.0 {
             return;
         }
-        let tint = Color { r: 1.0, g: 1.0, b: 1.0, a: alpha };
+        let tint = Color {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: alpha,
+        };
         // The original draws with an origin inside the sheet rather than from a corner,
         // and at half scale on a small window; centring on the virtual screen is the same
         // placement expressed in this port's fixed resolution.
@@ -469,7 +479,12 @@ impl Mari0Game {
             && let Some(font) = ctx.assets.font("ui")
         {
             let text_x = (self.level.width as f32 - 14.0 - 1.0 / 16.0) * TILE_SIZE - cam_x;
-            screen.draw_text(font, "welcome to warp zone!", text_x, 88.0 / 16.0 * TILE_SIZE);
+            screen.draw_text(
+                font,
+                "welcome to warp zone!",
+                text_x,
+                88.0 / 16.0 * TILE_SIZE,
+            );
             for ((col, row), world) in &self.level.warp_pipes {
                 screen.draw_text(
                     font,
@@ -1184,7 +1199,11 @@ impl Mari0Game {
                             let Some(def) = crate::hats::HATS.get(index as usize - 1) else {
                                 continue;
                             };
-                            let fit = if self.player.is_big { &def.big } else { &def.small };
+                            let fit = if self.player.is_big {
+                                &def.big
+                            } else {
+                                &def.small
+                            };
                             let local_x = fit.x - off_x;
                             // Facing left mirrors the hat within the cell, the same way
                             // Mario's own sheet is mirrored. The original flips hat and
@@ -1221,7 +1240,11 @@ impl Mari0Game {
                                 );
                             } else {
                                 screen.draw_sprite_region_flipped(
-                                    tex, hat_src, hat_dst, !face_right, false,
+                                    tex,
+                                    hat_src,
+                                    hat_dst,
+                                    !face_right,
+                                    false,
                                 );
                             }
                             yadd += fit.height;
@@ -1240,9 +1263,8 @@ impl Mari0Game {
         // the shared clock, fading with the shake (`game.lua:857-874`). Drawn first so
         // everything else sits on top of them.
         if self.earthquake > 0.0 {
-            const STRIPE_COLOURS: [u32; 6] = [
-                0xF26F33, 0xFBF4AE, 0x5FBA4C, 0x1D97D4, 0x652D87, 0xEE4044,
-            ];
+            const STRIPE_COLOURS: [u32; 6] =
+                [0xF26F33, 0xFBF4AE, 0x5FBA4C, 0x1D97D4, 0x652D87, 0xEE4044];
             let alpha = self.earthquake / RAINBOOM_EARTHQUAKE;
             let (cx, cy) = (self.vw / 2.0, self.vh * 112.0 / 240.0);
             let spin = (self.coin_spin / 5.0).fract();
@@ -1250,10 +1272,14 @@ impl Mari0Game {
                 for i in 0..BACKGROUND_STRIPES {
                     let hex = STRIPE_COLOURS[(i as usize) % 6];
                     let base = Color::from_hex(hex);
-                    let tint = Color { r: base.r, g: base.g, b: base.b, a: alpha };
-                    let angle = |k: f32| {
-                        (k / BACKGROUND_STRIPES as f32 + spin) * std::f32::consts::TAU
+                    let tint = Color {
+                        r: base.r,
+                        g: base.g,
+                        b: base.b,
+                        a: alpha,
                     };
+                    let angle =
+                        |k: f32| (k / BACKGROUND_STRIPES as f32 + spin) * std::f32::consts::TAU;
                     // No polygon primitive here, so each wedge is drawn as a run of thin
                     // quads along its own radius. Visually the same fan; the original
                     // fills a triangle per stripe.
@@ -1303,7 +1329,12 @@ impl Mari0Game {
                 p.y - S / 2.0,
                 S,
                 S,
-                Color { r: base.r, g: base.g, b: base.b, a: fade },
+                Color {
+                    r: base.r,
+                    g: base.g,
+                    b: base.b,
+                    a: fade,
+                },
             );
         }
 
@@ -1534,7 +1565,6 @@ impl Mari0Game {
                 }
             }
         }
-
     }
 
     /// The four-column NES HUD, and whatever screen the current state calls for.
@@ -1627,7 +1657,9 @@ impl Mari0Game {
                 }
                 // The original puts a menu here; this just says so, because a frozen
                 // frame with no label is indistinguishable from a hang.
-                if self.paused && let Some(font) = title_font {
+                if self.paused
+                    && let Some(font) = title_font
+                {
                     screen.draw_text_centered(font, "PAUSED", 200.0);
                 }
             }
@@ -1699,7 +1731,12 @@ impl Mari0Game {
                         }
                         screen.draw_sprite(self.tex_puppet[0], px, py, PW, PH);
                         if let Some(font) = ui_font {
-                            screen.draw_text(font, &format!("*  {}", self.lives), px + 40.0, py + 12.0);
+                            screen.draw_text(
+                                font,
+                                &format!("*  {}", self.lives),
+                                px + 40.0,
+                                py + 12.0,
+                            );
                         }
                     }
                     crate::interlude::InterludeKind::GameOver => {

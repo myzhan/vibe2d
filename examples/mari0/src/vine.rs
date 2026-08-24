@@ -347,7 +347,9 @@ impl crate::game::Mari0Game {
                 // He sets off once the vine has grown `vineanimationgrowheight` — which
                 // at `VINE_SPEED` takes marginally *longer* than the vine needs to reach
                 // its limit, so what you actually see is a finished vine being climbed.
-                if !dropping_off && timer - dt <= VINE_ANIM_MARIO_START && timer > VINE_ANIM_MARIO_START
+                if !dropping_off
+                    && timer - dt <= VINE_ANIM_MARIO_START
+                    && timer > VINE_ANIM_MARIO_START
                 {
                     climbing = true;
                     ctx.audio.play("vine");
@@ -413,11 +415,7 @@ impl crate::game::Mari0Game {
             return;
         }
         let rect = self.player_rect();
-        let Some(i) = self
-            .vines
-            .iter()
-            .position(|v| aabb_overlap(rect, v.rect()))
-        else {
+        let Some(i) = self.vines.iter().position(|v| aabb_overlap(rect, v.rect())) else {
             return;
         };
         // Grabbing out of a portal mouth is refused (`mario.lua:2299`) — the portal
