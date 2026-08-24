@@ -9,6 +9,7 @@
 mod level;
 
 mod atlas;
+mod background;
 mod castle;
 mod constants;
 mod cube;

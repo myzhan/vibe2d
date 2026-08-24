@@ -60,6 +60,12 @@ pub(crate) struct Level {
     pub(crate) spriteset: u8,
     /// Which theme to play, 1..=7. See `music::MusicPhase` for the encoding.
     pub(crate) music: u8,
+    /// Does this level want a parallax backdrop, and how fast should it lag?
+    ///
+    /// `scrollfactor` divides every layer's motion — see `background::layer_scroll`. Levels
+    /// that never ask for a backdrop still carry a value; it just goes unused.
+    pub(crate) portal_background: bool,
+    pub(crate) scrollfactor: f32,
     /// The extra tiles this level's pack appends past id 220, if it has any: where they
     /// live in `TILE_PROPS`, how many there are, and the texture that draws them.
     ///
@@ -828,6 +834,8 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         background: parsed.meta.background,
         spriteset: parsed.meta.spriteset,
         music: parsed.meta.music,
+        portal_background: parsed.meta.portal_background,
+        scrollfactor: parsed.meta.scrollfactor,
         sheet,
         pipes,
         pipe_spawns,

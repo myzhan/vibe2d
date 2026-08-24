@@ -386,6 +386,37 @@ impl Mari0Game {
         }
         let cam_x = self.camera.x;
 
+        // ── The parallax backdrop ──
+        // Behind everything, and *before* the tiles: the original draws it at the top of its
+        // world pass (`game.lua:902-915`).
+        //
+        // Layers go back to front — the loop counts down, so the slowest is laid first and
+        // the nearest ends up on top. Each is tiled to cover the screen both ways, with one
+        // extra column so the seam scrolling in from the right is never visible, and the
+        // horizontal offset is floored to whole pixels because a half-pixel seam on a
+        // 1-block-wide strip shimmers.
+        if !self.background_layers.is_empty() {
+            let scrollfactor = self.level.scrollfactor;
+            let screen_rows = (self.vh / TILE_SIZE).ceil();
+            let screen_cols = (self.vw / TILE_SIZE).ceil();
+            for (i, &(tex, w, h)) in self.background_layers.iter().enumerate().rev() {
+                let scroll = crate::background::layer_scroll(cam_x / TILE_SIZE, i, scrollfactor);
+                let offset = (scroll % w) * TILE_SIZE;
+                let (pw, ph) = (w * TILE_SIZE, h * TILE_SIZE);
+                for row in 0..(screen_rows / h).ceil() as i32 {
+                    for col in 0..(screen_cols / w).ceil() as i32 + 1 {
+                        screen.draw_sprite(
+                            tex,
+                            (col as f32 * pw - offset).floor(),
+                            row as f32 * ph,
+                            pw,
+                            ph,
+                        );
+                    }
+                }
+            }
+        }
+
         // Portal tint colors (convert sRGB → linear for GPU)
         let portal_blue = Color {
             r: srgb_to_linear(0.3),

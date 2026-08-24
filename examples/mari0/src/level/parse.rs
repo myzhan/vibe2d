@@ -325,7 +325,10 @@ impl Level {
                 "haswarpzone" => meta.has_warpzone = flag(value),
                 "underwater" => meta.underwater = flag(value),
                 "bonusstage" => meta.bonusstage = flag(value),
-                "portalbackground" => meta.portal_background = flag(value),
+                // The original treats the two keys as one switch (`game.lua:2503`), and
+                // both appear in the shipped levels: `portalbackground` in 41 of them,
+                // `custombackground` in nine of `acid_trip`'s.
+                "portalbackground" | "custombackground" => meta.portal_background = flag(value),
                 _ => {}
             }
         }

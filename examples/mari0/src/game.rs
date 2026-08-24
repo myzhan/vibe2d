@@ -268,6 +268,17 @@ pub(crate) struct Mari0Game {
     /// string, and looking a texture up by string in the draw path would be a hash lookup
     /// per tile.
     pub(crate) tex_pack_tiles: TextureId,
+    /// Every backdrop image the build ships, by texture name.
+    ///
+    /// A name-keyed map rather than a parallel array because the manifest groups layers into
+    /// sets and the same image never appears in two, so there is nothing to index by.
+    pub(crate) tex_backgrounds: std::collections::HashMap<&'static str, TextureId>,
+    /// The backdrop this level draws, nearest layer first: its texture and its size in
+    /// blocks. Empty when the level asked for none.
+    ///
+    /// Resolved at load rather than per frame for the same reason as `tex_pack_tiles`: the
+    /// manifest holds texture *names*, and the draw loop runs one of these per screenful.
+    pub(crate) background_layers: Vec<(TextureId, f32, f32)>,
     /// One entry per [`crate::level::tiles::PACK_SHEETS`] entry, in the same order.
     /// Resolved once at startup so a level load is an index rather than a name lookup.
     pub(crate) tex_pack_sheets: Vec<TextureId>,
@@ -444,11 +455,31 @@ impl Mari0Game {
 
     fn load_current(&mut self, use_checkpoint: bool) {
         let level = load_level(&self.current.pack, &self.current.name());
-        // Whichever sheet this pack draws with. `pack_sheet` already fell back to `smb` for
-        // an unlisted pack, so this index always resolves.
+        // The backdrop, if this level wants one. Resolving textures by name is fine here —
+        // it happens once per level, not once per layer per frame.
+        self.background_layers = if level.portal_background {
+            crate::background::layers_for(&self.current.pack, &self.current.name())
+                .iter()
+                .filter_map(|l| {
+                    self.tex_backgrounds
+                        .get(l.texture)
+                        .map(|&tex| (tex, l.w, l.h))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        // Whichever sheet this pack draws with, matched by name.
+        //
+        // Not by pointer: `PACK_SHEETS` is a `const`, so it is a *value* rather than a
+        // place, and every mention of it may be a fresh temporary — `std::ptr::eq` against
+        // a reference obtained from a different mention is simply false. It compiled, and
+        // silently fell through to the stock sheet, so `acid_trip` drew its custom cells off
+        // `smbtiles.png` with a 408px divisor: brick ground where there should be grass, and
+        // sliced colour bands everywhere else.
         self.tex_pack_tiles = crate::level::tiles::PACK_SHEETS
             .iter()
-            .position(|s| std::ptr::eq(s, level.sheet))
+            .position(|s| s.pack == self.current.pack)
             .map(|i| self.tex_pack_sheets[i])
             .unwrap_or(self.tex_tiles);
         // Re-parsed rather than threaded through `Level`: the lab network is a
@@ -1745,6 +1776,13 @@ impl Game for Mari0Game {
 
             tex_tiles: t("tiles"),
             tex_pack_tiles: t("tiles"),
+            tex_backgrounds: crate::background::BACKGROUND_SETS
+                .iter()
+                .flat_map(|s| s.layers.iter())
+                .chain(std::iter::once(&crate::background::STOCK_LAYER))
+                .map(|l| (l.texture, t(l.texture)))
+                .collect(),
+            background_layers: Vec::new(),
             tex_pack_sheets: crate::level::tiles::PACK_SHEETS
                 .iter()
                 .map(|s| t(s.texture))
