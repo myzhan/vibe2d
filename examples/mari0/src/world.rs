@@ -29,6 +29,8 @@ pub(crate) struct SolidRect {
 }
 
 pub(crate) struct Level {
+    /// Tile ids, already offset by [`Level::sheet`]'s base — so they index
+    /// `TILE_PROPS` directly and `props()` never has to know which pack this is.
     pub(crate) tiles: Vec<Vec<u32>>,
     pub(crate) width: usize,
     pub(crate) height: usize,
@@ -58,6 +60,12 @@ pub(crate) struct Level {
     pub(crate) spriteset: u8,
     /// Which theme to play, 1..=7. See `music::MusicPhase` for the encoding.
     pub(crate) music: u8,
+    /// The extra tiles this level's pack appends past id 220, if it has any: where they
+    /// live in `TILE_PROPS`, how many there are, and the texture that draws them.
+    ///
+    /// Carried on the level so rendering can pick the right sheet without a lookup by name
+    /// every frame. See `build.rs` for why a custom sheet is more than art.
+    pub(crate) sheet: &'static crate::level::tiles::PackSheet,
     /// Pipe entrances, keyed by tile cell → destination sublevel (0 = back to the
     /// main level).
     pub(crate) pipes: HashMap<(i32, i32), u32>,
@@ -474,15 +482,20 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
     let width = parsed.width;
     let height = parsed.height;
 
+    // Ids 1..=220 are the stock sheets and mean the same thing in every pack; only ids past
+    // that are the pack's own, and those get shifted into its block so `props()` and
+    // `is_solid()` stay plain array lookups. For a pack with no `tiles.png` — which is most
+    // of them — `shift_tile` is the identity.
+    let sheet = level::tiles::pack_sheet(pack);
     let mut tiles = vec![vec![level::tiles::TILE_EMPTY as u32; width]; height];
     let mut coins = Vec::new();
     for (row, tile_row) in tiles.iter_mut().enumerate() {
         for (col, slot) in tile_row.iter_mut().enumerate() {
-            let tile = parsed.tile(col as i32, row as i32);
-            *slot = tile as u32;
+            let tile = level::tiles::shift_tile(sheet, parsed.tile(col as i32, row as i32));
+            *slot = tile;
             // Free-standing coins become collectables rather than tiles so the
             // pickup path doesn't have to special-case the tile layer.
-            if level::tiles::props(tile).coin() {
+            if level::tiles::props(tile as u16).coin() {
                 coins.push(CoinInstance {
                     x: col as f32 * TILE_SIZE,
                     y: row as f32 * TILE_SIZE,
@@ -815,6 +828,7 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
         background: parsed.meta.background,
         spriteset: parsed.meta.spriteset,
         music: parsed.meta.music,
+        sheet,
         pipes,
         pipe_spawns,
         warp_pipes,
@@ -969,15 +983,17 @@ mod tests {
     fn checkpoint_counts_are_what_we_expect() {
         let mut with_checkpoints = 0;
         let mut most = 0;
-        for (pack, name, _) in level::LEVELS {
+        for (pack, name, _) in level::original_levels() {
             let lv = load_level(pack, name);
             most = most.max(lv.checkpoints.len());
             if !lv.checkpoints.is_empty() {
                 with_checkpoints += 1;
             }
         }
-        assert_eq!(with_checkpoints, 25, "levels with at least one checkpoint");
-        assert_eq!(most, 3, "escape_the_lab/1-3 has three");
+        assert_eq!(with_checkpoints, 21, "original levels with a checkpoint");
+        assert_eq!(most, 1, "no Super Mario Bros level places two");
+        // And the case that proves the respawn logic never needed that to be true:
+        // a mappack may place as many as it likes, and this one places three.
         assert_eq!(load_level("escape_the_lab", "1-3").checkpoints.len(), 3);
     }
 
@@ -1021,9 +1037,9 @@ mod tests {
         seen.sort();
         assert_eq!(seen, (1..=9u16).collect::<Vec<_>>());
 
-        // And nowhere else in the game.
-        let total: usize = level::LEVELS
-            .iter()
+        // And nowhere else in the *original's* levels. The DLC packs like seesaws too, so
+        // this counts Nintendo's nine rather than every rig that ships.
+        let total: usize = level::original_levels()
             .map(|(pack, name, _)| load_level(pack, name).seesaws.len())
             .sum();
         assert_eq!(total, 9);
@@ -1056,8 +1072,10 @@ mod tests {
                 "{name}'s vine is in a brick, and a brick has to bounce for it to sprout"
             );
         }
-        // And nowhere else: a sixth vine would mean the entity table has shifted.
-        let total: usize = level::LEVELS
+        // And nowhere else *in the original's own levels*: a sixth vine there would mean
+        // the entity table has shifted. DLC packs plant plenty more.
+        let total: usize = level::original_levels()
+            .collect::<Vec<_>>()
             .iter()
             .map(|(pack, name, _)| {
                 load_level(pack, name)
@@ -1077,7 +1095,7 @@ mod tests {
     #[test]
     fn vines_and_bonus_stages_are_the_same_five_rooms() {
         let mut reached = Vec::new();
-        for (pack, name, _) in level::LEVELS {
+        for (pack, name, _) in level::original_levels() {
             let lv = load_level(pack, name);
             for content in lv.block_contents.values() {
                 if let BlockContent::Vine(dest) = content {
@@ -1097,8 +1115,9 @@ mod tests {
                 }
             }
         }
-        let mut bonus: Vec<String> = level::LEVELS
-            .iter()
+        // Scoped to the original's levels like the loop above: a DLC pack may mark a room
+        // `bonusstage` and reach it however it likes, and several do.
+        let mut bonus: Vec<String> = level::original_levels()
             .filter(|(pack, name, _)| load_level(pack, name).bonusstage)
             .map(|(_, name, _)| name.to_string())
             .collect();

@@ -47,6 +47,26 @@ pub fn level_names(pack: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// The two mappacks the original itself shipped.
+///
+/// Several tests pin facts about *that* content — five vines, nine seesaws, which levels
+/// loop, that a spiny is never placed by hand — and those are claims about Nintendo's and
+/// Stabyourself's level design, not invariants a mappack has to honour. The DLC packs are
+/// free to hang a piranha plant in mid-air (`acid_trip/2-1`) or place a spiny outright
+/// (`acid_trip/3-1`), and they do. The port handles both; only the claims were narrow.
+///
+/// Structural invariants — parses, has a start, has a way out — stay scoped to everything.
+#[cfg(test)]
+pub const ORIGINAL_PACKS: [&str; 2] = ["smb", "portal"];
+
+/// Every level of [`ORIGINAL_PACKS`], for tests that describe the original's content.
+#[cfg(test)]
+pub fn original_levels() -> impl Iterator<Item = (&'static str, &'static str, &'static str)> {
+    LEVELS
+        .into_iter()
+        .filter(|(pack, _, _)| ORIGINAL_PACKS.contains(pack))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,11 +78,9 @@ mod tests {
     /// hold for the level to be playable at all.
     #[test]
     fn every_shipped_level_parses() {
-        assert_eq!(
-            LEVELS.len(),
-            81,
-            "expected 64 smb + 9 portal + 4 escape_the_lab + 4 scienceandstuff"
-        );
+        // 64 smb + 9 portal, then the six DLC packs: 9 acid_trip, 4 a_portal_tribute,
+        // 4 escape_the_lab, 4 scienceandstuff, 75 smb2J, 79 the_untitled_game.
+        assert_eq!(LEVELS.len(), 248, "every level of all eight mappacks");
         let mut failures = Vec::new();
         for (pack, name, raw) in LEVELS {
             match Level::parse(raw) {

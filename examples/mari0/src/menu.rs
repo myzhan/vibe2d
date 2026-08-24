@@ -17,16 +17,23 @@ use crate::hats::HATS;
 use crate::level;
 use crate::player::PlayerType;
 
-/// The mappacks the build ships with, in menu order.
+/// The mappacks the build ships with, in menu order: the two originals and all six DLC.
 ///
-/// Only packs that render correctly against the *stock* tilesheet are listed. Four of the
-/// original's six DLC packs ship a `tiles.png` of their own, and a tilesheet is not just
-/// art — each cell's 17th column carries that tile's collision and breakability (see
-/// `build.rs`). Their markers genuinely differ from the stock sheet's (66 cells in `a
-/// portal tribute`, 23 in `smb2J`), and two of the sheets are taller, which moves where
-/// the lab's tile ids begin. Listing them without that support would not look wrong so
-/// much as play wrong.
-pub(crate) const PACKS: [&str; 4] = ["smb", "portal", "escape_the_lab", "scienceandstuff"];
+/// Four of the DLC packs carry a `tiles.png` of their own, which is why `build.rs` decodes
+/// a properties block per pack — a tilesheet is not just art, each cell's 17th column
+/// holds that tile's collision and breakability. `acid_trip` additionally ships 24
+/// parallax backgrounds that this port does not draw; its levels play, they just have a
+/// flat backdrop.
+pub(crate) const PACKS: [&str; 8] = [
+    "smb",
+    "portal",
+    "escape_the_lab",
+    "scienceandstuff",
+    "a_portal_tribute",
+    "smb2J",
+    "the_untitled_game",
+    "acid_trip",
+];
 
 /// Storage keys. Bumping these resets everyone's save, so they are written once here.
 const KEY_HIGH_SCORE: &str = "high_score";

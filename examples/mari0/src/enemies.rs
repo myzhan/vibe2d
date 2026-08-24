@@ -2215,7 +2215,7 @@ mod tests {
     fn every_plant_hangs_over_something_solid() {
         let mut on_pipe = 0;
         let mut elsewhere = 0;
-        for (pack, name, _) in level::LEVELS {
+        for (pack, name, _) in level::original_levels() {
             let parsed = level::load(pack, name)
                 .expect("shipped level")
                 .expect("parses");
@@ -2319,7 +2319,7 @@ mod tests {
     fn the_cannon_levels_and_the_zone_levels_are_different_levels() {
         let mut cannons = Vec::new();
         let mut zones = Vec::new();
-        for (pack, name, _) in level::LEVELS {
+        for (pack, name, _) in level::original_levels() {
             let parsed = level::load(pack, name)
                 .expect("shipped level")
                 .expect("parses");
@@ -2486,7 +2486,7 @@ mod tests {
     #[test]
     fn spinies_are_never_placed_and_every_lakito_has_somewhere_to_stop() {
         let mut with_lakito = Vec::new();
-        for (pack, name, _) in level::LEVELS {
+        for (pack, name, _) in level::original_levels() {
             let parsed = level::load(pack, name)
                 .expect("shipped level")
                 .expect("parses");

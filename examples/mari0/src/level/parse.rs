@@ -483,7 +483,12 @@ fn parse_cell(token: &str) -> Cell {
         .and_then(|t| t.parse().ok())
         .unwrap_or(TILE_EMPTY);
     // The original coerces out-of-range ids to 1 (`game.lua:2267`).
-    let tile = if tile_raw == 0 || tile_raw > tiles::MAX_TILE_ID {
+    // Not clamped at `MAX_TILE_ID`: a mappack with its own `tiles.png` names ids from 221
+    // up (`game.lua:80-99`), and clamping here silently turned every one of them into empty
+    // air — 30,273 cells of `smb2J` alone. Which sheet those belong to is the pack's
+    // business, so `tiles::shift_tile` resolves them at load and rejects the out-of-range
+    // ones there; this only has to catch the values that are garbage in any pack.
+    let tile = if tile_raw == 0 || tile_raw > tiles::MAX_ANY_TILE_ID {
         TILE_EMPTY
     } else {
         tile_raw

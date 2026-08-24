@@ -142,9 +142,7 @@ impl Mari0Game {
         // model for any item; a vine emerging from behind the block is clipped by its
         // own scissor for the first half block anyway, so the difference is invisible.
         if let Some(BlockContent::Vine(dest)) = self.level.block_contents.get(&key).copied() {
-            self.level.tiles[row][col] =
-                crate::level::tiles::used_block_tile(self.level.spriteset, props.invisible())
-                    as u32;
+            self.level.tiles[row][col] = self.used_block_tile_for(props.invisible());
             self.level.block_contents.remove(&key);
             self.vines
                 .push(crate::vine::Vine::from_block(col as i32, row as i32, dest));
@@ -400,8 +398,7 @@ impl Mari0Game {
             }
             BlockKind::Hidden => {
                 if let Some(content) = self.level.block_contents.get(&key).copied() {
-                    self.level.tiles[row][col] =
-                        crate::level::tiles::used_block_tile(self.level.spriteset, true) as u32;
+                    self.level.tiles[row][col] = self.used_block_tile_for(true);
                     self.level.block_contents.remove(&key);
                     match content {
                         BlockContent::Mushroom | BlockContent::Star | BlockContent::OneUp => {

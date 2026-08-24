@@ -23,7 +23,62 @@ pub const TILE_GROUND: u16 = 2;
 /// The coin tile picked up by walking through it.
 pub const TILE_COIN: u16 = 116;
 
-/// Highest valid tile id (`SMB_TILE_COUNT + PORTAL_TILE_COUNT`).
+/// The sheet block a mappack's tile ids live in.
+///
+/// Falls back to `smb`'s block for an unknown pack, which is the same table the port
+/// used before packs had their own — so a pack with no `tiles.png` and a pack that is
+/// not listed here behave identically.
+pub fn pack_sheet(pack: &str) -> &'static PackSheet {
+    PACK_SHEETS
+        .iter()
+        .find(|s| s.pack == pack)
+        .unwrap_or(&PACK_SHEETS[0])
+}
+
+/// Move a level file's tile id into its pack's block, if it is one of the pack's own.
+///
+/// Ids up to [`MAX_TILE_ID`] are the stock sheets and are already global. Anything past
+/// that is a cell of the pack's `tiles.png`, numbered from 221 in the level file
+/// (`game.lua:80-99`), and belongs at `custom_base` in [`TILE_PROPS`]. An id past the end
+/// of that sheet — or in a pack that has no sheet — degrades to empty, the same way the
+/// parser treats a garbage id.
+pub fn shift_tile(sheet: &PackSheet, tile_id: u16) -> u32 {
+    if tile_id <= MAX_TILE_ID {
+        return tile_id as u32;
+    }
+    let cell = tile_id - MAX_TILE_ID;
+    if cell > sheet.custom_cells {
+        return TILE_EMPTY as u32;
+    }
+    (sheet.custom_base + cell - 1) as u32
+}
+
+/// The largest id any shipped mappack names, for the parser's sanity clamp.
+///
+/// Per-pack validity is settled later by [`shift_tile`], which knows how big that pack's
+/// sheet actually is; this only rejects values no pack could mean.
+pub const MAX_ANY_TILE_ID: u16 = {
+    let mut max = MAX_TILE_ID;
+    let mut i = 0;
+    while i < PACK_SHEETS.len() {
+        let end = MAX_TILE_ID + PACK_SHEETS[i].custom_cells;
+        if end > max {
+            max = end;
+        }
+        i += 1;
+    }
+    max
+};
+
+/// The first custom id a level file may name. Ids below this are the stock sheets.
+pub const FIRST_CUSTOM_TILE: u16 = MAX_TILE_ID + 1;
+
+/// Highest valid tile id **within one pack's block**
+/// (`SMB_TILE_COUNT + PORTAL_TILE_COUNT`).
+///
+/// Ids are pack-relative until `load_level` adds the pack's base, so this is what the
+/// parser clamps against and what the tests below walk — not the length of
+/// [`TILE_PROPS`], which is every pack's block concatenated.
 pub const MAX_TILE_ID: u16 = (SMB_TILE_COUNT + PORTAL_TILE_COUNT) as u16;
 
 /// Properties of one tile id.
@@ -107,7 +162,45 @@ mod tests {
         assert_eq!(SMB_TILE_COUNT, 132);
         assert_eq!(PORTAL_TILE_COUNT, 88);
         assert_eq!(MAX_TILE_ID, 220);
-        assert_eq!(TILE_PROPS.len(), 221, "index 0 is unused padding");
+        // The stock sheets are the whole shared range, unchanged by any mappack: a custom
+        // `tiles.png` is appended, not substituted (`game.lua:80-99`).
+        assert_eq!(TILE_PROPS.len() > MAX_TILE_ID as usize, true);
+        // Each pack with a sheet of its own gets a contiguous block after that range, and
+        // its cells are numbered from `FIRST_CUSTOM_TILE` in the level files.
+        let mut expected = 1 + SMB_TILE_COUNT + PORTAL_TILE_COUNT;
+        for s in PACK_SHEETS.iter() {
+            if s.custom_cells == 0 {
+                assert_eq!(s.custom_base, 0, "{} has no sheet of its own", s.pack);
+                continue;
+            }
+            assert_eq!(
+                s.custom_base as usize, expected,
+                "{}'s block follows the previous one with no gap",
+                s.pack
+            );
+            expected += s.custom_cells as usize;
+        }
+        assert_eq!(
+            TILE_PROPS.len(),
+            expected,
+            "the stock sheets plus one block per pack that adds tiles"
+        );
+        // Four of the eight ship one, and `acid_trip`'s is the biggest at 24 rows.
+        let with_sheets: Vec<&str> = PACK_SHEETS
+            .iter()
+            .filter(|s| s.custom_cells > 0)
+            .map(|s| s.pack)
+            .collect();
+        assert_eq!(
+            with_sheets,
+            [
+                "a_portal_tribute",
+                "acid_trip",
+                "smb2J",
+                "the_untitled_game"
+            ]
+        );
+        assert_eq!(MAX_ANY_TILE_ID, MAX_TILE_ID + 528);
     }
 
     #[test]

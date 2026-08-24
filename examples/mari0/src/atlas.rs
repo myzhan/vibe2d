@@ -17,26 +17,40 @@ pub(crate) fn srgb_to_linear(c: f32) -> f32 {
 
 // ── UV Helper Functions ──────────────────────────────────────────────
 
-/// Get UV rect for a tile in smbtiles.png (374×102, 22-col grid, 17×17 cells)
-pub(crate) fn smb_tile_uv(tile_id: u32) -> [f32; 4] {
+/// UV rect for a tile on a mappack's own sheet.
+///
+/// `tile_id` is **pack-relative** (1-based) and `sheet_h` is that sheet's pixel height.
+/// Every sheet is 374 wide with a 22-column grid of 17x17 cells, but they differ in how
+/// many *rows* they have: the stock one is 6, `the untitled game`'s is 17 and
+/// `acid trip`'s is 24. Dividing by a hardcoded 102 samples off the bottom of the taller
+/// ones, which is the same class of bug that once made every lab level render as garbage.
+pub(crate) fn pack_tile_uv(tile_id: u32, sheet_h: f32) -> [f32; 4] {
     let col = ((tile_id - 1) % 22) as f32;
     let row = ((tile_id - 1) / 22) as f32;
     [
         col * 17.0 / 374.0,
-        row * 17.0 / 102.0,
+        row * 17.0 / sheet_h,
         16.0 / 374.0,
-        16.0 / 102.0,
+        16.0 / sheet_h,
     ]
+}
+
+/// The stock sheet's height, for the few places that draw an `smb` tile directly.
+pub(crate) const SMB_SHEET_H: f32 = 102.0;
+
+/// UV rect for a tile on the stock `smbtiles.png` (374x102).
+pub(crate) fn smb_tile_uv(tile_id: u32) -> [f32; 4] {
+    pack_tile_uv(tile_id, SMB_SHEET_H)
 }
 
 /// UV rect for a tile in `portaltiles.png` (374×68, 22-col grid, 17×17 cells).
 ///
-/// Tile ids continue straight on from the SMB sheet: 133 is this sheet's first cell
-/// (`main.lua:218-245` walks one sheet then the other into a single list), which is
-/// why a lab level's tiles come out as garbage if you feed them to [`smb_tile_uv`] —
-/// id 133 lands one row *past* the bottom of a six-row sheet.
-pub(crate) fn portal_tile_uv(tile_id: u32) -> [f32; 4] {
-    let index = tile_id - FIRST_PORTAL_TILE;
+/// Tile ids continue straight on from the pack's own sheet — `main.lua:218-245` walks one
+/// sheet then the other into a single list — so where they start depends on how tall that
+/// sheet is. 133 for a six-row sheet, 529 for `acid trip`'s twenty-four. Hence the
+/// parameter: a hardcoded 133 puts a DLC pack's ordinary ground tiles on the lab sheet.
+pub(crate) fn portal_tile_uv(tile_id: u32, first_portal_tile: u32) -> [f32; 4] {
+    let index = tile_id - first_portal_tile;
     let col = (index % 22) as f32;
     let row = (index / 22) as f32;
     [
@@ -46,10 +60,6 @@ pub(crate) fn portal_tile_uv(tile_id: u32) -> [f32; 4] {
         16.0 / 68.0,
     ]
 }
-
-/// The first tile id that lives on `portaltiles.png`. `smbtiles.png` is 22×6 = 132
-/// cells, so the lab sheet starts at 133.
-pub(crate) const FIRST_PORTAL_TILE: u32 = 133;
 
 /// Get UV rect for a mario animation frame (512×128, 20×20 cells)
 pub(crate) fn mario_uv(col: u32, row: u32) -> [f32; 4] {

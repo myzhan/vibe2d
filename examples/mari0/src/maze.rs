@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn only_these_levels_have_maze_spans() {
         let mut found: Vec<&str> = Vec::new();
-        for (pack, name, _) in level::LEVELS {
+        for (pack, name, _) in level::original_levels() {
             if !load_level(pack, name).maze_starts.is_empty() {
                 found.push(name);
             }
@@ -187,7 +187,7 @@ mod tests {
     /// copy from nowhere.
     #[test]
     fn spans_are_matched_and_ordered() {
-        for (pack, name, _) in level::LEVELS {
+        for (pack, name, _) in level::original_levels() {
             let lv = load_level(pack, name);
             assert_eq!(
                 lv.maze_starts.len(),

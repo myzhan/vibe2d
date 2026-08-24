@@ -142,6 +142,14 @@ assets:
     # The lab. Tile ids 133..220 live on their own sheet — without it every
     # portal-mappack level samples off the bottom of smbtiles.png.
     portal_tiles: "assets/mari0/portaltiles.png"
+
+    # Mappacks that ship their own tilesheet. The key is `tiles_<pack>`, which is what
+    # `build.rs` writes into `PACK_SHEETS`. Two of these are taller than the stock 6-row
+    # sheet, and the sheet decides tile *properties* as well as art — see build.rs.
+    tiles_a_portal_tribute: "assets/levels/a_portal_tribute/tiles.png"
+    tiles_smb2J: "assets/levels/smb2J/tiles.png"
+    tiles_the_untitled_game: "assets/levels/the_untitled_game/tiles.png"
+    tiles_acid_trip: "assets/levels/acid_trip/tiles.png"
     laser: "assets/mari0/laser.png"
     laser_side: "assets/mari0/laserside.png"
     laser_detector: "assets/mari0/laserdetector.png"

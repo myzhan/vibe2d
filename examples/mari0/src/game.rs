@@ -261,6 +261,16 @@ pub(crate) struct Mari0Game {
 
     // Sprite sheet textures
     pub(crate) tex_tiles: TextureId,
+    /// The tilesheet the *current level's* pack uses. Equal to `tex_tiles` for any pack
+    /// without one of its own, which is most of them.
+    ///
+    /// Resolved on level load rather than per frame: the name lives in `PACK_SHEETS` as a
+    /// string, and looking a texture up by string in the draw path would be a hash lookup
+    /// per tile.
+    pub(crate) tex_pack_tiles: TextureId,
+    /// One entry per [`crate::level::tiles::PACK_SHEETS`] entry, in the same order.
+    /// Resolved once at startup so a level load is an index rather than a name lookup.
+    pub(crate) tex_pack_sheets: Vec<TextureId>,
     pub(crate) tex_mario_layers: [TextureId; 4], // layers 0-3 (small)
     pub(crate) tex_mario_big_layers: [TextureId; 4], // layers 0-3 (big)
     /// One texture per hat, in [`crate::hats::HATS`] order, at each of Mario's two sizes.
@@ -389,7 +399,16 @@ impl Mari0Game {
     /// castle block that turned into the overworld's used-block art was visibly
     /// wrong (`mario.lua:2383-2432`).
     pub(crate) fn used_block_tile(&self) -> u32 {
-        level::tiles::used_block_tile(self.level.spriteset, false) as u32
+        self.used_block_tile_for(false)
+    }
+
+    /// The same, for a *hidden* block — whose used-block art differs (`mario.lua:2383`).
+    ///
+    /// No pack offset here, and that is the point: 112..118 are stock ids, and the stock
+    /// sheets mean the same thing in every mappack. A custom `tiles.png` only ever adds
+    /// ids past 220 (`game.lua:80-99`), so a used block is a used block everywhere.
+    pub(crate) fn used_block_tile_for(&self, was_invisible: bool) -> u32 {
+        level::tiles::used_block_tile(self.level.spriteset, was_invisible) as u32
     }
 
     /// Reload the current level from its own start position.
@@ -425,6 +444,13 @@ impl Mari0Game {
 
     fn load_current(&mut self, use_checkpoint: bool) {
         let level = load_level(&self.current.pack, &self.current.name());
+        // Whichever sheet this pack draws with. `pack_sheet` already fell back to `smb` for
+        // an unlisted pack, so this index always resolves.
+        self.tex_pack_tiles = crate::level::tiles::PACK_SHEETS
+            .iter()
+            .position(|s| std::ptr::eq(s, level.sheet))
+            .map(|i| self.tex_pack_sheets[i])
+            .unwrap_or(self.tex_tiles);
         // Re-parsed rather than threaded through `Level`: the lab network is a
         // separate graph over the same placements, and `Level` is already the
         // gameplay view of the tile data.
@@ -1718,6 +1744,11 @@ impl Game for Mari0Game {
             star_music_start: false,
 
             tex_tiles: t("tiles"),
+            tex_pack_tiles: t("tiles"),
+            tex_pack_sheets: crate::level::tiles::PACK_SHEETS
+                .iter()
+                .map(|s| t(s.texture))
+                .collect(),
             tex_mario_layers: [t("mario0"), t("mario1"), t("mario2"), t("mario3")],
             tex_mario_big_layers: [
                 t("mario_big0"),

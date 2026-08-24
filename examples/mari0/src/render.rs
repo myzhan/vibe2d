@@ -286,15 +286,31 @@ impl Mari0Game {
         );
     }
 
-    /// Draw one tile, from whichever of the two sheets owns its id.
+    /// Draw one tile, from whichever of the three sheets owns its id.
     ///
-    /// The lab tiles are ids 133..220 on a second sheet. Sending those to the SMB
-    /// sheet's UV maths samples off the bottom edge, which is what made every lab
-    /// level render as garbage.
+    /// Ids 1..=132 are `smbtiles` and 133..=220 the lab's; those mean the same thing in
+    /// every mappack. Past that is the pack's own `tiles.png`, which is *appended* rather
+    /// than substituted (`game.lua:80-99`) — `load_level` has already shifted those into the
+    /// pack's block, so the id is a direct `TILE_PROPS` index and its cell number has to be
+    /// recovered from that block.
+    ///
+    /// The UV divisor is that sheet's own height: the stock 6 rows, `the untitled game`'s 17
+    /// or `acid trip`'s 24. Dividing by a hardcoded 102 samples off the bottom of the tall
+    /// ones, the same way sending a lab tile to the smb maths once made every lab level
+    /// render as garbage.
     pub(crate) fn draw_smb_tile(&self, screen: &mut Screen, tile_id: u32, x: f32, y: f32) {
         let dst = [x, y, TILE_SIZE, TILE_SIZE];
-        if tile_id >= FIRST_PORTAL_TILE {
-            screen.draw_sprite_region(self.tex_portal_tiles, portal_tile_uv(tile_id), dst);
+        let sheet = self.level.sheet;
+        let smb_cells = crate::level::tiles::SMB_TILE_COUNT as u32;
+        if tile_id > crate::level::tiles::MAX_TILE_ID as u32 {
+            let cell = tile_id - sheet.custom_base as u32 + 1;
+            screen.draw_sprite_region(self.tex_pack_tiles, pack_tile_uv(cell, sheet.sheet_h), dst);
+        } else if tile_id > smb_cells {
+            screen.draw_sprite_region(
+                self.tex_portal_tiles,
+                portal_tile_uv(tile_id, smb_cells + 1),
+                dst,
+            );
         } else {
             screen.draw_sprite_region(self.tex_tiles, smb_tile_uv(tile_id), dst);
         }
@@ -991,6 +1007,9 @@ impl Mari0Game {
             let dx = debris.x - cam_x;
             let dy = debris.y;
             // Draw a small piece of brick tile (quarter of the tile)
+            // Deliberately the stock sheet: `SMB_BRICK` is an `smb` id, and the debris is
+            // four fixed quarters of it rather than of whatever the level's own sheet has
+            // at that cell.
             let quarter_uv = smb_tile_uv(SMB_BRICK);
             let half_w = TILE_SIZE * 0.5;
             screen.draw_sprite_region(
