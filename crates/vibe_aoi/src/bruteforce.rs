@@ -45,20 +45,20 @@ impl BruteForceBackend {
     }
 
     pub fn update(&mut self, id: EntityId, shape: Shape) {
-        if let Some(slot) = self.slots.get_mut(id.0 as usize) {
-            if matches!(slot, Slot::Live(_)) {
-                *slot = Slot::Live(shape);
-            }
+        if let Some(slot) = self.slots.get_mut(id.0 as usize)
+            && matches!(slot, Slot::Live(_))
+        {
+            *slot = Slot::Live(shape);
         }
     }
 
     pub fn remove(&mut self, id: EntityId) {
-        if let Some(slot) = self.slots.get_mut(id.0 as usize) {
-            if matches!(slot, Slot::Live(_)) {
-                *slot = Slot::Free;
-                self.free.push(id.0);
-                self.live_count -= 1;
-            }
+        if let Some(slot) = self.slots.get_mut(id.0 as usize)
+            && matches!(slot, Slot::Live(_))
+        {
+            *slot = Slot::Free;
+            self.free.push(id.0);
+            self.live_count -= 1;
         }
     }
 

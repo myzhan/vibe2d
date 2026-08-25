@@ -179,10 +179,10 @@ impl UniformGridBackend {
                     }
                     self.seen[ui] = true;
                     self.seen_touched.push(eid);
-                    if let Slot::Live { shape, .. } = &self.slots[ui] {
-                        if query.intersects(shape) {
-                            hits.push(EntityId(eid));
-                        }
+                    if let Slot::Live { shape, .. } = &self.slots[ui]
+                        && query.intersects(shape)
+                    {
+                        hits.push(EntityId(eid));
                     }
                 }
             }

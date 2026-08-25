@@ -25,6 +25,16 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// `(texture key, width in blocks, height in blocks)`.
+type Layer = (String, f32, f32);
+/// All layers that share the same level prefix within a mappack.
+type LayerSet = Vec<Layer>;
+/// `(level prefix, layers for that level)`.
+type LevelGroup = (String, LayerSet);
+/// `(mappack, level prefix, layers for that level)`. An empty level prefix means the
+/// pack has no per-level backgrounds and the layers belong to the pack as a whole.
+type PackSet = (String, String, LayerSet);
+
 /// Cell stride in the tilesheets. 16px of art plus 1px of metadata.
 const CELL: u32 = 17;
 
@@ -184,7 +194,7 @@ fn generate_background_manifest(assets: &Path, out_dir: &Path) {
     packs.sort();
 
     // (pack, level-or-empty, [(texture key, w blocks, h blocks)])
-    let mut sets: Vec<(String, String, Vec<(String, f32, f32)>)> = Vec::new();
+    let mut sets: Vec<PackSet> = Vec::new();
     for pack in &packs {
         let dir = levels_root.join(pack);
         let mut found: Vec<(String, u32, PathBuf)> = Vec::new();
@@ -211,7 +221,7 @@ fn generate_background_manifest(assets: &Path, out_dir: &Path) {
         found.sort();
         // Group by level prefix, keeping each group in layer order. The original stops at
         // the first missing index, so a gap truncates the set rather than skipping a layer.
-        let mut by_level: Vec<(String, Vec<(String, f32, f32)>)> = Vec::new();
+        let mut by_level: Vec<LevelGroup> = Vec::new();
         for (prefix, index, path) in found {
             let img = image::open(&path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
             let key = if prefix.is_empty() {

@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(MAX_TILE_ID, 220);
         // The stock sheets are the whole shared range, unchanged by any mappack: a custom
         // `tiles.png` is appended, not substituted (`game.lua:80-99`).
-        assert_eq!(TILE_PROPS.len() > MAX_TILE_ID as usize, true);
+        assert!(TILE_PROPS.len() > MAX_TILE_ID as usize);
         // Each pack with a sheet of its own gets a contiguous block after that range, and
         // its cells are numbered from `FIRST_CUSTOM_TILE` in the level files.
         let mut expected = 1 + SMB_TILE_COUNT + PORTAL_TILE_COUNT;

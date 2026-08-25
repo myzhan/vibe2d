@@ -575,7 +575,7 @@ impl Renderer {
                     let offset = (row * padded_bytes_per_row) as usize;
                     let row_data = &data[offset..offset + unpadded_bytes_per_row as usize];
                     if is_bgra {
-                        for pixel in row_data.chunks_exact(4) {
+                        for pixel in row_data.as_chunks::<4>().0 {
                             pixels.extend_from_slice(&[pixel[2], pixel[1], pixel[0], pixel[3]]);
                         }
                     } else {

@@ -334,9 +334,12 @@ fn is_t_spin(piece: &Piece, grid: &Grid) -> bool {
     ];
     let mut filled = 0;
     for (r, c) in corners {
-        if r < 0 || r >= TOTAL_ROWS as i32 || c < 0 || c >= COLS as i32 {
-            filled += 1;
-        } else if grid[r as usize][c as usize].is_some() {
+        if r < 0
+            || r >= TOTAL_ROWS as i32
+            || c < 0
+            || c >= COLS as i32
+            || grid[r as usize][c as usize].is_some()
+        {
             filled += 1;
         }
     }
@@ -723,7 +726,7 @@ impl TetrisGame {
 
     fn draw_block(&self, screen: &mut Screen, tex: TextureId, row: i32, col: i32) {
         // Only draw visible rows (20..40 maps to screen rows 0..20)
-        let visible_row = row as i32 - (TOTAL_ROWS as i32 - VISIBLE_ROWS as i32);
+        let visible_row = row - (TOTAL_ROWS as i32 - VISIBLE_ROWS as i32);
         if visible_row < 0 || visible_row >= VISIBLE_ROWS as i32 {
             return;
         }

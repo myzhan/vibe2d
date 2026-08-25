@@ -304,13 +304,13 @@ impl AoiWorld {
         }
         let mut best: Option<RaycastHit> = None;
         for (id, shape) in self.iter() {
-            if let Some(t) = ray_vs_shape(origin, dir_n, max_dist, &shape) {
-                if best.map(|h| t < h.distance).unwrap_or(true) {
-                    best = Some(RaycastHit {
-                        entity: id,
-                        distance: t,
-                    });
-                }
+            if let Some(t) = ray_vs_shape(origin, dir_n, max_dist, &shape)
+                && best.map(|h| t < h.distance).unwrap_or(true)
+            {
+                best = Some(RaycastHit {
+                    entity: id,
+                    distance: t,
+                });
             }
         }
         best
