@@ -1037,8 +1037,8 @@ impl<'a> UiContext<'a> {
         let offset_y = inner_y - scroll_offset;
 
         // Collect and clip deferred commands
-        let bg_cmds: Vec<DrawCommand> = self.deferred_bg.drain(..).collect();
-        let text_cmds: Vec<DrawCommand> = self.deferred_text.drain(..).collect();
+        let bg_cmds: Vec<DrawCommand> = std::mem::take(&mut self.deferred_bg);
+        let text_cmds: Vec<DrawCommand> = std::mem::take(&mut self.deferred_text);
 
         self.use_deferred = prev_deferred;
 
