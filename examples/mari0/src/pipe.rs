@@ -9,6 +9,8 @@
 //! then swaps levels (`mario.lua:298-313`); the arrival waits `pipeupdelay` before
 //! sliding him out. Skipping the hold makes pipes feel like teleports.
 
+use std::collections::HashMap;
+
 use vibe2d::prelude::*;
 
 use crate::constants::*;
@@ -62,6 +64,23 @@ pub(crate) struct PipeTransit {
     /// Where Mario was when the slide started, so the slide is a lerp rather than
     /// an accumulation (which would drift with the frame rate).
     pub(crate) from: (f32, f32),
+}
+
+/// The `pipespawn` cell pairing with a trip from `from` into `dest`, if any.
+///
+/// `from` first: the original's primary form keys on `prevsublevel`, the
+/// sublevel traveled *from* (`game.lua:2306`). The destination form exists for
+/// arg-0 exits reached from a sublevel (smb 8-4's maze exit) and same-level
+/// teleports (smb M-1's `1-1` pipe).
+pub(crate) fn pipespawn_cell(
+    pipe_spawns: &HashMap<u32, (i32, i32)>,
+    from: u32,
+    dest: u32,
+) -> Option<(i32, i32)> {
+    pipe_spawns
+        .get(&from)
+        .or_else(|| pipe_spawns.get(&dest))
+        .copied()
 }
 
 impl Mari0Game {
@@ -283,15 +302,19 @@ impl Mari0Game {
         // (`levelscreen.lua:21-28`).
         self.begin_interlude(crate::interlude::InterludeKind::Sublevel);
 
-        // Arrive at the `pipespawn` that pairs with the trip. Going *in*, the
-        // original matches on the sublevel being entered; coming *back*, on the one
-        // being left. Either way it's "the sublevel that isn't the main level".
-        let pairs_with = if self.current.sublevel == 0 {
-            from_sublevel
-        } else {
-            self.current.sublevel
-        };
-        if let Some((col, row)) = self.level.pipe_spawns.get(&pairs_with).copied() {
+        // Arrive at the `pipespawn` that pairs with the trip. The original matches
+        // on `prevsublevel` — the sublevel traveled *from*, set only by sublevel
+        // trips (`game.lua:1908`, read at `game.lua:2306`) — or, as a second form
+        // live only on pipe/vine loads, on the sublevel traveled *into*
+        // (`blacktime == sublevelscreentime` holds exactly then,
+        // `levelscreen.lua:23-27`). Normal starts and deaths reset it to `false`
+        // (`game.lua:1917`) and match nothing, which the port gets structurally:
+        // only pipes, vines and bonus-stage exits reach this lookup. Shipped data
+        // exercises both forms: smb 1-2 keys its coin-room exit on the origin, smb
+        // 8-4's maze exit and M-1's same-level teleport ride the arg-0 destination
+        // form, and smb2J 8-4 keys its exit on the origin again.
+        let dest = self.current.sublevel;
+        if let Some((col, row)) = pipespawn_cell(&self.level.pipe_spawns, from_sublevel, dest) {
             self.place_at_pipe_exit(col, row);
         }
     }
@@ -347,5 +370,49 @@ mod tests {
     #[test]
     fn a_downward_trip_holds_before_loading() {
         assert_eq!(SLIDE_TIME + HOLD_TIME, 1.7);
+    }
+
+    /// The pairing keys on the sublevel traveled *from*, with an arg-0
+    /// destination fallback — checked against shipped data, which exercises
+    /// every form. smb 1-2's coin room is the motivating case: its return trip
+    /// runs `_2 → _1`, and only `_1`'s arg-2 `pipespawn` (116,11) describes it;
+    /// a destination-keyed lookup finds nothing and drops the player at the
+    /// level start.
+    #[test]
+    fn pipespawns_pair_with_the_sublevel_traveled_from() {
+        use crate::world::load_level;
+
+        let one_two = load_level("smb", "1-2_1");
+        assert_eq!(
+            pipespawn_cell(&one_two.pipe_spawns, 2, 1),
+            Some((116, 11)),
+            "coin-room exit comes out of the pipe it went in next to"
+        );
+        assert_eq!(
+            pipespawn_cell(&one_two.pipe_spawns, 0, 1),
+            None,
+            "entering _1 from the intro corridor matches no pipespawn"
+        );
+
+        let eight_four = load_level("smb", "8-4");
+        assert_eq!(
+            pipespawn_cell(&eight_four.pipe_spawns, 4, 0),
+            Some((20, 11)),
+            "maze exit rides the arg-0 destination form"
+        );
+
+        let j_eight_four = load_level("smb2J", "8-4");
+        assert_eq!(
+            pipespawn_cell(&j_eight_four.pipe_spawns, 4, 0),
+            Some((52, 11)),
+            "smb2J keys its maze exit on the origin instead"
+        );
+
+        let minus_one = load_level("smb", "M-1");
+        assert_eq!(
+            pipespawn_cell(&minus_one.pipe_spawns, 0, 0),
+            Some((4, 11)),
+            "same-level teleport satisfies either form"
+        );
     }
 }
