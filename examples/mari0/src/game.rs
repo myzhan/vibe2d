@@ -828,6 +828,36 @@ impl Mari0Game {
         true
     }
 
+    /// Is the player's control live — and with it the aiming laser?
+    ///
+    /// The original draws the portal UI (dot trail + crosshair) only when all three
+    /// of its conditions hold: the level is not finished, the player is
+    /// `controlsenabled`, and the player is not on a vine (`game.lua:1600-1603`).
+    /// Everything below mirrors one of those:
+    ///
+    /// - `state == Playing` — not the menu, a level card, or the death throw.
+    /// - no pipe transit — entering clears the flag (`mario.lua:2889`) and the
+    ///   arrival `pipeup` only restores it when the rise ends (`:187`, `:326`).
+    /// - no flagpole sequence (`:2923`) and no castle ending (`:2989`).
+    /// - not an intermission stub — it runs its scripted walk with control off
+    ///   (`:201`, forced onto the whole level by `game.lua:2107-2109`).
+    /// - no vine in any of its three states. The gate's own third condition,
+    ///   `vine == false`, hides the laser even while *gripping*, when left/right
+    ///   still work (`mario.lua:1603`) — the intro and the swing-off both clear
+    ///   the vine outright (`:208`, `:3034`).
+    ///
+    /// The size-change freeze is deliberately not in this list: it sets `noupdate`
+    /// without touching `controlsenabled`, so the original keeps drawing the laser
+    /// through those 0.9 seconds.
+    pub(crate) fn controls_enabled(&self) -> bool {
+        self.state == GameState::Playing
+            && self.pipe.is_none()
+            && self.flag.is_none()
+            && self.castle.is_none()
+            && !self.level.intermission
+            && self.vine.is_none()
+    }
+
     pub(crate) fn update_playing(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
         // ── Growing and shrinking ──
         // Outranks every other suspension below, because the original's is not a branch at

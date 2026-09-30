@@ -1491,7 +1491,11 @@ impl Mari0Game {
         // ── Portal aiming line + crosshair (matches mari0 game.lua:1600-1662) ──
         // mari0 constants: portaldotsdistance=1.2, portaldotstime=0.8,
         //   portaldotsinner=10, portaldotsouter=70, scale=2
-        if self.state == GameState::Playing {
+        //
+        // Gated on the player's control, not just the game state: the original
+        // requires `controlsenabled` (`game.lua:1600-1602`), so the laser vanishes
+        // with Mario into a pipe, the flagpole ending or the castle.
+        if self.controls_enabled() {
             let source_x = self.player.center_x();
             let source_y = self.player.center_y();
             let angle = self.crosshair_angle;

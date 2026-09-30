@@ -64,6 +64,13 @@ pub(crate) struct Mari0Inspect {
     /// Exposed because "is he actually hidden?" is otherwise only checkable by
     /// eyeballing a screenshot, and the geometry is what makes it work.
     pub(crate) pipe_clip: Option<[f32; 4]>,
+    /// Is the aiming laser (dot trail + crosshair) being drawn? True only while
+    /// the player has control (`game.lua:1600-1602`) — it hides with him inside
+    /// pipes, during the flagpole and axe endings, and on vines.
+    ///
+    /// Exposed for the same reason `pipe_clip` is: "is the laser really gone?"
+    /// is otherwise only checkable by eyeballing a screenshot.
+    pub(crate) aim_line_visible: bool,
     /// The checkpoint the player would respawn at, as `[column, row]`.
     pub(crate) checkpoint: Option<[i32; 2]>,
     /// Sublevel a death would reload; 0 is the main level.
@@ -782,6 +789,7 @@ impl Mari0Game {
                 })
                 .collect(),
             crosshair_angle: self.crosshair_angle,
+            aim_line_visible: self.controls_enabled(),
             enemies: self
                 .enemies
                 .iter()
