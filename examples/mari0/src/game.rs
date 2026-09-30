@@ -395,10 +395,10 @@ impl Mari0Game {
         self.time_remaining = load_level(&self.current.pack, &self.current.name()).time_limit;
     }
 
-    /// Sprite sheet for a koopa-like enemy. All three share the same layout.
+    /// Sprite sheet for a koopa-like enemy. All four share the same layout.
     pub(crate) fn koopa_texture(&self, enemy_type: EnemyType) -> TextureId {
         match enemy_type {
-            EnemyType::KoopaRed => self.tex_koopa_red,
+            EnemyType::KoopaRed | EnemyType::KoopaRedFlying => self.tex_koopa_red,
             EnemyType::Beetle => self.tex_beetle,
             _ => self.tex_koopa,
         }
@@ -1121,6 +1121,13 @@ impl Mari0Game {
         if !jump_pressed {
             self.player.is_jumping = false;
         }
+
+        // Snapshot the vertical speed for the stomp pass *before* gravity adds the
+        // frame's downward acceleration. On flat ground `vy` is zero here; a grounded
+        // player only picks up a small positive speed from gravity, which the floor
+        // collision will cancel again. Using the pre-gravity value prevents that
+        // gravity blip from being read as a stomp when walking into a resting shell.
+        self.player.stomp_vy = self.player.vy;
 
         // ── Gravity ──
         // Water reverses the usual relationship between the two figures. On land the

@@ -157,6 +157,12 @@ pub(crate) struct Player {
     pub(crate) invincible_timer: f32,
     pub(crate) portal_cooldown: f32,
     pub(crate) teleport_cooldown: f32,
+    /// Vertical speed at the start of this frame's movement, before gravity and tile
+    /// collision change it. The enemy-interaction pass runs after those stages, so `vy`
+    /// may already be zero from landing on the ground or from gravity being cancelled
+    /// by the floor; this field preserves the frame's intended downward trajectory for
+    /// stomp detection.
+    pub(crate) stomp_vy: f32,
 }
 
 impl Player {
@@ -184,6 +190,7 @@ impl Player {
             invincible_timer: 0.0,
             portal_cooldown: 0.0,
             teleport_cooldown: 0.0,
+            stomp_vy: 0.0,
         }
     }
 

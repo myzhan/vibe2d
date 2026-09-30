@@ -250,6 +250,15 @@ pub(crate) fn koopa_uv(col: u32, row: u32) -> [f32; 4] {
     ]
 }
 
+/// The shell cell — Lua quad 3: the koopa on its back, feet in the air.
+///
+/// `koopa.lua:224` swaps this in on stomp and `koopa.lua:246` on being shot; the
+/// flip-over "animation" is nothing more than this cell replacing the walk frames.
+/// Column 2 of every koopa-family sheet — koopa, koopared and beetle share the layout.
+pub(crate) fn koopa_shell_uv() -> [f32; 4] {
+    koopa_uv(2, 0)
+}
+
 /// A collectible coin's frame. `coin.png` is 64x64 with **16x16** cells: four columns
 /// of animation by four rows of spriteset (`main.lua:311`).
 ///
@@ -355,6 +364,28 @@ mod tests {
             let t = period * (i as f32 + 0.5) / 10.0;
             assert_eq!(coin_spin_frame(t), coin_spin_frame(t + period), "at t={t}");
         }
+    }
+
+    /// The koopa sheet's five cells, pinned to the original's quad numbering.
+    ///
+    /// `koopa.lua` swaps in **quad 3** — the koopa on its back, feet in the air — when
+    /// stomped (`koopa.lua:224`) and again when shot (`koopa.lua:246`); quads 4/5 are
+    /// the winged flying frames. The port is 0-indexed, so quad 3 is column 2. Drawing
+    /// column 4 instead is what made a stomped koopa sit there in its flying frame
+    /// instead of flipping over into a shell.
+    #[test]
+    fn koopa_quad_3_is_the_shell_on_its_back() {
+        // Walking pair: cols 0/1 = Lua quads 1/2.
+        assert_eq!(koopa_uv(0, 0)[0], 0.0);
+        assert_eq!(koopa_uv(1, 0)[0], 16.0 / 128.0);
+        // The shell: col 2 = Lua quad 3.
+        assert_eq!(
+            koopa_shell_uv(),
+            [2.0 * 16.0 / 128.0, 0.0, 16.0 / 128.0, 24.0 / 128.0]
+        );
+        // Flying pair: cols 3/4 = Lua quads 4/5.
+        assert_eq!(koopa_uv(3, 0)[0], 3.0 * 16.0 / 128.0);
+        assert_eq!(koopa_uv(4, 0)[0], 4.0 * 16.0 / 128.0);
     }
 
     /// The two coin sheets have different cell sizes, and mixing them is what put six

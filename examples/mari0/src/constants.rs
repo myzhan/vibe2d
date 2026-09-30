@@ -256,13 +256,22 @@ pub(crate) const PLANT_SPRITE_H: f32 = 23.0 * 2.0;
 /// horizontally — standing on the pipe is what makes it safe to wait.
 pub(crate) const PLANT_PLAYER_NEAR: f32 = 3.0 * TILE_SIZE;
 
-// ── Flying koopa (variables.lua:105, 140-141) ──
+// ── Flying koopa (variables.lua:103-105, 140-141) ──
+/// Seconds per frame of every koopa animation — walking legs and flapping wings
+/// alike, since the original's one animationtimer drives both (`koopa.lua:143-148`).
+pub(crate) const KOOPA_ANIM_SPEED: f32 = 0.2;
 /// Vertical travel of a hovering koopa, 7.5 blocks.
 pub(crate) const KOOPA_FLYING_DISTANCE: f32 = 7.5 * TILE_SIZE;
 /// Seconds for one full up-down cycle.
 pub(crate) const KOOPA_FLYING_TIME: f32 = 7.0;
-/// Reduced gravity used by a flying koopa once it loses its wings.
+/// Reduced gravity of a winged green koopa, 30 blocks/s² against the world's 80
+/// (`koopa.lua:48`) — before it loses its wings, that is; afterwards it is an
+/// ordinary koopa and falls like everything else.
 pub(crate) const KOOPA_FLYING_GRAVITY: f32 = 30.0 * TILE_SIZE;
+/// Launch speed of a winged green koopa's hop. Every floor contact while winged
+/// springs it back up (`koopa.lua:367-375`), which with the 30 gravity gives a lazy
+/// ~1.67-block apex (10²/(2·30)) instead of a twitch.
+pub(crate) const KOOPA_JUMP_FORCE: f32 = 10.0 * TILE_SIZE;
 
 // ── Firebar (variables.lua:276-278) ──
 /// Degrees advanced per tick.

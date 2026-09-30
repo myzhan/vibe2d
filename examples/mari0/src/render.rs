@@ -46,6 +46,21 @@ fn hammer_bro_dst(hitbox: [f32; 4]) -> [f32; 4] {
     ]
 }
 
+/// A shelled koopa keeps its full 16x24 cell while its hitbox shrinks to one tile.
+///
+/// The cell's bottom rows are the shell itself and the top is where the feet stick up,
+/// so like lakito's cloud the sprite keeps its natural aspect and shares the hitbox's
+/// bottom edge — which leaves the shell sitting exactly on the ground.
+fn koopa_shell_dst(hitbox: [f32; 4]) -> [f32; 4] {
+    const SPRITE_H: f32 = 24.0 * 2.0;
+    [
+        hitbox[0],
+        hitbox[1] + hitbox[3] - SPRITE_H,
+        hitbox[2],
+        SPRITE_H,
+    ]
+}
+
 /// Mario's three tinted layers, in draw order: shirt, overalls, skin.
 ///
 /// Layer 0 is the outline and is drawn untinted on top. Fire Mario swaps the shirt for
@@ -729,6 +744,24 @@ impl Mari0Game {
                                     );
                                 }
                             }
+                            // Koopa, red koopa, beetle and both winged koopas shot by
+                            // fire, a star or a kicked shell: the original flips them
+                            // to quad 3 — the shell on its back — before they sail off
+                            // screen (`koopa.lua:246`), not their walking or flapping
+                            // frame.
+                            EnemyType::Koopa
+                            | EnemyType::KoopaRed
+                            | EnemyType::Beetle
+                            | EnemyType::KoopaFlying
+                            | EnemyType::KoopaRedFlying => {
+                                screen.draw_sprite_region_flipped(
+                                    self.koopa_texture(enemy.enemy_type),
+                                    koopa_shell_uv(),
+                                    koopa_shell_dst(dst),
+                                    false,
+                                    true,
+                                );
+                            }
                             _ => {
                                 let src = koopa_uv(0, 0);
                                 screen.draw_sprite_region_flipped(
@@ -758,7 +791,12 @@ impl Mari0Game {
                     }
                 }
                 EnemyState::Shell | EnemyState::ShellMoving => {
-                    screen.draw_sprite_region(self.tex_koopa, koopa_uv(4, 0), dst);
+                    // koopa.lua:224 — the flip-over is quad 3, the koopa on its back
+                    // with its feet in the air, and it stays that cell while the shell
+                    // slides. Koopa, red koopa and beetle share the layout, so the
+                    // texture is the only thing that varies.
+                    let tex = self.koopa_texture(enemy.enemy_type);
+                    screen.draw_sprite_region(tex, koopa_shell_uv(), koopa_shell_dst(dst));
                 }
                 EnemyState::Walking => {
                     match enemy.enemy_type {
@@ -955,10 +993,26 @@ impl Mari0Game {
                                 screen.draw_sprite_region(tex, src, dst);
                             }
                         }
+                        // Winged koopas, either colour: cells 3/4 flap on the same
+                        // 0.2s cadence the original's one animationtimer gives the
+                        // walking legs (`koopa.lua:143-148` — quad 4↔5). Without
+                        // this arm they fell into the walking-frames fallback below
+                        // and the wings were simply never drawn, which is half of
+                        // why stomping one didn't look like the original.
+                        EnemyType::KoopaFlying | EnemyType::KoopaRedFlying => {
+                            let frame = ((enemy.anim_timer / KOOPA_ANIM_SPEED) as u32) % 2;
+                            let src = koopa_uv(3 + frame, 0);
+                            let tex = self.koopa_texture(enemy.enemy_type);
+                            if enemy.facing_right {
+                                screen.draw_sprite_region_flipped(tex, src, dst, true, false);
+                            } else {
+                                screen.draw_sprite_region(tex, src, dst);
+                            }
+                        }
                         _ => {
                             // Koopa, red koopa and beetle share the sheet layout;
                             // only the texture differs.
-                            let frame = ((enemy.anim_timer * 4.0) as u32) % 2;
+                            let frame = ((enemy.anim_timer / KOOPA_ANIM_SPEED) as u32) % 2;
                             let src = koopa_uv(frame, 0);
                             let tex = self.koopa_texture(enemy.enemy_type);
                             if enemy.facing_right {

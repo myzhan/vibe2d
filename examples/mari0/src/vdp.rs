@@ -1324,6 +1324,8 @@ impl Mari0Game {
             "goomba" => EnemyType::Goomba,
             "koopa" => EnemyType::Koopa,
             "koopa_red" => EnemyType::KoopaRed,
+            "koopa_flying" => EnemyType::KoopaFlying,
+            "koopa_red_flying" => EnemyType::KoopaRedFlying,
             "beetle" => EnemyType::Beetle,
             "plant" => EnemyType::Plant,
             "lakito" => EnemyType::Lakito,
@@ -1365,10 +1367,13 @@ impl Mari0Game {
         self.enemies.push(Enemy {
             x: p.x,
             y: p.y,
+            // `walk_speed` rather than a bare ENEMY_SPEED so a spawned hovering
+            // red koopa actually hovers in place (`koopa.lua:42`) instead of
+            // drifting sideways off its cosine.
             vx: if p.facing_right {
-                ENEMY_SPEED
+                etype.walk_speed()
             } else {
-                -ENEMY_SPEED
+                -etype.walk_speed()
             },
             vy: 0.0,
             enemy_type: etype,

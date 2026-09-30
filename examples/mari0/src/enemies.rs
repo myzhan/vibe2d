@@ -27,9 +27,16 @@ pub(crate) enum EnemyType {
     /// Piranha plant. Rises and retracts on a timer, never moves horizontally,
     /// and cannot be stomped — only fire or a star kills it.
     Plant,
-    /// Winged koopa. Hovers on a cosine path; stomping it removes the wings and
+    /// Winged green koopa. It does not hover — it hops: it walks at the normal
+    /// speed under a 30 blocks/s² gravity, and every floor contact while winged
+    /// springs it back up (`koopa.lua:367-375`). Stomping it removes the wings and
     /// leaves an ordinary koopa behind.
     KoopaFlying,
+    /// Winged red koopa. The only koopa that truly hovers: no gravity, no ground
+    /// speed, riding a 7.5-block cosine over seven seconds (`koopa.lua:37-43`,
+    /// `:122-130`). Stomping it removes the wings and leaves a ledge-refusing red
+    /// koopa behind.
+    KoopaRedFlying,
     /// One fireball of a rotating firebar. Indestructible; contact hurts.
     ///
     /// Each segment is its own entity carrying the bar's pivot and its index, so
@@ -98,6 +105,13 @@ impl EnemyType {
         )
     }
 
+    /// Either colour of winged koopa — the two things that are koopas but not
+    /// [`Self::is_koopa_like`], because their stomp sequence starts one step
+    /// earlier: wings off *before* shell.
+    pub(crate) fn is_winged_koopa(self) -> bool {
+        matches!(self, EnemyType::KoopaFlying | EnemyType::KoopaRedFlying)
+    }
+
     /// Red koopas turn around at a ledge instead of walking off.
     pub(crate) fn avoids_ledges(self) -> bool {
         self == EnemyType::KoopaRed
@@ -147,7 +161,7 @@ impl EnemyType {
                 | EnemyType::UpFire
                 | EnemyType::CheepRed
                 | EnemyType::CheepWhite
-                | EnemyType::KoopaFlying
+                | EnemyType::KoopaRedFlying
                 | EnemyType::Lakito
                 | EnemyType::BulletBill
                 | EnemyType::BulletBillCannon
@@ -160,25 +174,32 @@ impl EnemyType {
 
     /// Ground speed this kind starts with.
     ///
-    /// Only the hammer bro differs, and noticeably: 1.5 blocks/s against everyone
-    /// else's 2, which is why he reads as shuffling rather than walking.
+    /// Only the hammer bro and the hovering red koopa differ, and noticeably: the
+    /// bro shuffles at 1.5 blocks/s against everyone else's 2, and the winged red
+    /// koopa has no ground speed at all — it hovers in place (`koopa.lua:42`) until
+    /// the stomp that takes its wings gives it one.
     pub(crate) fn walk_speed(self) -> f32 {
         match self {
             EnemyType::HammerBro => HAMMERBRO_SPEED,
+            EnemyType::KoopaRedFlying => 0.0,
             _ => ENEMY_SPEED,
         }
     }
 
     /// Downward acceleration while walking or falling.
     ///
-    /// Only the thrown spiny egg differs from the world's gravity, and it differs a
-    /// lot — see [`SPIKEY_FALL_GRAVITY`].
+    /// The thrown spiny egg and the winged green koopa both fall at 30 blocks/s²
+    /// instead of the world's 80 — the egg for a lazy arc (`SPIKEY_FALL_GRAVITY`),
+    /// the koopa so its hops are lazy rather than twitchy (`koopa.lua:48`). A winged
+    /// red koopa never falls at all; it rides [`KOOPA_FLYING_TIME`] as a scripted
+    /// enemy instead.
     pub(crate) fn gravity(self) -> f32 {
         match self {
             EnemyType::SpikeyFall => SPIKEY_FALL_GRAVITY,
             EnemyType::HammerBro => HAMMERBRO_GRAVITY,
             EnemyType::Hammer => HAMMER_GRAVITY,
             EnemyType::Bowser => BOWSER_GRAVITY,
+            EnemyType::KoopaFlying => KOOPA_FLYING_GRAVITY,
             _ => GRAVITY,
         }
     }
@@ -428,14 +449,17 @@ pub(crate) struct Enemy {
 
 /// Collision height of an enemy in its current state.
 ///
-/// Koopa-likes stand 24px tall (48 at 2x) while walking but shrink to a shell; a
-/// piranha plant is shorter than a block; everything else is one small-Mario tall.
+/// Koopa-likes — winged ones included, since the wings ride a full 16×24 cell —
+/// stand 24px tall (48 at 2x) while walking but shrink to a shell; a piranha plant
+/// is shorter than a block; everything else is one small-Mario tall.
 pub(crate) fn enemy_height(enemy_type: EnemyType, state: EnemyState) -> f32 {
     if enemy_type == EnemyType::Bowser {
         BOWSER_H
     } else if enemy_type == EnemyType::Fire {
         FIRE_H
-    } else if enemy_type.is_koopa_like() && state == EnemyState::Walking {
+    } else if (enemy_type.is_koopa_like() || enemy_type.is_winged_koopa())
+        && state == EnemyState::Walking
+    {
         48.0
     } else if enemy_type == EnemyType::Plant {
         PLANT_HEIGHT
@@ -882,9 +906,9 @@ impl Mari0Game {
 
             // Portals, before the scripted/walking split rather than inside the
             // walking branch. Being scripted and being portable are independent
-            // properties — a winged koopa and a bullet bill are both scripted and
-            // both travel — and while the check sat inside the walker path neither
-            // of them ever could.
+            // properties — a hovering red koopa and a bullet bill are both scripted
+            // and both travel — and while the check sat inside the walker path
+            // neither of them ever could.
             if enemy.enemy_type.portalable()
                 && enemy.state != EnemyState::Dead
                 && let Some((nx, ny, nvx, nvy)) = portal_carry(
@@ -938,10 +962,13 @@ impl Mari0Game {
                             }
                         }
                     }
-                    EnemyType::KoopaFlying => {
+                    EnemyType::KoopaRedFlying => {
                         // Cosine hover: `(-cos(t*2pi)+1)/2` over the cycle
                         // (`koopa.lua:72`), which starts and ends at rest rather
-                        // than snapping at the turnaround.
+                        // than snapping at the turnaround. Red-only by the
+                        // original's own gate `self.flying and self.t ==
+                        // "redflying"` (`koopa.lua:122-130`) — the green one
+                        // walks under gravity like any koopa.
                         let t = (enemy.cycle_timer / KOOPA_FLYING_TIME).fract();
                         let eased = (-(t * std::f32::consts::TAU).cos() + 1.0) / 2.0;
                         enemy.y = start_y + eased * KOOPA_FLYING_DISTANCE;
@@ -1358,6 +1385,15 @@ impl Mari0Game {
                         }
                     }
 
+                    // A winged green koopa turns every floor contact into a launch
+                    // (`koopa.lua:367-375`): gravity 30, launch 10, so it hops along
+                    // the ground at ~1.67-block apexes rather than walking flat.
+                    // Losing the wings (see the stomp table) restores plain gravity
+                    // and this never fires again.
+                    if enemy.enemy_type == EnemyType::KoopaFlying && enemy.on_ground {
+                        enemy.vy = -KOOPA_JUMP_FORCE;
+                    }
+
                     // An egg that has touched down hatches (`goomba.lua:250-272`): it
                     // becomes an ordinary walking spiny and sets off *towards* the
                     // player, which is why a spiny always greets you head-on rather
@@ -1450,36 +1486,81 @@ impl Mari0Game {
             // match where it actually is.
             let eh = enemy_height(enemy.enemy_type, enemy.state);
 
-            if !aabb_overlap(
-                [
-                    self.player.x,
-                    self.player.y,
-                    self.player.width,
-                    self.player.height,
-                ],
-                [enemy.x, enemy.y, PLAYER_SMALL_W, eh],
-            ) {
+            let player_box = [
+                self.player.x,
+                self.player.y,
+                self.player.width,
+                self.player.height,
+            ];
+            let enemy_box = [enemy.x, enemy.y, PLAYER_SMALL_W, eh];
+            let current_overlap = aabb_overlap(player_box, enemy_box);
+
+            // Swept foot sensor: at terminal velocity (3200 px/s) Mario can move 53 px
+            // in one 60 Hz frame, enough to tunnel straight through a 48 px koopa. The
+            // original uses Box2D's floor-collision callback, so it still registers the
+            // stomp. Reconstruct the foot trajectory this frame and check whether it
+            // intersected the enemy's box.
+            //
+            // Use `stomp_vy`, the vertical speed before gravity and tile collision
+            // changed it: a grounded player picks up a small gravity blip that the floor
+            // collision cancels, so `vy` at interaction time can be positive even while
+            // walking on flat ground. The pre-gravity value is the real downward intent.
+            let prev_x = self.player.x - self.player.vx * dt;
+            let prev_bottom = self.player.bottom() - self.player.stomp_vy * dt;
+            let min_x = prev_x.min(self.player.x);
+            let max_x = (prev_x + self.player.width).max(self.player.x + self.player.width);
+            let min_bottom = prev_bottom.min(self.player.bottom());
+            let max_bottom = prev_bottom.max(self.player.bottom());
+            let swept_foot = self.player.stomp_vy > 0.0
+                && min_x < enemy.x + PLAYER_SMALL_W
+                && max_x > enemy.x
+                && min_bottom < enemy.y + eh
+                && max_bottom > enemy.y;
+
+            if !current_overlap && !swept_foot {
                 continue;
             }
 
-            // Check if stomping (player feet above enemy top half)
-            let player_feet = self.player.bottom();
-            let enemy_mid = enemy.y + eh / 2.0;
-
-            if self.player.vy > 0.0 && player_feet < enemy_mid + 8.0 && enemy.enemy_type.stompable()
+            // Check if stomping. The original dispatches to `mario:stompenemy` on any
+            // downward floor collision with a stompable enemy (`mario.lua:1761-1763`) —
+            // it does not impose a vertical-position threshold. The port's old
+            // `player_feet < enemy_mid + 8.0` check rejected legitimate stomps when Mario
+            // fell fast enough to tunnel more than half a koopa into the enemy in one
+            // frame, causing him to die instead of shellifying it. The swept foot sensor
+            // above catches the tunneling case; `stomp_vy` is used so gravity-induced
+            // downward speed on flat ground is not mistaken for a stomp.
+            if enemy.enemy_type.stompable()
+                && (self.player.stomp_vy > 0.0 && current_overlap || swept_foot)
             {
                 // Stomp!
                 match enemy.state {
-                    EnemyState::Walking if enemy.enemy_type == EnemyType::KoopaFlying => {
+                    EnemyState::Walking if enemy.enemy_type.is_winged_koopa() => {
                         // Stomping a winged koopa knocks the wings off and leaves
-                        // a walking koopa, rather than killing it outright.
-                        enemy.enemy_type = EnemyType::Koopa;
+                        // an ordinary walking koopa of the same colour, rather
+                        // than killing it outright (`koopa.lua:212-217`: flying
+                        // flag cleared, quad back to walking, gravity back to the
+                        // world's). The colour split matters beyond the palette:
+                        // a de-winged red one still refuses ledges, because the
+                        // original's ledge predicate tests the *type* string with
+                        // the flying flag already cleared (`koopa.lua:106`).
+                        enemy.enemy_type = if enemy.enemy_type == EnemyType::KoopaRedFlying {
+                            EnemyType::KoopaRed
+                        } else {
+                            EnemyType::Koopa
+                        };
                         enemy.vy = -KOOPA_FLYING_GRAVITY * dt_hint();
                         enemy.vx = if enemy.facing_right {
                             ENEMY_SPEED
                         } else {
                             -ENEMY_SPEED
                         };
+                        // The original's bounce branch also snaps Mario up and clear
+                        // of the enemy he just landed on (`mario.lua:1826-1833`): a
+                        // de-winged koopa still has `t == "flying"` and
+                        // `small == false`, the second half of that branch's condition,
+                        // so it gets the `self.y = b.y - self.height-1/16` treatment —
+                        // 1/16 block above the koopa's top, 2px at these tile sizes.
+                        self.player.y = enemy.y - self.player.height - 2.0;
                     }
                     EnemyState::Walking if enemy.enemy_type == EnemyType::Lakito => {
                         // Stomping lakitu doesn't finish him, it evicts him: he drops
@@ -1499,18 +1580,35 @@ impl Mari0Game {
                             // shell rather than dying outright.
                             enemy.state = EnemyState::Shell;
                             enemy.vx = 0.0;
+                            // Snap clear, like the original (`mario.lua:1826-1833`):
+                            // its bounce branch runs whenever `b.speedx == 0` after
+                            // the stomp — shellifying is exactly that — and ends with
+                            // `self.y = b.y - self.height-1/16`. Without it the player
+                            // still overlaps the fresh shell next frame, the
+                            // walk-into-resting-shell branch below kicks it instantly,
+                            // and stomping a koopa never leaves a resting shell behind.
+                            self.player.y = enemy.y - self.player.height - 2.0;
                         } else {
                             enemy.state = EnemyState::Dead;
                             enemy.death_timer = ENEMY_DEATH_TIME;
                         }
                     }
                     EnemyState::Shell => {
-                        // Kick shell
+                        // Kick shell. A stationary shell must never hurt Mario on
+                        // contact — it just flies away (`koopa.lua:231`, `:234`).
+                        // Shove it clear in the same frame so the freshly kicked
+                        // shell does not overlap Mario and kill him next frame.
                         enemy.state = EnemyState::ShellMoving;
-                        enemy.vx = if self.player.center_x() < enemy.x + PLAYER_SMALL_W / 2.0 {
+                        let kick_right = self.player.center_x() < enemy.x + PLAYER_SMALL_W / 2.0;
+                        enemy.vx = if kick_right {
                             SHELL_SPEED
                         } else {
                             -SHELL_SPEED
+                        };
+                        enemy.x = if kick_right {
+                            self.player.x + self.player.width
+                        } else {
+                            self.player.x - PLAYER_SMALL_W
                         };
                     }
                     EnemyState::ShellMoving => {
@@ -1521,6 +1619,11 @@ impl Mari0Game {
                         enemy.state = EnemyState::Shell;
                         enemy.vx = 0.0;
                         enemy.shell_combo = 0;
+                        // Stopping a shell pays the same snap as shellifying one
+                        // (`mario.lua:1818` routes `b.speedx == 0` into the bounce
+                        // branch, which lifts Mario 1/16 block above the shell) —
+                        // otherwise the player re-kicks the shell he just stopped.
+                        self.player.y = enemy.y - self.player.height - 2.0;
                     }
                     _ => {}
                 }
@@ -1564,7 +1667,8 @@ impl Mari0Game {
                 }
                 ctx.audio.play("stomp");
                 player_bounce = true;
-            } else if self.star_timer > 0.0 && !enemy.enemy_type.indestructible() {
+            } else if current_overlap && self.star_timer > 0.0 && !enemy.enemy_type.indestructible()
+            {
                 // Star invincibility: kill enemy on contact (flip + fly off).
                 // A star does not clear a firebar or a lava geyser — those are
                 // level geometry with a hitbox, not enemies.
@@ -1584,7 +1688,7 @@ impl Mari0Game {
                     timer: 0.0,
                 });
                 ctx.audio.play("stomp");
-            } else if enemy.state == EnemyState::Shell {
+            } else if current_overlap && enemy.state == EnemyState::Shell {
                 // Walking into a resting shell kicks it instead of hurting you
                 // (`mario.lua:1899-1911`). It pays a flat 500 — not a rung of either
                 // ladder — and it works during the post-hit grace period too, which is why
@@ -1616,7 +1720,17 @@ impl Mari0Game {
                     timer: 0.0,
                 });
                 ctx.audio.play("stomp");
-            } else if self.player.invincible_timer <= 0.0 {
+
+                // Mario may have been standing *on* the shell rather than brushing it
+                // from the side. In the original that registers as a floor-collision
+                // stomp and bounces him; without the bounce he drops onto the freshly
+                // kicked shell and dies. Treat an upward foot position (upper half of
+                // the shell) with no downward intent as a top-side contact.
+                if self.player.bottom() <= enemy.y + eh / 2.0 && self.player.stomp_vy <= 0.0 {
+                    player_bounce = true;
+                    self.player.y = enemy.y - self.player.height - 2.0;
+                }
+            } else if current_overlap && self.player.invincible_timer <= 0.0 {
                 // Hit by enemy from side. `mario:shrink` is not a step down the ladder —
                 // it assigns `size = 1` outright (`mario.lua:1672`), so a fire Mario lands
                 // on *small*, not on big. Two hits kill from the top, never three.
@@ -1854,8 +1968,12 @@ impl Mari0Game {
             return;
         }
         for enemy in &mut self.enemies {
+            // The original's test is the *category* string: `a == "goomba" or a ==
+            // "koopa"` (`bulletbill.lua:186`) — and both winged koopas are koopas,
+            // wings and all, so a ported bill takes them down too.
             let victim = enemy.enemy_type == EnemyType::Goomba
                 || enemy.enemy_type.is_koopa_like()
+                || enemy.enemy_type.is_winged_koopa()
                 || matches!(enemy.enemy_type, EnemyType::Spikey | EnemyType::SpikeyFall);
             if !victim || enemy.state == EnemyState::Dead {
                 continue;
@@ -2006,8 +2124,14 @@ mod tests {
     /// Worth pinning because the two reasons look the same from the outside but
     /// aren't: plants/firebars/geysers are `static = true` fixtures, while
     /// cheep-cheeps move perfectly well and opt out with `portalable = false`. Anyone
-    /// "simplifying" this to `!is_scripted()` would quietly make flying koopas
+    /// "simplifying" this to `!is_scripted()` would quietly make hovering koopas
     /// non-portable, since they're scripted but do travel.
+    ///
+    /// The old version of the final assertion held `KoopaFlying` up as the
+    /// scripted-and-portalable example — that was wrong once the movement split
+    /// landed: only the *red* flying koopa is scripted (`koopa.lua:122-130` gates
+    /// the hover on `t == "redflying"`), while the green one hops along the walking
+    /// path (`koopa.lua:367-375`). Both remain portalable; only one is scripted.
     #[test]
     fn the_portal_exemption_table_has_two_distinct_reasons() {
         for kind in [
@@ -2016,6 +2140,7 @@ mod tests {
             EnemyType::KoopaRed,
             EnemyType::Beetle,
             EnemyType::KoopaFlying,
+            EnemyType::KoopaRedFlying,
         ] {
             assert!(kind.portalable(), "{kind:?} should travel through portals");
         }
@@ -2032,9 +2157,67 @@ mod tests {
             assert!(!kind.portalable(), "{kind:?} should not travel");
         }
         assert!(
-            EnemyType::KoopaFlying.is_scripted() && EnemyType::KoopaFlying.portalable(),
-            "scripted and portalable are independent; a flying koopa is both"
+            EnemyType::KoopaRedFlying.is_scripted() && EnemyType::KoopaRedFlying.portalable(),
+            "scripted and portalable are independent; a hovering koopa is both"
         );
+    }
+
+    /// The two flying koopas do not move the same way, and the port used to
+    /// hover both.
+    ///
+    /// The original's hover gate is `self.flying and self.t == "redflying"`
+    /// (`koopa.lua:122-130`): only the red one rides the cosine. The green one
+    /// walks under `koopaflyinggravity` and *bounces* — every floor contact
+    /// while winged springs it back up (`koopa.lua:367-375`) — so it hops along
+    /// the ground at ~1.67-block apexes. Hovering the green one too sent it
+    /// sinking 7.5 blocks below its spawn and off the screen instead of hopping
+    /// at the player.
+    #[test]
+    fn only_the_red_flying_koopa_hovers() {
+        assert!(
+            !EnemyType::KoopaFlying.is_scripted(),
+            "the green one hops, it does not hover"
+        );
+    }
+
+    /// A winged green koopa falls at `koopaflyinggravity` — 30 blocks/s²
+    /// against the world's 80 (`koopa.lua:48`) — which is what makes its hop a
+    /// lazy arc rather than a twitch.
+    #[test]
+    fn a_winged_green_koopa_falls_slower_than_the_world() {
+        assert_eq!(EnemyType::KoopaFlying.gravity(), KOOPA_FLYING_GRAVITY);
+        const { assert!(KOOPA_FLYING_GRAVITY < GRAVITY) };
+    }
+
+    /// The winged stomp is a *sequence*, not a shortcut: wings off first, shell
+    /// second, and nothing skips a step.
+    ///
+    /// Both steps are reachable only because a winged koopa is stompable yet not
+    /// koopa-like — the first stomp must land in the wing-removal arm rather than
+    /// the shell arm — while the type it becomes *is* koopa-like, so the second
+    /// stomp lands in the shell arm. And the colour must survive the first stomp:
+    /// a de-winged red still refuses ledges, because the original tests the type
+    /// string with the flying flag already cleared (`koopa.lua:106`).
+    #[test]
+    fn a_winged_koopa_takes_two_stomps_and_keeps_its_colour() {
+        for winged in [EnemyType::KoopaFlying, EnemyType::KoopaRedFlying] {
+            assert!(winged.stompable(), "{winged:?} must be stompable at all");
+            assert!(
+                !winged.is_koopa_like(),
+                "{winged:?} must not shell on the first stomp"
+            );
+        }
+        assert!(EnemyType::Koopa.is_koopa_like());
+        assert!(EnemyType::KoopaRed.is_koopa_like());
+        assert!(EnemyType::KoopaRed.avoids_ledges());
+    }
+
+    /// A hovering red koopa has no ground speed until the stomp that takes its
+    /// wings gives it one (`koopa.lua:42` sets `speedx = 0`).
+    #[test]
+    fn a_hovering_red_koopa_stands_still() {
+        assert_eq!(EnemyType::KoopaRedFlying.walk_speed(), 0.0);
+        assert_eq!(EnemyType::KoopaFlying.walk_speed(), ENEMY_SPEED);
     }
 
     /// A spiny hurts from above, which is the one thing that makes it not a goomba.

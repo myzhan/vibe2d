@@ -605,14 +605,24 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
                 facing_right: false,
                 segment: 0,
             }),
-            level::EntityKind::KoopaFlying | level::EntityKind::KoopaRedFlying => enemy_spawns
-                .push(EnemySpawnPoint {
-                    enemy_type: EnemyType::KoopaFlying,
-                    x: px,
-                    y: py,
-                    facing_right: false,
-                    segment: 0,
-                }),
+            // The two winged koopas are separate objects in the original —
+            // `t = "flying"` vs `t = "redflying"` (`koopa.lua:44-48`, `:37-43`) —
+            // and behave differently enough (green hops, red hovers) that mapping
+            // both onto the green one made 1-3's two red koopas fly as green.
+            level::EntityKind::KoopaFlying => enemy_spawns.push(EnemySpawnPoint {
+                enemy_type: EnemyType::KoopaFlying,
+                x: px,
+                y: py,
+                facing_right: false,
+                segment: 0,
+            }),
+            level::EntityKind::KoopaRedFlying => enemy_spawns.push(EnemySpawnPoint {
+                enemy_type: EnemyType::KoopaRedFlying,
+                x: px,
+                y: py,
+                facing_right: false,
+                segment: 0,
+            }),
             level::EntityKind::UpFire => enemy_spawns.push(EnemySpawnPoint {
                 enemy_type: EnemyType::UpFire,
                 x: px,
@@ -914,6 +924,49 @@ mod tests {
         let mut id = LevelId::new("smb", 1, 2).with_sublevel(1);
         id.warp_to_world(4);
         assert_eq!(id.name(), "4-1");
+    }
+
+    /// The two winged-koopa entities are `flying` (green) and `redflying` (red) in
+    /// the original, and the shipped levels use both: 2-1 carries one green, 1-3
+    /// carries two red. Worth pinning because the port used to map both entities
+    /// onto the green type, which made 1-3's koopas fly green and hop instead of
+    /// hover.
+    #[test]
+    fn winged_koopas_keep_their_colour_from_the_level() {
+        let lv = load_level("smb", "2-1");
+        assert_eq!(
+            lv.enemy_spawns
+                .iter()
+                .filter(|s| s.enemy_type == EnemyType::KoopaFlying)
+                .count(),
+            1
+        );
+        assert_eq!(
+            lv.enemy_spawns
+                .iter()
+                .filter(|s| s.enemy_type == EnemyType::KoopaRedFlying)
+                .count(),
+            0,
+            "2-1 has no red flying koopa"
+        );
+
+        let lv = load_level("smb", "1-3");
+        assert_eq!(
+            lv.enemy_spawns
+                .iter()
+                .filter(|s| s.enemy_type == EnemyType::KoopaRedFlying)
+                .count(),
+            2,
+            "1-3 carries two red flying koopas"
+        );
+        assert_eq!(
+            lv.enemy_spawns
+                .iter()
+                .filter(|s| s.enemy_type == EnemyType::KoopaFlying)
+                .count(),
+            0,
+            "1-3 has no green flying koopa"
+        );
     }
 
     /// Every sublevel a pipe points at must exist, or the trip would strand the
