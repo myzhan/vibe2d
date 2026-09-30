@@ -247,6 +247,33 @@ async def run(ws):
     )
     check("仍在主关", s["level"]["name"] == "1-1", s["level"]["name"])
 
+    section("8. 过场关自动进管：1-2 不需要按方向键")
+    # 1-2 是 24 格宽的过场关 (intermission=1)，原版这里 controlsenabled=false，
+    # Mario 以固定速度向右走并自动进入出口水管 (`mario.lua:200-205`, `:1936`)。
+    s = await load(ws, 1, 2)
+    check("1-2 是过场关", s["level"]["intermission"] is True, str(s["level"].get("intermission")))
+    check("开始后就在向右走", s["player"]["vx"] > 0.0, f"vx={s['player']['vx']:.1f}")
+
+    # 不按任何键，让 Mario 自己走到 (10,12) 的侧面管口。
+    reached = None
+    for _ in range(200):
+        await step(ws, 5)
+        s = await snap(ws)
+        if s["pipe"] is not None:
+            reached = s["pipe"]
+            break
+        if s["level"]["name"] != "1-2":
+            reached = s["level"]["name"]
+            break
+    check("自动走进了侧面水管", reached == "right", f"reached={reached}")
+
+    for _ in range(200):
+        await step(ws, 5)
+        s = await snap(ws)
+        if s["level"]["name"] == "1-2_1":
+            break
+    check("进入子关 1-2_1", s["level"]["name"] == "1-2_1", s["level"]["name"])
+
     await load(ws, 1, 1)
     await rpc(ws, "engine.resume")
 

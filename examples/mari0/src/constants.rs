@@ -141,6 +141,9 @@ pub(crate) const FLAG_CLIMB_FRAME_DELAY: f32 = 0.07;
 pub(crate) const FLAG_ANIM_DELAY: f32 = 0.6;
 /// Then runs off at a fixed 4.27 blocks/s — not his own top speed.
 pub(crate) const FLAG_RUN_SPEED: f32 = 4.27 * TILE_SIZE;
+/// Intermission stubs (1-2, 2-2, 4-2, 7-2) walk themselves to the exit pipe at
+/// 2.61 blocks/s with controls disabled (`mario.lua:200-205`).
+pub(crate) const INTERMISSION_WALK_SPEED: f32 = 2.61 * TILE_SIZE;
 /// He disappears into the castle 6 blocks past the pole.
 pub(crate) const FLAG_CASTLE_DIST: f32 = 6.0 * TILE_SIZE;
 /// The clock is cashed in one unit per frame, at 50 points each.

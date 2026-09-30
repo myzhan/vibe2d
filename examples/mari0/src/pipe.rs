@@ -133,7 +133,18 @@ impl Mari0Game {
     ///   top-right cell and a standing player's midline is level with it.
     ///   The original checks the cell at Mario's midline and then the one below, so
     ///   a big Mario entering a two-tile mouth still triggers.
-    pub(crate) fn check_pipe_entry(&mut self, ctx: &Context, down_held: bool, blocked_right: bool) {
+    ///
+    /// Intermission stubs are the exception: Mario is on rails and the original's
+    /// condition is `rightkey or intermission` (`mario.lua:1936`), so the right-entry
+    /// probe runs automatically while he is on the ground, without needing to be
+    /// stopped by the pipe first.
+    pub(crate) fn check_pipe_entry(
+        &mut self,
+        ctx: &Context,
+        down_held: bool,
+        blocked_right: bool,
+        intermission: bool,
+    ) {
         if self.pipe.is_some() {
             return;
         }
@@ -152,7 +163,7 @@ impl Mari0Game {
             }
         }
 
-        if blocked_right {
+        if (blocked_right || (intermission && self.player.on_ground)) && !self.player.is_jumping {
             let px = self.player.x + self.player.width + 2.0;
             let col = (px / TILE_SIZE).floor() as i32;
             let mid_row = ((self.player.y + self.player.height * 0.5) / TILE_SIZE).floor() as i32;

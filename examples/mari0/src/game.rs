@@ -499,6 +499,15 @@ impl Mari0Game {
             None => level.player_start,
         };
         self.player = Player::new(start.0, start.1);
+        // Intermission stubs (1-2, 2-2, 4-2, 7-2) are on rails: controls are disabled and
+        // Mario walks right at a fixed speed until he reaches the exit pipe
+        // (`mario.lua:200-205`). Set this up here so the first frame already shows him
+        // running, not standing still waiting for input.
+        if level.intermission {
+            self.player.vx = INTERMISSION_WALK_SPEED;
+            self.player.facing_right = true;
+            self.player.anim_state = PlayerAnim::Run;
+        }
         // A fresh Mario takes a fresh copy of the hat selection (`mario.lua:97`), which is
         // what makes a rainboom's bestpony last exactly one life.
         self.hats = self.hat_selection.clone();
@@ -878,6 +887,36 @@ impl Mari0Game {
         let sprint = input.is_action_pressed("fire"); // hold shift/F to sprint
         let crouch_held = input.is_action_pressed("crouch");
 
+        // ── Intermission ──
+        // The 24-wide stub levels (1-2, 2-2, 4-2, 7-2) are scripted: Mario walks right
+        // at a fixed speed and the player has no control (`mario.lua:200-205`).
+        let intermission = self.level.intermission;
+        let (
+            move_left,
+            move_right,
+            jump_pressed,
+            jump_just,
+            fire_blue,
+            fire_orange,
+            fire_ball,
+            sprint,
+            crouch_held,
+        ) = if intermission {
+            (false, true, false, false, false, false, false, false, false)
+        } else {
+            (
+                move_left,
+                move_right,
+                jump_pressed,
+                jump_just,
+                fire_blue,
+                fire_orange,
+                fire_ball,
+                sprint,
+                crouch_held,
+            )
+        };
+
         // ── Vines ──
         // A vine owns the player the way a pipe does, but not equally. *Climbing* one
         // leaves the controls live, and the clock follows the controls in the original
@@ -966,125 +1005,132 @@ impl Mari0Game {
         // The caps are looked up per frame rather than read from the constants, because
         // orange gel replaces them while you stand on it and water replaces them
         // outright — see `gel::speed_limits`.
-        let (max_walk, max_run, walk_accel, run_accel) = self.speed_limits();
-        // A crouched Mario is rooted: the original's ground branches are all guarded on
-        // `ducking == false`, so he keeps whatever speed he had and loses it to friction.
-        let (move_left, move_right) = if self.player.ducking {
-            (false, false)
-        } else {
-            (move_left, move_right)
-        };
-        // Turning around on the ground spends the *run* acceleration whichever key is
-        // held — both arms say `runacceleration` (`mario.lua:1119`, `:1244`) — and water
-        // says `uwrunacceleration`, which is 16 as well. That last one is what the
-        // collapsed `run_accel` cannot report underwater, where it stands in for the walk
-        // figure because water has no sprint at all.
-        let skid_accel = if self.level.underwater {
-            RUN_ACCEL
-        } else {
-            run_accel
-        };
-        let dir = if move_right {
-            1.0
-        } else if move_left {
-            -1.0
-        } else {
-            0.0
-        };
-        self.player.skidding = false;
-        if dir != 0.0 {
-            self.player.facing_right = dir > 0.0;
-            let along = self.player.vx * dir;
-            if !self.player.on_ground {
-                // Airborne there is nothing to skid against, so turning is merely slower
-                // — `airslidefactor`. The caps come in two stages: under the walk limit
-                // you are held to the walk limit, and only speed you *carried* into the
-                // air lets you push on toward the run limit. Past the run limit no arm
-                // matches at all, which is exactly what lets a faith plate, a portal or
-                // orange gel keep the speed it gave you.
-                let accel = if sprint { run_accel } else { walk_accel };
-                let accel = if along < 0.0 {
-                    accel * AIR_SLIDE_FACTOR
-                } else {
-                    accel
-                };
-                if along < max_walk {
-                    self.player.vx += dir * accel * dt;
-                    if self.player.vx * dir > max_walk {
-                        self.player.vx = dir * max_walk;
+        if !intermission {
+            let (max_walk, max_run, walk_accel, run_accel) = self.speed_limits();
+            // A crouched Mario is rooted: the original's ground branches are all guarded on
+            // `ducking == false`, so he keeps whatever speed he had and loses it to friction.
+            let (move_left, move_right) = if self.player.ducking {
+                (false, false)
+            } else {
+                (move_left, move_right)
+            };
+            // Turning around on the ground spends the *run* acceleration whichever key is
+            // held — both arms say `runacceleration` (`mario.lua:1119`, `:1244`) — and water
+            // says `uwrunacceleration`, which is 16 as well. That last one is what the
+            // collapsed `run_accel` cannot report underwater, where it stands in for the walk
+            // figure because water has no sprint at all.
+            let skid_accel = if self.level.underwater {
+                RUN_ACCEL
+            } else {
+                run_accel
+            };
+            let dir = if move_right {
+                1.0
+            } else if move_left {
+                -1.0
+            } else {
+                0.0
+            };
+            self.player.skidding = false;
+            if dir != 0.0 {
+                self.player.facing_right = dir > 0.0;
+                let along = self.player.vx * dir;
+                if !self.player.on_ground {
+                    // Airborne there is nothing to skid against, so turning is merely slower
+                    // — `airslidefactor`. The caps come in two stages: under the walk limit
+                    // you are held to the walk limit, and only speed you *carried* into the
+                    // air lets you push on toward the run limit. Past the run limit no arm
+                    // matches at all, which is exactly what lets a faith plate, a portal or
+                    // orange gel keep the speed it gave you.
+                    let accel = if sprint { run_accel } else { walk_accel };
+                    let accel = if along < 0.0 {
+                        accel * AIR_SLIDE_FACTOR
+                    } else {
+                        accel
+                    };
+                    if along < max_walk {
+                        self.player.vx += dir * accel * dt;
+                        if self.player.vx * dir > max_walk {
+                            self.player.vx = dir * max_walk;
+                        }
+                    } else if sprint && along > max_walk && along < max_run {
+                        // Walking has no second stage: let go of sprint above the walk limit
+                        // and you simply stop gaining.
+                        //
+                        // `> max_walk` is load-bearing and reads like an off-by-one. The arm
+                        // above clamps to *exactly* `max_walk`, and the original's guard is a
+                        // strict `speedx > maxwalkspeed` (`mario.lua:1106`), so a jump that
+                        // pins you to the walk limit falls through both arms and stays there.
+                        // Sprinting in mid-air only pays if you were already over the limit
+                        // when you left the ground — which is what makes a running jump a
+                        // decision you commit to beforehand rather than mid-flight.
+                        self.player.vx += dir * accel * dt;
+                        if self.player.vx * dir > max_run {
+                            self.player.vx = dir * max_run;
+                        }
                     }
-                } else if sprint && along > max_walk && along < max_run {
-                    // Walking has no second stage: let go of sprint above the walk limit
-                    // and you simply stop gaining.
-                    //
-                    // `> max_walk` is load-bearing and reads like an off-by-one. The arm
-                    // above clamps to *exactly* `max_walk`, and the original's guard is a
-                    // strict `speedx > maxwalkspeed` (`mario.lua:1106`), so a jump that
-                    // pins you to the walk limit falls through both arms and stays there.
-                    // Sprinting in mid-air only pays if you were already over the limit
-                    // when you left the ground — which is what makes a running jump a
-                    // decision you commit to beforehand rather than mid-flight.
-                    self.player.vx += dir * accel * dt;
+                } else if sprint {
+                    if along < 0.0 {
+                        // The skid: friction on top of acceleration, and its own pose.
+                        // `superfriction` is unreachable in this arm of the original — the
+                        // guard reads `speedx > maxrunspeed` inside a branch that only runs
+                        // when `speedx` carries the opposite sign — so plain friction it is.
+                        self.player.vx += dir * (FRICTION + skid_accel) * dt;
+                        self.player.skidding = true;
+                    } else {
+                        self.player.vx += dir * run_accel * dt;
+                    }
                     if self.player.vx * dir > max_run {
                         self.player.vx = dir * max_run;
                     }
-                }
-            } else if sprint {
-                if along < 0.0 {
-                    // The skid: friction on top of acceleration, and its own pose.
-                    // `superfriction` is unreachable in this arm of the original — the
-                    // guard reads `speedx > maxrunspeed` inside a branch that only runs
-                    // when `speedx` carries the opposite sign — so plain friction it is.
-                    self.player.vx += dir * (FRICTION + skid_accel) * dt;
-                    self.player.skidding = true;
-                } else {
-                    self.player.vx += dir * run_accel * dt;
-                }
-                if self.player.vx * dir > max_run {
-                    self.player.vx = dir * max_run;
-                }
-            } else if along < max_walk {
-                if along < 0.0 {
-                    // The same skid, except here the `superfriction` guard *is* reachable:
-                    // it asks whether you are travelling backwards faster than a full run,
-                    // which a portal or a faith plate can arrange.
-                    let bleed = if along < -max_run {
-                        SUPER_FRICTION
+                } else if along < max_walk {
+                    if along < 0.0 {
+                        // The same skid, except here the `superfriction` guard *is* reachable:
+                        // it asks whether you are travelling backwards faster than a full run,
+                        // which a portal or a faith plate can arrange.
+                        let bleed = if along < -max_run {
+                            SUPER_FRICTION
+                        } else {
+                            FRICTION
+                        };
+                        self.player.vx += dir * (bleed + skid_accel) * dt;
+                        self.player.skidding = true;
                     } else {
-                        FRICTION
-                    };
-                    self.player.vx += dir * (bleed + skid_accel) * dt;
-                    self.player.skidding = true;
+                        self.player.vx += dir * walk_accel * dt;
+                    }
+                    if self.player.vx * dir > max_walk {
+                        self.player.vx = dir * max_walk;
+                    }
                 } else {
-                    self.player.vx += dir * walk_accel * dt;
+                    // Faster than a walk with sprint released: friction alone, down to the
+                    // walk limit and no further.
+                    self.player.vx -= dir * FRICTION * dt;
+                    if self.player.vx * dir < max_walk {
+                        self.player.vx = dir * max_walk;
+                    }
                 }
-                if self.player.vx * dir > max_walk {
-                    self.player.vx = dir * max_walk;
-                }
-            } else {
-                // Faster than a walk with sprint released: friction alone, down to the
-                // walk limit and no further.
-                self.player.vx -= dir * FRICTION * dt;
-                if self.player.vx * dir < max_walk {
-                    self.player.vx = dir * max_walk;
-                }
+            } else if self.player.on_ground {
+                // Nothing held. `frictionair` is 0, so there is no air arm to write: above a
+                // full run the bleed is `superfriction`, which is how the speed a faith plate
+                // gave you comes off once you land, and `minspeed` is what stops Mario
+                // creeping a pixel a frame for another second afterwards.
+                let bleed = if self.player.vx.abs() > max_run {
+                    SUPER_FRICTION
+                } else {
+                    FRICTION
+                };
+                let slowed = self.player.vx.abs() - bleed * dt;
+                self.player.vx = if slowed < MIN_SPEED {
+                    0.0
+                } else {
+                    slowed * self.player.vx.signum()
+                };
             }
-        } else if self.player.on_ground {
-            // Nothing held. `frictionair` is 0, so there is no air arm to write: above a
-            // full run the bleed is `superfriction`, which is how the speed a faith plate
-            // gave you comes off once you land, and `minspeed` is what stops Mario
-            // creeping a pixel a frame for another second afterwards.
-            let bleed = if self.player.vx.abs() > max_run {
-                SUPER_FRICTION
-            } else {
-                FRICTION
-            };
-            let slowed = self.player.vx.abs() - bleed * dt;
-            self.player.vx = if slowed < MIN_SPEED {
-                0.0
-            } else {
-                slowed * self.player.vx.signum()
-            };
+        } else {
+            // Intermission: fixed rightward speed, no acceleration or friction.
+            self.player.vx = INTERMISSION_WALK_SPEED;
+            self.player.facing_right = true;
+            self.player.skidding = false;
         }
 
         // ── Jump, or a swimming stroke ──
@@ -1229,8 +1275,11 @@ impl Mari0Game {
         // `blocked_right` rather than "holding right": the collision resolver zeroes
         // `vx` when it stops the player, and a sideways pipe mouth is solid, so this
         // is the "ran into it" signal the original's check sits behind.
+        //
+        // Intermission stubs bypass that requirement: Mario walks into the pipe
+        // automatically (`mario.lua:1936`).
         let blocked_right = move_right && self.player.vx == 0.0;
-        self.check_pipe_entry(ctx, input.is_action_pressed("crouch"), blocked_right);
+        self.check_pipe_entry(ctx, crouch_held, blocked_right, intermission);
         if self.in_pipe() {
             return;
         }
