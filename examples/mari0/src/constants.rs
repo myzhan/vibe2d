@@ -675,6 +675,9 @@ pub(crate) const KOOPA_COMBO: [u32; 7] = [500, 800, 1000, 2000, 4000, 5000, 8000
 /// Walking into a resting shell kicks it and pays this flat (`mario.lua:1902`), rather
 /// than entering either ladder.
 pub(crate) const SHELL_KICK_SCORE: u32 = 500;
+/// Enemies knocked off a block from below pay this flat (`mario.lua:2500`), not the
+/// fire/stomp ladders.
+pub(crate) const BLOCK_HIT_ENEMY_SCORE: u32 = 100;
 
 // Player sizes (in pixels) — match tile size like original Mario
 pub(crate) const PLAYER_SMALL_W: f32 = 32.0;

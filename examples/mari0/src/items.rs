@@ -491,6 +491,32 @@ impl Mari0Game {
                 }
             }
         }
+
+        // Enemies standing on the just-hit block are flipped away
+        // (`mario.lua:2487-2503`). The original checks `w.shotted`, which every
+        // creature that can be knocked around has; the port uses the same method.
+        let block_left = bx;
+        let block_right = bx + TILE_SIZE;
+        for enemy in &mut self.enemies {
+            if enemy.state == EnemyState::Dead {
+                continue;
+            }
+            let eh = enemy_height(enemy.enemy_type, enemy.state);
+            let center_x = enemy.x + PLAYER_SMALL_W / 2.0;
+            let bottom_y = enemy.y + eh;
+            if (bottom_y - by).abs() <= 0.01 && center_x >= block_left && center_x <= block_right {
+                let right = center_x >= block_left + TILE_SIZE / 2.0;
+                enemy.facing_right = right;
+                enemy.shotted();
+                self.score += BLOCK_HIT_ENEMY_SCORE;
+                self.score_popups.push(ScorePopup {
+                    x: center_x,
+                    y: enemy.y,
+                    value: Some(BLOCK_HIT_ENEMY_SCORE),
+                    timer: 0.0,
+                });
+            }
+        }
     }
 
     pub(crate) fn update_items(&mut self, ctx: &Context, dt: f32) {
