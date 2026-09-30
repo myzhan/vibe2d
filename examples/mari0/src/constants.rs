@@ -695,6 +695,13 @@ pub(crate) const MARIO_SMALL_SPRITE_H: f32 = 20.0 * MARIO_SPRITE_SCALE; // 40
 pub(crate) const MARIO_BIG_SPRITE_W: f32 = 20.0 * MARIO_SPRITE_SCALE; // 40
 pub(crate) const MARIO_BIG_SPRITE_H: f32 = 36.0 * MARIO_SPRITE_SCALE; // 72
 
+// ── Stick aiming (variables.lua:10, mario.lua:1049) ──
+/// Per-axis threshold the right stick must clear to take the aim over from the
+/// mouse. The original's `joystickaimdeadzone` is 0.5; below it the stick simply
+/// doesn't touch `pointingangle` for the frame, so resting drift — even drift the
+/// engine's radial deadzone lets through — can never steer the crosshair.
+pub(crate) const AIM_STICK_DEADZONE: f32 = 0.5;
+
 // ── SMB Tileset IDs (smbtiles.png: 374×102, 22×6 grid, 17×17 cells) ──
 // Tile 1 = empty sky. All other IDs map directly to smbtiles.png cells.
 //

@@ -361,6 +361,16 @@ pub(crate) struct Mari0Game {
     pub(crate) vh: f32,
 }
 
+/// Does the right stick currently own the aim?
+///
+/// Per-axis OR, strictly past the original's `joystickaimdeadzone` of 0.5
+/// (`variables.lua:10`, gate at `mario.lua:1049`). Below it the stick does not
+/// touch the crosshair at all that frame — resting drift, even the drift the
+/// engine's radial deadzone lets through, never gets to steer.
+pub(crate) fn stick_owns_aim(aim_x: f32, aim_y: f32) -> bool {
+    aim_x.abs() > AIM_STICK_DEADZONE || aim_y.abs() > AIM_STICK_DEADZONE
+}
+
 impl Mari0Game {
     pub(crate) fn tex(ctx: &Context, name: &str) -> TextureId {
         ctx.assets
@@ -976,13 +986,14 @@ impl Mari0Game {
 
         // Aiming: right stick when it's deflected, mouse otherwise.
         //
-        // The stick wins only while actually pushed, so a plugged-in controller
-        // resting at centre never fights the mouse — and either device can be
-        // picked up mid-play without a mode switch.
+        // The stick wins only past the original's aim deadzone
+        // (`variables.lua:10`), so a plugged-in controller resting at centre —
+        // or drifting inside the gate — never fights the mouse, and either
+        // device can be picked up mid-play without a mode switch.
         let aim_x = input.gamepad_axis(GamepadAxis::RightStickX);
         // Stick Y is up-positive; screen space is y-down, hence the negation.
         let aim_y = -input.gamepad_axis(GamepadAxis::RightStickY);
-        if aim_x != 0.0 || aim_y != 0.0 {
+        if stick_owns_aim(aim_x, aim_y) {
             self.crosshair_angle = aim_y.atan2(aim_x);
         } else {
             // Mouse aiming (virtual coords → world coords)
@@ -2041,5 +2052,30 @@ impl Game for Mari0Game {
         params: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
         self.handle_vdp_method(method, params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The stick takes the aim only past the original's `joystickaimdeadzone`.
+    ///
+    /// A bare `!= 0.0` let a worn 8BitDo's resting drift — whatever the engine's
+    /// 0.15 radial deadzone lets through — steer the crosshair, flipping Mario's
+    /// facing mid-run while the mouse was squarely to his right.
+    #[test]
+    fn the_stick_needs_the_originals_aim_deadzone_to_take_over() {
+        assert_eq!(AIM_STICK_DEADZONE, 0.5);
+        // Inside the gate the mouse keeps the aim.
+        assert!(!stick_owns_aim(0.0, 0.0));
+        assert!(!stick_owns_aim(0.3, -0.3));
+        assert!(!stick_owns_aim(0.49, 0.0));
+        assert!(!stick_owns_aim(0.0, 0.49));
+        // Any single axis past it takes over, regardless of the other.
+        assert!(stick_owns_aim(0.51, 0.0));
+        assert!(stick_owns_aim(0.0, -0.51));
+        // Exactly on the threshold is still mouse territory (`mario.lua:1049`, `>`).
+        assert!(!stick_owns_aim(0.5, 0.5));
     }
 }
