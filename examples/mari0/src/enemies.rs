@@ -538,10 +538,15 @@ impl Enemy {
             // A hammer bro's throw countdown. The original picks between 0.6 and 1.6 at
             // birth; a fixed first gap keeps `from_spawn` free of the RNG, and every
             // gap after this one is drawn properly.
-            cycle_timer: if sp.enemy_type == EnemyType::HammerBro {
-                HAMMERBRO_TIME[0]
-            } else {
-                0.0
+            cycle_timer: match sp.enemy_type {
+                // A plant is born one-and-a-half seconds into its retract phase
+                // (`plant.lua:37`, `timer2 = plantouttime+1.5`): it sits tucked in
+                // the pipe, then must pass the player-proximity check
+                // (`plant.lua:64-71`) before its first emergence. Starting at zero
+                // instead made fresh plants climb straight out under Mario's feet.
+                EnemyType::Plant => PLANT_OUT_TIME + 1.5,
+                EnemyType::HammerBro => HAMMERBRO_TIME[0],
+                _ => 0.0,
             },
             spawn_x: x,
             // Each firebar segment starts at the same angle; its distance
@@ -2365,6 +2370,43 @@ mod tests {
             extended_sprite_top >= window_top,
             "extended sprite top {extended_sprite_top} escapes the window top {window_top}"
         );
+    }
+
+    /// A fresh plant is born tucked in its pipe, mid-retract, not mid-emerge.
+    ///
+    /// The original starts `timer2` at `plantouttime+1.5` (`plant.lua:37`): one and
+    /// a half seconds into the retract phase, so the plant sits clamped at rest
+    /// while that drains, then lands in the waiting phase where the
+    /// player-proximity check (`plant.lua:64-71`) runs before the first emergence.
+    /// Starting the timer at zero instead made a plant that had never looked for
+    /// Mario climb straight out under his feet.
+    #[test]
+    fn a_spawned_plant_is_born_tucked_and_checks_the_player_before_rising() {
+        let sp = crate::world::EnemySpawnPoint {
+            enemy_type: EnemyType::Plant,
+            // One row above a pipe's rim, like every shipped plant.
+            x: 57.0 * TILE_SIZE,
+            y: 9.0 * TILE_SIZE,
+            facing_right: true,
+            segment: 0,
+        };
+        let plant = Enemy::from_spawn(&sp);
+        // `timer2 = plantouttime+1.5`, and 1.5 < plantintime — still inside the
+        // retract phase, which is what routes the first emergence through the
+        // proximity check rather than skipping it.
+        assert_eq!(plant.cycle_timer, PLANT_OUT_TIME + 1.5);
+        const { assert!(PLANT_IN_TIME > 1.5) };
+        // Retracted means wholly below the rim of the pipe it hangs over: the rest
+        // top sits `9/16` of a block under the rim (`plant.lua:11`, `y+9/16`).
+        assert!(
+            (plant.y - (sp.y + TILE_SIZE + 9.0 / 16.0 * TILE_SIZE)).abs() < 0.01,
+            "rest top {} should be 9/16 below the rim {}",
+            plant.y,
+            sp.y + TILE_SIZE
+        );
+        assert_eq!(plant.y, plant.spawn_y);
+        // And the check that gates every emergence is ±3 blocks on x only.
+        assert_eq!(PLANT_PLAYER_NEAR, 3.0 * TILE_SIZE);
     }
 
     /// A plant is shorter than a block, and one code path used to think otherwise.
