@@ -1745,6 +1745,75 @@ impl Mari0Game {
     }
 }
 
+/// Parse `--level SPEC` (or `--level=SPEC`) out of a command line, where SPEC is
+/// `pack/W-L[_N]` or a bare `W-L[_N]` in the default pack. `Ok(None)` means the
+/// flag wasn't given.
+///
+/// Pure over the argument slice so the accepted formats can be unit-tested
+/// without touching the process's own arguments.
+fn parse_level_spec(args: &[String]) -> Result<Option<LevelId>, String> {
+    let mut spec: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        if arg == "--level" {
+            i += 1;
+            spec = Some(
+                args.get(i)
+                    .ok_or_else(|| "--level needs a value".to_string())?,
+            );
+        } else if let Some(value) = arg.strip_prefix("--level=") {
+            if value.is_empty() {
+                return Err("--level needs a value".to_string());
+            }
+            spec = Some(value);
+        }
+        i += 1;
+    }
+    let Some(spec) = spec else {
+        return Ok(None);
+    };
+
+    let (pack, name) = match spec.split_once('/') {
+        Some((pack, name)) => (pack, name),
+        None => (START_PACK, spec),
+    };
+    let bad = || format!("'{spec}' is not a level name (want W-L[_N], like 5-2 or 1-2_1)");
+    let Some((world, rest)) = name.split_once('-') else {
+        return Err(bad());
+    };
+    let (level, sublevel) = match rest.split_once('_') {
+        Some((level, sub)) => (level, sub),
+        None => (rest, ""),
+    };
+    let number = |s: &str| s.parse::<u32>().map_err(|_| bad());
+    let sublevel = if sublevel.is_empty() {
+        0
+    } else {
+        number(sublevel)?
+    };
+    let id = LevelId::new(pack, number(world)?, number(level)?).with_sublevel(sublevel);
+    if !id.exists() {
+        return Err(format!("no such level {}/{}", pack, id.name()));
+    }
+    Ok(Some(id))
+}
+
+/// The `--level` flag from the real command line, if any. An invalid spec is
+/// reported to stderr and ignored — the menu still comes up, so a typo costs a
+/// keystroke rather than a relaunch.
+#[cfg(not(target_arch = "wasm32"))]
+fn level_from_args() -> Option<LevelId> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match parse_level_spec(&args) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("mari0: {e}\n  usage: mari0 [--level pack/W-L[_N]]");
+            None
+        }
+    }
+}
+
 impl Game for Mari0Game {
     fn new(ctx: &mut Context, _renderer: &Renderer) -> Self {
         // The saved progress is read into the struct below via `load_progress`, called
@@ -1963,6 +2032,17 @@ impl Game for Mari0Game {
             vh,
         };
         game.load_progress();
+        // `--level pack/W-L[_N]` drops straight into that level: no menu, no
+        // launch intro, and deliberately no `record_progress` — a CLI jump is
+        // for testing and shouldn't write the save. Same sequence as
+        // `start_selected`, minus the recording.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(id) = level_from_args() {
+            game.current = id;
+            game.start_fresh();
+            game.state = GameState::Playing;
+            game.intro = None;
+        }
         game
     }
 
@@ -2059,6 +2139,10 @@ impl Game for Mari0Game {
 mod tests {
     use super::*;
 
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
     /// The stick takes the aim only past the original's `joystickaimdeadzone`.
     ///
     /// A bare `!= 0.0` let a worn 8BitDo's resting drift — whatever the engine's
@@ -2077,5 +2161,71 @@ mod tests {
         assert!(stick_owns_aim(0.0, -0.51));
         // Exactly on the threshold is still mouse territory (`mario.lua:1049`, `>`).
         assert!(!stick_owns_aim(0.5, 0.5));
+    }
+
+    #[test]
+    fn a_bare_level_name_uses_the_default_pack() {
+        let id = parse_level_spec(&args(&["--level", "5-2"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(id, LevelId::new(START_PACK, 5, 2));
+        assert_eq!(id.sublevel, 0);
+    }
+
+    #[test]
+    fn an_underscore_suffix_selects_a_sublevel() {
+        let id = parse_level_spec(&args(&["--level", "1-2_1"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(id, LevelId::new(START_PACK, 1, 2).with_sublevel(1));
+    }
+
+    #[test]
+    fn a_slash_prefix_picks_the_pack() {
+        // `smb2J` and `acid_trip` both exercise the mixed-case and underscored
+        // pack names; `acid_trip` also ships its own tilesheet, which only
+        // `load_current` resolves.
+        let id = parse_level_spec(&args(&["--level", "smb2J/1-1"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(id, LevelId::new("smb2J", 1, 1));
+        let id = parse_level_spec(&args(&["--level", "acid_trip/2-1_1"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(id, LevelId::new("acid_trip", 2, 1).with_sublevel(1));
+    }
+
+    #[test]
+    fn the_equals_sign_form_works_and_unknown_flags_are_ignored() {
+        let id = parse_level_spec(&args(&["--foo", "--level=5-2", "bar"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(id, LevelId::new(START_PACK, 5, 2));
+    }
+
+    #[test]
+    fn no_flag_means_none() {
+        assert!(parse_level_spec(&args(&[])).unwrap().is_none());
+        assert!(parse_level_spec(&args(&["--foo"])).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_missing_value_is_an_error() {
+        assert!(parse_level_spec(&args(&["--level"])).is_err());
+        assert!(parse_level_spec(&args(&["--level="])).is_err());
+    }
+
+    #[test]
+    fn a_level_that_does_not_exist_is_an_error() {
+        // Both a bad W-L and a bad pack name end here: `exists()` checks the
+        // pack directory too.
+        assert!(parse_level_spec(&args(&["--level", "9-9"])).is_err());
+        assert!(parse_level_spec(&args(&["--level", "no_such_pack/1-1"])).is_err());
+    }
+
+    #[test]
+    fn a_name_that_is_not_w_dash_l_is_an_error() {
+        assert!(parse_level_spec(&args(&["--level", "nonsense"])).is_err());
+        assert!(parse_level_spec(&args(&["--level", "1-x"])).is_err());
     }
 }
