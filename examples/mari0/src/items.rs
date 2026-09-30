@@ -133,6 +133,44 @@ impl Mari0Game {
             return;
         };
 
+        // A coin sitting on top of the bounced block is collected with the bump
+        // (`mario.lua:2520-2524`, via `collectcoin` at `:3071-3086`). It sits
+        // before the vine early-return and outside the per-kind match because
+        // the original's bounce branch is one sequence: question, hidden,
+        // bounced brick, destroyed brick and vine block all reach the check.
+        // Coins live in `level.coins`, not the tile layer. The original's
+        // `addpoints(200)` passes no coordinates and so shows no floating score;
+        // the Question-Coin arm below already diverges by showing one, and this
+        // follows suit.
+        if row > 0
+            && let Some(coin) = self
+                .level
+                .coins
+                .iter_mut()
+                .find(|c| !c.collected && c.x == bx && c.y == by - TILE_SIZE)
+        {
+            coin.collected = true;
+            self.score += COIN_SCORE;
+            self.coins += 1;
+            if self.coins >= 100 {
+                self.coins -= 100;
+                self.lives += 1;
+            }
+            self.coin_popups.push(CoinPopup {
+                x: bx,
+                y: by - TILE_SIZE,
+                vy: COIN_POPUP_SPEED,
+                timer: 0.0,
+            });
+            self.score_popups.push(ScorePopup {
+                x: bx,
+                y: by - TILE_SIZE,
+                value: Some(COIN_SCORE),
+                timer: 0.0,
+            });
+            ctx.audio.play("coin");
+        }
+
         // A vine does the same thing out of any block that bounces, so it is settled
         // before the per-kind arms: the block turns used, the vine sound plays instead
         // of the item one, and the beanstalk starts growing (`mario.lua:2390-2393`).

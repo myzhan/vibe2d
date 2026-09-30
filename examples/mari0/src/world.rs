@@ -498,15 +498,19 @@ pub(crate) fn load_level(pack: &str, name: &str) -> Level {
     for (row, tile_row) in tiles.iter_mut().enumerate() {
         for (col, slot) in tile_row.iter_mut().enumerate() {
             let tile = level::tiles::shift_tile(sheet, parsed.tile(col as i32, row as i32));
-            *slot = tile;
             // Free-standing coins become collectables rather than tiles so the
-            // pickup path doesn't have to special-case the tile layer.
+            // pickup path — and `hit_block`'s coin-on-top check
+            // (`mario.lua:2520-2524`) — only ever has one place to look. The
+            // grid cell stays empty: a coin tile left in would double-draw under
+            // the spinning sprite and ghost behind it once collected.
             if level::tiles::props(tile as u16).coin() {
                 coins.push(CoinInstance {
                     x: col as f32 * TILE_SIZE,
                     y: row as f32 * TILE_SIZE,
                     collected: false,
                 });
+            } else {
+                *slot = tile;
             }
         }
     }
@@ -917,6 +921,33 @@ mod tests {
         let mut id = LevelId::new("smb", 1, 4).with_sublevel(2);
         id.advance();
         assert_eq!((id.world, id.level, id.sublevel), (2, 1, 0));
+    }
+
+    /// Free-standing coins live in `coins` and only there — the grid cell stays
+    /// empty. `hit_block`'s coin-on-top check (`mario.lua:2520-2524`) looks the
+    /// coin up in `coins`, and a coin tile left in the grid would double-draw
+    /// (static tile under the spinning sprite) and ghost behind it once collected.
+    #[test]
+    fn free_standing_coins_live_only_in_the_coins_list() {
+        // 5-2: three coins at (29..31, 8), each sitting on a brick at row 9.
+        let lv = load_level("smb", "5-2");
+        for col in [29, 30, 31] {
+            assert_eq!(
+                lv.tiles[8][col],
+                level::tiles::TILE_EMPTY as u32,
+                "coin tile left in the grid at ({col}, 8)"
+            );
+            assert!(
+                lv.coins.iter().any(|c| !c.collected
+                    && c.x == col as f32 * TILE_SIZE
+                    && c.y == 8.0 * TILE_SIZE),
+                "no coin instance for ({col}, 8)"
+            );
+            assert!(
+                level::tiles::props(lv.tiles[9][col] as u16).collision(),
+                "the brick under ({col}, 8) is gone"
+            );
+        }
     }
 
     #[test]
