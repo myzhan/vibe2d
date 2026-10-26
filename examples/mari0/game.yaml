@@ -321,6 +321,11 @@ input:
     hat:
       keys: ["H"]
       gamepad_buttons: ["East"]
+    # Toggle a full-screen CRT scanline overlay. Debug/eye-candy — lives on F2
+    # so it never clashes with a gameplay key. Driven by a custom fragment
+    # shader compiled in `Game::new` and applied as the last draw of the frame.
+    toggle_scanline:
+      keys: ["F2"]
 
 debug:
   vdp:

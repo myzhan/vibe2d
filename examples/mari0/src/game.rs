@@ -36,6 +36,25 @@ pub(crate) enum GameState {
 
 // ── Main game ───────────────────────────────────────────────────────
 
+/// Full-screen CRT scanline overlay. Toggled by the `toggle_scanline` action
+/// (`F2` by default) and drawn as a single full-viewport sprite at the very
+/// end of `draw`. The preamble gives us `VertexOutput.clip_position`, which in
+/// a WGSL fragment input is the **window-space** pixel position — so the row
+/// phase is screen-aligned regardless of which sprite the fragment lands on,
+/// and the effect reads as a proper CRT scanline rather than a per-texture
+/// pattern. `params.x` carries the darkening strength (0..1); `params.y` is
+/// reserved.
+const SCANLINE_FS: &str = r#"
+@fragment
+fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    let y = floor(in.clip_position.y);
+    // Alternate every other physical row; even rows get darkened by `strength`.
+    let phase = y % 2.0;
+    let a = uniforms.params.x * (1.0 - phase);
+    return vec4<f32>(0.0, 0.0, 0.0, a);
+}
+"#;
+
 pub(crate) struct Mari0Game {
     pub(crate) state: GameState,
     /// Which level is loaded. Replaces the compile-time `include_str!` of 1-1.
@@ -359,6 +378,15 @@ pub(crate) struct Mari0Game {
     /// Virtual screen height. Needed alongside `vw` so the pipe scissor can span
     /// the full screen on the axis it isn't clipping.
     pub(crate) vh: f32,
+
+    /// Custom CRT-scanline fragment shader, compiled once in `Game::new`.
+    pub(crate) scanline_shader: ShaderId,
+    /// A 1×1 white texture used purely as the vehicle for the full-screen
+    /// scanline overlay quad. Its colour is irrelevant — the shader emits black
+    /// with a screen-row-dependent alpha and ignores the texture entirely.
+    pub(crate) scanline_tex: TextureId,
+    /// Is the overlay active? Toggled by the `toggle_scanline` action.
+    pub(crate) scanline_on: bool,
 }
 
 /// Does the right stick currently own the aim?
@@ -1815,9 +1843,21 @@ fn level_from_args() -> Option<LevelId> {
 }
 
 impl Game for Mari0Game {
-    fn new(ctx: &mut Context, _renderer: &Renderer) -> Self {
+    fn new(ctx: &mut Context, renderer: &Renderer) -> Self {
         // The saved progress is read into the struct below via `load_progress`, called
         // on the way out — `Storage::load` never fails, it just comes back empty.
+        //
+        // Optional CRT overlay. Compiled once — the shader lives for the whole
+        // run; the toggle just decides whether the final overlay quad is drawn.
+        // Registered before `t` (below) is defined because `t` immutably borrows
+        // `ctx` and `register_texture` needs a mutable borrow.
+        let scanline_shader = renderer
+            .create_fragment_shader("scanline", SCANLINE_FS)
+            .expect("scanline shader failed to compile");
+        let scanline_tex = ctx
+            .assets
+            .register_texture("scanline_white", renderer.create_white_pixel_texture());
+
         let t = |n: &str| Self::tex(ctx, n);
 
         let vw = ctx.virtual_width;
@@ -2030,6 +2070,9 @@ impl Game for Mari0Game {
             ],
             vw,
             vh,
+            scanline_shader,
+            scanline_tex,
+            scanline_on: false,
         };
         game.load_progress();
         // `--level pack/W-L[_N]` drops straight into that level: no menu, no
@@ -2047,6 +2090,11 @@ impl Game for Mari0Game {
     }
 
     fn update(&mut self, ctx: &mut Context, dt: f32, input: &InputState) {
+        // Global debug toggle: works on the menu, in play, while paused, during
+        // the launch intro — nowhere else in the frame depends on it.
+        if input.is_action_just_pressed("toggle_scanline") {
+            self.scanline_on = !self.scanline_on;
+        }
         if self.music_restart {
             self.music_restart = false;
             self.start_music(ctx);
@@ -2118,6 +2166,18 @@ impl Game for Mari0Game {
 
     fn draw(&self, ctx: &Context, screen: &mut Screen) {
         self.draw_world(ctx, screen);
+        // Full-screen scanline overlay. Drawn last so it dims every sprite
+        // equally; the shader ignores the bound texture and writes black with
+        // an alternating-row alpha, so this is a pure post-pass.
+        if self.scanline_on {
+            screen.set_shader(self.scanline_shader);
+            screen.set_shader_uniforms(
+                self.scanline_shader,
+                ShaderUniforms::new().with_params([0.35, 0.0, 0.0, 0.0]),
+            );
+            screen.draw_sprite(self.scanline_tex, 0.0, 0.0, self.vw, self.vh);
+            screen.clear_shader();
+        }
     }
 
     #[cfg(feature = "vdp")]
