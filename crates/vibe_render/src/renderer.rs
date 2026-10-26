@@ -1,10 +1,19 @@
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use anyhow::Result;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
+use crate::shader::{ShaderId, ShaderRegistry};
 use crate::texture::Texture;
+
+/// Full WGSL source for the built-in sprite pipeline: the shared preamble
+/// (vertex stage + bindings) concatenated with the default fragment shader.
+const DEFAULT_SPRITE_SHADER: &str = concat!(
+    include_str!("shader_common.wgsl"),
+    include_str!("sprite.wgsl")
+);
 
 // Tracy zone marker: a scoped span guard under `profiling` (native only),
 // otherwise a no-op. `render` compiles for wasm too, where `tracy_client` is
@@ -77,6 +86,13 @@ pub struct DrawCommand {
     /// axis-aligned fast path is preserved for the overwhelming majority of
     /// sprites. Rotation does **not** affect batching.
     pub rotation: f32,
+    /// Render pipeline to draw this command through.
+    ///
+    /// [`ShaderId::DEFAULT`] (0) is the built-in sprite shader. A custom shader
+    /// returned by [`Renderer::create_fragment_shader`] makes the batcher break
+    /// on a change of this id (like it already does for texture and clip) and the
+    /// renderer `set_pipeline` + rebind the shader's uniform group at that point.
+    pub shader_id: ShaderId,
 }
 
 /// The 2D renderer. Batches sprite draws and submits to GPU each frame.
@@ -93,6 +109,22 @@ pub struct Renderer {
     pub texture_bind_group_layout: Arc<wgpu::BindGroupLayout>,
     pub projection_bind_group: wgpu::BindGroup,
     pub projection_buffer: wgpu::Buffer,
+    /// Bind group layout for group(2) — the per-shader uniform block. Shared by
+    /// the built-in pipeline and every custom shader.
+    pub uniform_bind_group_layout: Arc<wgpu::BindGroupLayout>,
+    /// Pipeline layout (projection + texture + uniforms) reused by the built-in
+    /// and all custom pipelines; only the fragment module differs.
+    pipeline_layout: wgpu::PipelineLayout,
+    /// Uniform buffer + bind group for the built-in pipeline. The default
+    /// fragment shader ignores it, but the shared layout requires it to be bound.
+    _default_uniform_buffer: wgpu::Buffer,
+    default_uniform_bind_group: wgpu::BindGroup,
+    /// Custom fragment shaders registered by games (id = index + 1). Behind a
+    /// `RefCell` so `create_fragment_shader` can take `&self` (it is called from
+    /// `Game::new`, which only has an immutable `&Renderer`).
+    pub(crate) custom_shaders: ShaderRegistry,
+    /// Reference instant for the auto-advanced `ShaderUniforms::time`.
+    pub(crate) frame_start: std::time::Instant,
     draw_commands: Vec<DrawCommand>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -175,65 +207,62 @@ impl Renderer {
             label: Some("projection_bind_group"),
         });
 
+        // group(2): per-shader uniforms — one shared layout for the built-in
+        // pipeline and every custom shader, so switching pipelines only ever
+        // changes the fragment module, never the bind group contract.
+        let uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("uniform_bind_group_layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        // Zeroed uniform block for the built-in pipeline. Its fragment shader
+        // ignores the block, but the shared layout requires it to be bound.
+        let default_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("default_uniform_buffer"),
+            contents: bytemuck::bytes_of(&crate::shader::ShaderUniforms::default()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let default_uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: default_uniform_buffer.as_entire_binding(),
+            }],
+            label: Some("default_uniform_bind_group"),
+        });
+
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprite_shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("sprite.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(DEFAULT_SPRITE_SHADER.into()),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sprite_pipeline_layout"),
-            bind_group_layouts: &[&projection_bind_group_layout, &texture_bind_group_layout],
+            bind_group_layouts: &[
+                &projection_bind_group_layout,
+                &texture_bind_group_layout,
+                &uniform_bind_group_layout,
+            ],
             push_constant_ranges: &[],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("sprite_pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<SpriteVertex>() as wgpu::BufferAddress,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            offset: 0,
-                            shader_location: 0,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 8,
-                            shader_location: 1,
-                            format: wgpu::VertexFormat::Float32x2,
-                        },
-                        wgpu::VertexAttribute {
-                            offset: 16,
-                            shader_location: 2,
-                            format: wgpu::VertexFormat::Float32x4,
-                        },
-                    ],
-                }],
-                compilation_options: Default::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_config.format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: Default::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview: None,
-            cache: None,
-        });
+        let pipeline = create_pipeline(
+            &device,
+            &pipeline_layout,
+            surface_config.format,
+            &shader,
+            "sprite_pipeline",
+        );
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sprite_vertex_buffer"),
@@ -264,6 +293,12 @@ impl Renderer {
             texture_bind_group_layout: Arc::new(texture_bind_group_layout),
             projection_bind_group,
             projection_buffer,
+            uniform_bind_group_layout: Arc::new(uniform_bind_group_layout),
+            pipeline_layout,
+            _default_uniform_buffer: default_uniform_buffer,
+            default_uniform_bind_group,
+            custom_shaders: RefCell::new(Vec::new()),
+            frame_start: std::time::Instant::now(),
             draw_commands: Vec::with_capacity(256),
             sprite_overflow_warned: false,
             vertex_buffer,
@@ -273,6 +308,24 @@ impl Renderer {
             #[cfg(not(target_arch = "wasm32"))]
             pending_screenshot: None,
         }
+    }
+
+    /// Build a render pipeline that draws through the shared vertex layout and
+    /// the (projection, texture, uniform) bind group layout, using `module`'s
+    /// `vs_main` / `fs_main` entry points. Reused for the built-in sprite shader
+    /// and every custom shader, so they are guaranteed to be batch-compatible.
+    pub(crate) fn build_pipeline(
+        &self,
+        label: &str,
+        module: &wgpu::ShaderModule,
+    ) -> wgpu::RenderPipeline {
+        create_pipeline(
+            &self.device,
+            &self.pipeline_layout,
+            self.surface_config.format,
+            module,
+            label,
+        )
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -312,6 +365,10 @@ impl Renderer {
     /// Render all queued draw commands and present to screen.
     pub fn render(&mut self, clear_color: [f32; 4], textures: &[&Texture]) -> Result<()> {
         zone!("gpu_submit");
+        // Push the current wall-clock time into every custom shader's uniform
+        // buffer before any drawing, so the main pass and the screenshot pass
+        // (which run the same execute_draw_commands) observe identical uniforms.
+        self.advance_shader_time();
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -426,12 +483,31 @@ impl Renderer {
             return;
         }
 
-        render_pass.set_pipeline(&self.pipeline);
+        // Group(0) projection and the vertex/index buffers are shared across every
+        // pipeline, so they are set once. Group(1) texture and group(2) shader
+        // uniforms change per batch.
         render_pass.set_bind_group(0, &self.projection_bind_group, &[]);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
+        // Custom shaders live here (id n → index n-1); id 0 uses the built-in
+        // pipeline and its default uniform bind group.
+        let shaders = self.custom_shaders.borrow();
+        let mut current_shader = usize::MAX;
+
         for batch in compute_batches(&self.draw_commands) {
+            if batch.shader_id != current_shader {
+                let (pipeline, uniform_group) = match batch.shader_id {
+                    0 => (&self.pipeline, &self.default_uniform_bind_group),
+                    id => {
+                        let entry = &shaders[id - 1];
+                        (&entry.pipeline, &entry.bind_group)
+                    }
+                };
+                render_pass.set_pipeline(pipeline);
+                render_pass.set_bind_group(2, uniform_group, &[]);
+                current_shader = batch.shader_id;
+            }
             match batch.clip {
                 Some(clip) => {
                     let (x, y, w, h) = scissor_rect(
@@ -787,6 +863,67 @@ impl ScreenshotCapture {
     }
 }
 
+/// Create a render pipeline from a shader module, sharing the fixed sprite
+/// vertex layout, the (projection, texture, uniform) pipeline layout, and alpha
+/// blending. Both the built-in sprite shader and custom shaders go through here,
+/// which is what makes them batch-interchangeable.
+fn create_pipeline(
+    device: &wgpu::Device,
+    layout: &wgpu::PipelineLayout,
+    target_format: wgpu::TextureFormat,
+    module: &wgpu::ShaderModule,
+    label: &str,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_main"),
+            buffers: &[wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<SpriteVertex>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &[
+                    wgpu::VertexAttribute {
+                        offset: 0,
+                        shader_location: 0,
+                        format: wgpu::VertexFormat::Float32x2,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: 8,
+                        shader_location: 1,
+                        format: wgpu::VertexFormat::Float32x2,
+                    },
+                    wgpu::VertexAttribute {
+                        offset: 16,
+                        shader_location: 2,
+                        format: wgpu::VertexFormat::Float32x4,
+                    },
+                ],
+            }],
+            compilation_options: Default::default(),
+        },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_main"),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: target_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            compilation_options: Default::default(),
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview: None,
+        cache: None,
+    })
+}
+
 fn orthographic_projection(width: f32, height: f32) -> [f32; 16] {
     // Maps (0..width, 0..height) to (-1..1, -1..1) clip space
     // Y=0 is top, Y=height is bottom (screen coordinates)
@@ -888,7 +1025,7 @@ impl Renderer {
 // ordering rules live.
 // ─────────────────────────────────────────────────────────────────────
 
-/// One run of draw commands that share a texture and a clip rect.
+/// One run of draw commands that share a texture, a clip rect and a shader.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Batch {
     /// Index of the first sprite, in sprite units (not vertices or indices).
@@ -896,6 +1033,9 @@ pub(crate) struct Batch {
     pub count: usize,
     pub texture_index: usize,
     pub clip: Option<[f32; 4]>,
+    /// Pipeline to switch to at this batch (`0` = built-in). A change here breaks
+    /// the batch, exactly like a texture or clip change.
+    pub shader_id: usize,
 }
 
 /// Drop draw commands beyond the fixed vertex-buffer capacity.
@@ -938,7 +1078,8 @@ fn sort_by_layer(commands: &mut [DrawCommand]) {
     }
 }
 
-/// Group consecutive commands into batches, breaking on texture or clip change.
+/// Group consecutive commands into batches, breaking on texture, clip or shader
+/// change.
 fn compute_batches(commands: &[DrawCommand]) -> Vec<Batch> {
     let mut batches: Vec<Batch> = Vec::new();
     for (i, cmd) in commands.iter().enumerate() {
@@ -946,7 +1087,11 @@ fn compute_batches(commands: &[DrawCommand]) -> Vec<Batch> {
         match batches.last_mut() {
             // Bit equality on the clip is the intended test: values are copied
             // verbatim from the caller and never recomputed.
-            Some(last) if last.texture_index == tex && last.clip == cmd.clip => {
+            Some(last)
+                if last.texture_index == tex
+                    && last.clip == cmd.clip
+                    && last.shader_id == cmd.shader_id.0 =>
+            {
                 last.count += 1;
             }
             _ => batches.push(Batch {
@@ -954,6 +1099,7 @@ fn compute_batches(commands: &[DrawCommand]) -> Vec<Batch> {
                 count: 1,
                 texture_index: tex,
                 clip: cmd.clip,
+                shader_id: cmd.shader_id.0,
             }),
         }
     }
@@ -1034,6 +1180,14 @@ mod batching_tests {
         DrawCommand {
             texture_id: crate::TextureId(texture),
             clip,
+            ..Default::default()
+        }
+    }
+
+    fn shaded(texture: usize, shader: usize) -> DrawCommand {
+        DrawCommand {
+            texture_id: crate::TextureId(texture),
+            shader_id: crate::shader::ShaderId(shader),
             ..Default::default()
         }
     }
@@ -1129,6 +1283,31 @@ mod batching_tests {
             batches.iter().map(|b| b.texture_index).collect::<Vec<_>>(),
             vec![0, 1, 0, 1]
         );
+    }
+
+    #[test]
+    fn shader_change_breaks_the_batch_even_with_one_texture() {
+        // Same texture, alternating pipelines: each switch is a set_pipeline, so
+        // every command is its own batch (the shader is a batch key like texture).
+        let commands = vec![shaded(0, 0), shaded(0, 1), shaded(0, 1), shaded(0, 0)];
+        let batches = compute_batches(&commands);
+        assert_eq!(batches.len(), 3);
+        assert_eq!(
+            batches.iter().map(|b| b.shader_id).collect::<Vec<_>>(),
+            vec![0, 1, 0]
+        );
+        assert_eq!(batches[1].count, 2, "consecutive same-shader coalesce");
+    }
+
+    #[test]
+    fn default_shader_commands_still_coalesce_by_texture() {
+        // Regression guard: adding the shader key must not change batching when
+        // everything is on the built-in pipeline (shader_id 0).
+        let commands = vec![cmd(0, 0), cmd(0, 0), cmd(1, 0), cmd(1, 0)];
+        let batches = compute_batches(&commands);
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0].count, 2);
+        assert_eq!(batches[1].count, 2);
     }
 
     #[test]

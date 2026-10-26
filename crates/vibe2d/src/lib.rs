@@ -60,7 +60,7 @@ pub mod prelude {
     pub use vibe_input::{
         AxisDir, AxisSpec, GamepadAxis, GamepadButton, GamepadId, InputState, RumbleRequest,
     };
-    pub use vibe_render::{Renderer, TextureId};
+    pub use vibe_render::{Renderer, ShaderId, ShaderUniforms, TextureId};
     pub use vibe_ui::{
         Anchor, ButtonStyle, LayoutDirection, PanelStyle, ScrollListStyle, Style, TextInputStyle,
         UiColor, UiContext, UiOutput, WidgetId,

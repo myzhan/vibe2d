@@ -1,0 +1,24 @@
+meta:
+  name: "Shader Demo"
+  version: "0.1.0"
+
+window:
+  width: 1280
+  height: 720
+  title: "Shader Demo - Vibe2D"
+  vsync: true
+
+virtual_resolution:
+  width: 640
+  height: 360
+
+# No image/font assets: the demo builds its textures procedurally in
+# Game::new (a 1x1 white pixel + an antialiased circle) and defines two
+# custom fragment shaders inline in src/main.rs.
+
+debug:
+  vdp:
+    enabled: true
+    # Fresh port so it never collides with the other examples
+    # (flappy/tetris/mari0=9229, ui=9230, aoi=9232, gamepad=9233).
+    port: 9234

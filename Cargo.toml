@@ -20,6 +20,7 @@ members = [
     "examples/ui",
     "examples/aoi-demo",
     "examples/gamepad",
+    "examples/shader-demo",
 ]
 
 [workspace.package]

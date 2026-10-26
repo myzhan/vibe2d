@@ -26,10 +26,12 @@ vibe2d/
 │   │       └── config.rs       # GameConfig，从 game.yaml 解析
 │   ├── vibe_render/            # 基于 wgpu 的 sprite batch 渲染器 + 字体 atlas
 │   │   └── src/
-│   │       ├── renderer.rs     # Renderer、DrawCommand、sprite 批处理、截图
+│   │       ├── renderer.rs     # Renderer、DrawCommand（含 shader_id）、sprite 批处理、截图
 │   │       ├── font.rs         # Font（fontdue lazy 字形 atlas，按需 rasterize、按需扩容）
 │   │       ├── texture.rs      # Texture、TextureId
-│   │       └── sprite.wgsl     # 顶点/片段着色器
+│   │       ├── shader.rs       # 自定义片段 shader：ShaderId、ShaderUniforms、create_fragment_shader
+│   │       ├── shader_common.wgsl  # 所有管线共享的 preamble（顶点阶段 + 纹理/uniform 绑定）
+│   │       └── sprite.wgsl     # 内置管线只剩的默认片段函数 fs_main
 │   ├── vibe_platform/          # 平台抽象层（winit + wgpu 桌面端）
 │   │   └── src/
 │   │       └── gamepad.rs      # gilrs → vibe_input 翻译 + 震动播放（`gamepad` feature）
@@ -65,11 +67,13 @@ vibe2d/
 │   ├── mari0/                  # 马里奥风格游戏
 │   ├── ui/                     # UI 系统演示
 │   ├── aoi-demo/               # AOI 演示：移动圆 + 散点 + Observer enter/leave
-│   └── gamepad/                # 手柄测试器（按键网格 / 摇杆 / 扳机 / action / 震动）
+│   ├── gamepad/                # 手柄测试器（按键网格 / 摇杆 / 扳机 / action / 震动）
+│   └── shader-demo/            # 自定义片段 shader 演示（等离子 + ripple）
 ├── docs/
 │   ├── architecture.md         # 详细架构文档
 │   ├── vdp.md                  # VDP 协议规范
 │   ├── ui.md                   # UI 系统设计文档
+│   ├── shader.md               # 自定义片段 shader 使用与实现
 │   └── aoi.md                  # AOI 模块设计文档
 └── skills/
     └── vdp.md                  # LLM skill 文件，用于 VDP 交互
@@ -385,6 +389,24 @@ fn handle_vdp(&mut self, method: &str, params: &serde_json::Value)
 2. 在 `crates/vibe2d/src/config.rs`（`AssetsConfig`）中添加配置字段
 3. 在 `crates/vibe2d/src/lib.rs` 的 `GameBridge::on_init()` 中添加加载调用
 
+### 使用自定义 Shader（片段着色器）
+
+引擎支持 Love2D 风格的**自定义片段 shader**（完整说明见 [docs/shader.md](docs/shader.md)）：
+
+1. 在 `Game::new`（拿得到 `&Renderer`）里 `renderer.create_fragment_shader(label, wgsl) -> Result<ShaderId>`。
+   游戏只写 `@fragment fn fs_main`；顶点阶段、`t_texture`/`t_sampler`、`uniforms`（含自动推进的
+   `time` + 两个 `vec4` 槽 `params`/`params2`）由 `shader_common.wgsl` preamble 前置拼接提供。
+2. 在 `Game::draw` 里用 `Screen`：`set_shader(id)` 选中、`set_shader_uniforms(id, ShaderUniforms::new().with_params([..]))`
+   喂参、`clear_shader()` / `on_shader(id, |s| {..})` 切回内置管线。
+3. **批处理约束**：`shader_id` 与 `texture_id`、`clip` 一样是断批 key —— 只在 shader 真正切换时
+   多一次 `set_pipeline`。给一批连续 sprite 用同一个 shader 才不会打散 batch。
+4. 新增/修改 shader 类型时：`DrawCommand`（`renderer.rs`）、`compute_batches` 断批逻辑、
+   `shader_common.wgsl` 的 uniform 布局三者必须同步（`vibe_render` 有内存布局单测锁定）。
+5. 非法 WGSL 在**原生**平台经 wgpu error scope 返回 `Err`（不 panic）；wasm 上落到浏览器 error handler。
+
+参考实现：`examples/shader-demo`（等离子背景 + ripple 弹跳球 + 内置 HUD 共存），及其 VDP
+端到端测试 `examples/shader-demo/tests/vdp_shader.rs`（截图读像素断言自定义管线真的渲染）。
+
 ### 字体与 CJK / IME
 
 引擎本身**不内置任何字体**，游戏自己在 `assets/fonts/` 下提供 TTF/OTF 文件并在 `game.yaml` 中以 `"路径:字号"` 注册。
@@ -427,7 +449,7 @@ Vibe2D 分两层：
    serde_json.workspace = true
    ```
 2. 确保 `game.yaml` 中 `debug.vdp.enabled: true`，并使用**独立端口**避免与其他 example 冲突
-   （ui-demo=9230、aoi-demo=9232、gamepad-tester=9233；flappy-bird / tetris / mari0 目前
+   （ui-demo=9230、aoi-demo=9232、gamepad-tester=9233、shader-demo=9234；flappy-bird / tetris / mari0 目前
    都用 9229，串行跑测试时才没暴露成问题）。
 3. 在 `examples/<game>/tests/<name>.rs` 中写 `#[tokio::test(flavor = "multi_thread")] #[ignore]` 测试，用 `vibe_test::GameHarness::launch("<game>", <port>)` 启动进程并拿到一个带 VDP 客户端的 harness。
    **断言依赖某个 feature 的状态时，用 `LaunchOptions` 把 feature 集钉死**，
@@ -563,6 +585,7 @@ VDP 是基于 WebSocket + JSON-RPC 2.0 的运行时调试协议（`ws://127.0.0.
 | VDP 新增/修改/删除方法 | `docs/api.md`（VDP 章节）+ `docs/vdp.md` + `skills/vdp.md` |
 | UI 组件新增/修改 | `docs/api.md`（UI 系统章节）+ `docs/ui.md` |
 | AOI（`vibe_aoi`）API 或后端变更 | `docs/api.md`（AOI 章节）+ `docs/aoi.md`（设计文档） |
+| 自定义 Shader API / `shader_common.wgsl` uniform 布局变更 | `docs/shader.md` + `AGENTS.md`（使用自定义 Shader 一节） |
 | 新增 crate 或改变 crate 依赖关系 | `AGENTS.md`（仓库结构 / Crate 依赖关系） |
 | 新增设计模式或架构变更 | `AGENTS.md`（关键设计模式）+ `docs/architecture.md` |
 | 新增示例游戏 | `AGENTS.md`（仓库结构） |

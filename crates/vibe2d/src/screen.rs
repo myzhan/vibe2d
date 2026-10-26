@@ -1,5 +1,5 @@
 use crate::Color;
-use vibe_render::{Font, Renderer, TextureId};
+use vibe_render::{Font, Renderer, ShaderId, ShaderUniforms, TextureId};
 
 /// The render target for the current frame. Users draw to this.
 ///
@@ -16,6 +16,7 @@ pub struct Screen<'a> {
     camera: [f32; 2],
     shake: [f32; 2],
     rotation: f32,
+    shader: ShaderId,
 }
 
 impl<'a> Screen<'a> {
@@ -29,6 +30,7 @@ impl<'a> Screen<'a> {
             camera: [0.0, 0.0],
             shake: [0.0, 0.0],
             rotation: 0.0,
+            shader: ShaderId::DEFAULT,
         }
     }
 
@@ -160,6 +162,54 @@ impl<'a> Screen<'a> {
         self.rotation = previous;
     }
 
+    // ── Custom shaders ────────────────────────────────────────────
+
+    /// Set the render pipeline (custom shader) for subsequent draws.
+    ///
+    /// Pass a [`ShaderId`] returned by
+    /// [`Renderer::create_fragment_shader`] (called in `Game::new`, which
+    /// receives the `&Renderer`). Every draw issued afterwards is rendered
+    /// through that shader instead of the built-in sprite pipeline until you
+    /// [`Screen::clear_shader`] or select another one.
+    ///
+    /// Like [`Screen::set_layer`] and [`Screen::set_clip_rect`], changing the
+    /// shader breaks the current sprite batch, so group your draws by shader
+    /// rather than flipping it per sprite. Passing [`ShaderId::DEFAULT`]
+    /// restores the built-in pipeline.
+    pub fn set_shader(&mut self, shader: ShaderId) {
+        self.shader = shader;
+    }
+
+    pub fn shader(&self) -> ShaderId {
+        self.shader
+    }
+
+    /// Restore the built-in sprite pipeline for subsequent draws.
+    pub fn clear_shader(&mut self) {
+        self.shader = ShaderId::DEFAULT;
+    }
+
+    /// Run `f` with a custom shader applied, restoring the previous shader
+    /// afterwards. Preferred over the raw setters for a localized effect
+    /// (e.g. one HUD element distorted) because it can't leak into unrelated
+    /// draws.
+    pub fn on_shader(&mut self, shader: ShaderId, f: impl FnOnce(&mut Self)) {
+        let previous = self.shader;
+        self.set_shader(shader);
+        f(self);
+        self.shader = previous;
+    }
+
+    /// Push `params` / `params2` into a custom shader's uniform block.
+    ///
+    /// `time` is owned by the renderer (advanced automatically every frame) and
+    /// is left untouched here. No-op for [`ShaderId::DEFAULT`]. Set uniforms
+    /// from `draw()` each frame you want them to change — the value persists
+    /// until you set it again.
+    pub fn set_shader_uniforms(&mut self, shader: ShaderId, uniforms: ShaderUniforms) {
+        self.renderer.set_shader_uniforms(shader, uniforms);
+    }
+
     /// Apply the camera/shake offset and hand the command to the renderer.
     ///
     /// Every `draw_*` funnels through here, so world-to-screen translation lives
@@ -196,6 +246,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -228,6 +279,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -243,6 +295,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -265,6 +318,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -287,6 +341,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -309,6 +364,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -329,6 +385,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -351,6 +408,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -367,6 +425,7 @@ impl<'a> Screen<'a> {
                 layer: self.layer,
                 clip: self.clip,
                 rotation: self.rotation,
+                shader_id: self.shader,
             });
         }
     }
@@ -398,6 +457,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -419,6 +479,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 
@@ -442,6 +503,7 @@ impl<'a> Screen<'a> {
             layer: self.layer,
             clip: self.clip,
             rotation: self.rotation,
+            shader_id: self.shader,
         });
     }
 }

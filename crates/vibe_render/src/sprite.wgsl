@@ -1,31 +1,14 @@
-struct VertexInput {
-    @location(0) position: vec2<f32>,
-    @location(1) tex_coords: vec2<f32>,
-    @location(2) color: vec4<f32>,
-};
-
-struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0) tex_coords: vec2<f32>,
-    @location(1) color: vec4<f32>,
-};
-
-@group(0) @binding(0)
-var<uniform> projection: mat4x4<f32>;
-
-@vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
-    var out: VertexOutput;
-    out.clip_position = projection * vec4<f32>(in.position, 0.0, 1.0);
-    out.tex_coords = in.tex_coords;
-    out.color = in.color;
-    return out;
-}
-
-@group(1) @binding(0)
-var t_texture: texture_2d<f32>;
-@group(1) @binding(1)
-var t_sampler: sampler;
+// The default sprite fragment shader.
+//
+// The vertex stage, texture/sampler bindings and the per-shader uniform block
+// live in `shader_common.wgsl`; the engine concatenates that preamble with this
+// file to build the built-in pipeline's full module. Custom game shaders supply
+// their own fragment source in place of this file (same preamble), which is why
+// the vertex layout and binding groups must stay identical across every
+// pipeline.
+//
+// Games do *not* have to use `uniforms` here — an unused binding is valid as
+// long as it is declared in the (shared) bind group layout.
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {

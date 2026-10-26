@@ -22,6 +22,9 @@ fontdue.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { workspace = true, features = ["dx12", "metal", "vulkan-portability"] }
 tracy-client = { workspace = true, optional = true }
+# Used to turn `device.pop_error_scope()` (an async future) into a synchronous
+# `Result` when compiling a custom fragment shader on the native render thread.
+pollster.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true, features = ["webgl"] }
